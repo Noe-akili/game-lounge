@@ -84,6 +84,24 @@ public class NodeJsPlugin extends Plugin {
                     Log.i(TAG, "Server: " + serverJs.length() + " bytes");
                 }
 
+                File envFile = new File(serverDir, ".env");
+                try {
+                    extractAsset(ctx, "server/.env", envFile);
+                    Log.i(TAG, ".env extracted: " + envFile.length() + " bytes");
+                } catch (Exception e) {
+                    Log.w(TAG, ".env not found in assets, creating default");
+                    try {
+                        FileWriter fw = new FileWriter(envFile);
+                        fw.write("DATABASE_URL=\n");
+                        fw.write("SMTP_HOST=smtp.gmail.com\n");
+                        fw.write("SMTP_PORT=587\n");
+                        fw.write("SMTP_SECURE=false\n");
+                        fw.write("SMTP_USER=noeakili502@gmail.com\n");
+                        fw.write("SMTP_PASS=\n");
+                        fw.close();
+                    } catch (Exception ex) { Log.e(TAG, "Failed to create .env", ex); }
+                }
+
                 if (publicDir.list() == null || publicDir.list().length == 0) {
                     Log.i(TAG, "Extracting frontend...");
                     extractAssetDir(ctx, "server/public", publicDir);
@@ -95,12 +113,13 @@ public class NodeJsPlugin extends Plugin {
 
                 ProcessBuilder pb = new ProcessBuilder(
                     nodeBin.getAbsolutePath(),
+                    "--experimental-sqlite",
                     serverJs.getAbsolutePath()
                 );
                 pb.directory(serverDir);
                 pb.environment().put("PORT", String.valueOf(SERVER_PORT));
                 pb.environment().put("NODE_ENV", "production");
-                pb.environment().put("DATA_DIR", dbDir.getAbsolutePath());
+                pb.environment().put("DATA_DIR", serverDir.getAbsolutePath());
                 pb.redirectErrorStream(true);
 
                 File logFile = new File(dataDir, "node_server.log");

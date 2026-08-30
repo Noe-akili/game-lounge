@@ -23,7 +23,7 @@
     <StartSessionModal :open="showSessionModal" @close="showSessionModal = false" @started="onSessionStarted" />
   </div>
   <div v-else class="flex items-center justify-center h-full bg-bg">
-    <div class="text-center space-y-4">
+    <div class="text-center space-y-4 px-6">
       <div class="w-16 h-16 mx-auto rounded-2xl bg-neon-violet/20 flex items-center justify-center animate-pulse">
         <svg class="w-8 h-8 text-neon-violet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
       </div>
@@ -32,6 +32,7 @@
       <div class="w-48 h-1 bg-bg-surface rounded-full mx-auto overflow-hidden">
         <div class="h-full bg-gradient-to-r from-neon-violet to-neon-blue rounded-full animate-shimmer" style="background-size:200% 100%"></div>
       </div>
+      <p v-if="serverError" class="text-neon-red text-xs mt-2 max-w-xs mx-auto break-all">{{ serverError }}</p>
     </div>
   </div>
 </template>
@@ -55,6 +56,7 @@ const settings = useSettingsStore()
 const isDesktop = ref(typeof window !== 'undefined' ? window.innerWidth >= 1024 : false)
 const isCapacitor = typeof window !== 'undefined' && !!(window as any).Capacitor
 const serverReady = ref(!isCapacitor)
+const serverError = ref('')
 let pollInterval: ReturnType<typeof setInterval> | null = null
 
 function onSessionStarted() {
@@ -78,14 +80,15 @@ async function startEmbeddedServer() {
     if (NodeJs) {
       const result = await NodeJs.start()
       serverReady.value = true
+      serverError.value = ''
       console.log('Serveur démarré:', result)
     } else {
       serverReady.value = true
     }
   } catch (e) {
     console.error('Échec démarrage serveur:', e)
-    // Réessayer après 3 secondes
-    setTimeout(() => startEmbeddedServer(), 3000)
+    serverError.value = e.message || 'Erreur inconnue'
+    setTimeout(() => startEmbeddedServer(), 5000)
   }
 }
 
