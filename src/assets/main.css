@@ -1,0 +1,551 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Montserrat:wght@400;500;600;700;800&family=Rajdhani:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html, body, #app {
+    height: 100%;
+    width: 100%;
+    font-family: 'Inter', system-ui, sans-serif;
+    background-color: #0a0a0f;
+    color: #e2e8f0;
+    overflow-x: hidden;
+  }
+
+  html[data-font="gaming"] body,
+  html[data-font="gaming"] #app {
+    font-family: 'Montserrat', 'Inter', system-ui, sans-serif;
+  }
+
+  html[data-font="gaming"] .font-gaming {
+    font-family: 'Montserrat', 'Inter', system-ui, sans-serif;
+  }
+
+  html[data-font="normal"] .font-gaming {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  /* Background gaming avec lignes géométriques */
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 0;
+    background: 
+      linear-gradient(135deg, rgba(168, 85, 247, 0.15) 0%, transparent 50%),
+      linear-gradient(225deg, rgba(6, 182, 212, 0.15) 0%, transparent 50%),
+      radial-gradient(ellipse at 20% 50%, rgba(168, 85, 247, 0.2) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 20%, rgba(6, 182, 212, 0.2) 0%, transparent 50%);
+  }
+
+  /* Lignes géométriques gaming */
+  body::after {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 0;
+    background-image: 
+      linear-gradient(45deg, transparent 48%, rgba(168, 85, 247, 0.12) 49%, rgba(168, 85, 247, 0.12) 51%, transparent 52%),
+      linear-gradient(-45deg, transparent 48%, rgba(6, 182, 212, 0.12) 49%, rgba(6, 182, 212, 0.12) 51%, transparent 52%);
+    background-size: 60px 60px;
+  }
+
+  #app {
+    position: relative;
+    z-index: 1;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #12121a;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #a855f7, #06b6d4);
+    border-radius: 3px;
+  }
+
+  /* Light mode */
+  html.light, html.light body, html.light #app {
+    background-color: #f8fafc;
+    color: #1e293b;
+  }
+
+  html.light .bg-bg { background-color: #f8fafc; }
+  html.light .bg-bg-card { background-color: #ffffff; }
+  html.light .bg-bg-surface { background-color: #f1f5f9; }
+  html.light .bg-bg-hover { background-color: #e2e8f0; }
+  html.light .text-txt { color: #1e293b; }
+  html.light .text-txt-muted { color: #475569; }
+  html.light .text-txt-dim { color: #64748b; }
+  html.light .border-white\/5 { border-color: rgba(0,0,0,0.08); }
+  html.light .border-white\/10 { border-color: rgba(0,0,0,0.1); }
+  html.light .border-white\/20 { border-color: rgba(0,0,0,0.15); }
+
+  html.light .card {
+    background-color: #ffffff;
+    border-color: rgba(0,0,0,0.08);
+  }
+
+  html.light .input-field {
+    background-color: #f1f5f9;
+    border-color: rgba(0,0,0,0.1);
+    color: #1e293b;
+  }
+
+  html.light .input-field::placeholder {
+    color: #94a3b8;
+  }
+
+  html.light .sidebar-link {
+    color: #475569;
+  }
+
+  html.light .sidebar-link:hover {
+    color: #1e293b;
+    background-color: #f1f5f9;
+  }
+
+  html.light .sidebar-link-active {
+    background-color: rgba(168, 85, 247, 0.1);
+    color: #9333ea;
+    border-color: rgba(168, 85, 247, 0.3);
+  }
+
+  html.light .badge {
+    color: #1e293b;
+  }
+
+  html.light .badge-green {
+    background-color: rgba(34, 197, 94, 0.15);
+    color: #16a34a;
+    border-color: rgba(34, 197, 94, 0.3);
+  }
+
+  html.light .badge-red {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #dc2626;
+    border-color: rgba(239, 68, 68, 0.3);
+  }
+
+  html.light .badge-yellow {
+    background-color: rgba(234, 179, 8, 0.15);
+    color: #ca8a04;
+    border-color: rgba(234, 179, 8, 0.3);
+  }
+
+  html.light .badge-violet {
+    background-color: rgba(168, 85, 247, 0.15);
+    color: #9333ea;
+    border-color: rgba(168, 85, 247, 0.3);
+  }
+
+  html.light .badge-blue {
+    background-color: rgba(6, 182, 212, 0.15);
+    color: #0891b2;
+    border-color: rgba(6, 182, 212, 0.3);
+  }
+
+  html.light .btn-neon-violet {
+    background-color: #9333ea;
+    color: white;
+  }
+
+  html.light .btn-neon-outline {
+    border-color: rgba(168, 85, 247, 0.5);
+    color: #9333ea;
+  }
+
+  html.light .btn-neon-outline:hover {
+    background-color: rgba(168, 85, 247, 0.1);
+  }
+
+  html.light table {
+    color: #1e293b;
+  }
+
+  html.light .table-row {
+    border-bottom-color: rgba(0,0,0,0.08);
+  }
+
+  html.light .table-row:hover {
+    background-color: rgba(0,0,0,0.03);
+  }
+
+  html.light header {
+    background-color: rgba(248, 250, 252, 0.8);
+    border-bottom-color: rgba(0,0,0,0.08);
+  }
+
+  html.light nav {
+    background-color: #ffffff;
+    border-right-color: rgba(0,0,0,0.08);
+  }
+
+  html.light ::-webkit-scrollbar-track {
+    background: #f1f5f9;
+  }
+
+  html.light ::-webkit-scrollbar-thumb {
+    background: #9333ea;
+  }
+
+  /* Hide scrollbars on Android / touch devices */
+  @media (pointer: coarse), (max-width: 768px), (hover: none) {
+    ::-webkit-scrollbar {
+      display: none;
+      width: 0;
+      height: 0;
+    }
+    * {
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    html, body {
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior-y: contain;
+    }
+  }
+
+  /* Fix card/table overflow on Android */
+  @media (max-width: 768px) {
+    .card, .card-hover, .stat-card {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      overflow: hidden;
+      word-break: break-word;
+    }
+    .card *, .card-hover * {
+      min-width: 0;
+      max-width: 100%;
+    }
+    table {
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      white-space: nowrap;
+    }
+    .grid {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+    }
+  }
+}
+
+@layer components {
+  .btn-neon {
+    @apply min-h-btn px-6 py-3 rounded-xl font-semibold text-sm
+           transition-all duration-300 cursor-pointer
+           disabled:opacity-50 disabled:cursor-not-allowed
+           active:scale-95 select-none;
+  }
+
+  .btn-neon-violet {
+    @apply btn-neon bg-neon-violet text-white hover:bg-purple-400
+           shadow-neon-violet hover:shadow-[0_0_25px_rgba(168,85,247,0.5)];
+  }
+
+  .btn-neon-blue {
+    @apply btn-neon bg-neon-blue text-white hover:bg-cyan-400
+           shadow-neon-blue hover:shadow-[0_0_25px_rgba(6,182,212,0.5)];
+  }
+
+  .btn-neon-green {
+    @apply btn-neon bg-neon-green text-white hover:bg-green-400
+           shadow-neon-green hover:shadow-[0_0_25px_rgba(34,197,94,0.5)];
+  }
+
+  .btn-neon-red {
+    @apply btn-neon bg-neon-red text-white hover:bg-red-400
+           shadow-neon-red hover:shadow-[0_0_25px_rgba(239,68,68,0.5)];
+  }
+
+  .btn-neon-outline {
+    @apply btn-neon border-2 border-neon-violet/50 text-neon-violet
+           hover:bg-neon-violet/10 hover:border-neon-violet;
+  }
+
+  .card {
+    @apply bg-bg-card rounded-2xl p-5 border border-white/5
+           transition-all duration-300;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(168, 85, 247, 0.5), rgba(6, 182, 212, 0.5), transparent);
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  .card:hover::before {
+    opacity: 1;
+  }
+
+  .card-hover {
+    @apply card hover:border-neon-violet/30;
+    box-shadow: 0 0 0 0 rgba(168, 85, 247, 0);
+    transition: all 0.3s ease;
+  }
+
+  .card-hover:hover {
+    box-shadow: 
+      0 0 20px rgba(168, 85, 247, 0.15),
+      0 0 40px rgba(168, 85, 247, 0.05),
+      inset 0 0 20px rgba(168, 85, 247, 0.03);
+    border-color: rgba(168, 85, 247, 0.4);
+    transform: translateY(-2px);
+  }
+
+  .input-field {
+    @apply w-full bg-bg-surface border border-white/10 rounded-xl
+           px-4 py-3 text-txt placeholder-txt-dim
+           focus:outline-none focus:border-neon-violet/50
+           transition-all duration-300;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+  }
+
+  .input-field:focus {
+    box-shadow: 
+      inset 0 2px 4px rgba(0, 0, 0, 0.2),
+      0 0 15px rgba(168, 85, 247, 0.2);
+  }
+
+  .badge {
+    @apply px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wide;
+    text-shadow: 0 0 10px currentColor;
+  }
+
+  .badge-green {
+    @apply badge bg-neon-green/15 text-neon-green border border-neon-green/30;
+    box-shadow: 0 0 10px rgba(34, 197, 94, 0.2);
+  }
+
+  .badge-red {
+    @apply badge bg-neon-red/15 text-neon-red border border-neon-red/30;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
+  }
+
+  .badge-yellow {
+    @apply badge bg-neon-yellow/15 text-neon-yellow border border-neon-yellow/30;
+    box-shadow: 0 0 10px rgba(234, 179, 8, 0.2);
+  }
+
+  .badge-violet {
+    @apply badge bg-neon-violet/15 text-neon-violet border border-neon-violet/30;
+    box-shadow: 0 0 10px rgba(168, 85, 247, 0.2);
+  }
+
+  .badge-blue {
+    @apply badge bg-neon-blue/15 text-neon-blue border border-neon-blue/30;
+    box-shadow: 0 0 10px rgba(6, 182, 212, 0.2);
+  }
+
+  .sidebar-link {
+    @apply flex items-center gap-3 px-4 py-3 rounded-xl text-sm
+           text-txt-muted hover:text-txt hover:bg-bg-hover
+           transition-all duration-200;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .sidebar-link::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    width: 2px;
+    background: linear-gradient(180deg, #a855f7, #06b6d4);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  .sidebar-link:hover::before {
+    opacity: 1;
+  }
+
+  .sidebar-link-active {
+    @apply sidebar-link bg-neon-violet/15 text-neon-violet border border-neon-violet/30;
+    box-shadow: 
+      0 0 15px rgba(168, 85, 247, 0.15),
+      inset 0 0 15px rgba(168, 85, 247, 0.05);
+  }
+
+  .sidebar-link-active::before {
+    opacity: 1;
+    box-shadow: 0 0 10px rgba(168, 85, 247, 0.5);
+  }
+
+  .table-row {
+    @apply border-b border-white/5 hover:bg-bg-hover/50 transition-colors;
+  }
+
+  .stat-card {
+    @apply card flex flex-col gap-1;
+    position: relative;
+  }
+
+  .stat-card::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(168, 85, 247, 0.5), transparent);
+  }
+
+  .stat-value {
+    @apply text-3xl font-bold font-gaming;
+    text-shadow: 0 0 20px rgba(168, 85, 247, 0.3);
+  }
+
+  .stat-label {
+    @apply text-xs text-txt-muted uppercase tracking-wider;
+  }
+
+  /* Gaming animations */
+  @keyframes neonPulse {
+    0%, 100% { box-shadow: 0 0 5px rgba(168, 85, 247, 0.5); }
+    50% { box-shadow: 0 0 20px rgba(168, 85, 247, 0.8), 0 0 30px rgba(168, 85, 247, 0.4); }
+  }
+
+  @keyframes borderGlow {
+    0%, 100% { border-color: rgba(168, 85, 247, 0.3); }
+    50% { border-color: rgba(168, 85, 247, 0.7); }
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-5px); }
+  }
+
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  .animate-neon-pulse {
+    animation: neonPulse 2s ease-in-out infinite;
+  }
+
+  .animate-border-glow {
+    animation: borderGlow 2s ease-in-out infinite;
+  }
+
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  .animate-shimmer {
+    background: linear-gradient(90deg, transparent, rgba(168, 85, 247, 0.1), transparent);
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite;
+  }
+
+  /* Gaming button styles */
+  .btn-gaming {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .btn-gaming::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s;
+  }
+
+  .btn-gaming:hover::before {
+    left: 100%;
+  }
+
+  /* Gaming card variant */
+  .card-gaming {
+    background: linear-gradient(135deg, rgba(18, 18, 26, 0.9), rgba(26, 26, 46, 0.9));
+    border: 1px solid rgba(168, 85, 247, 0.2);
+    position: relative;
+  }
+
+  .card-gaming::before {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: -1px;
+    right: -1px;
+    bottom: -1px;
+    border-radius: inherit;
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.3), rgba(6, 182, 212, 0.3));
+    z-index: -1;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  .card-gaming:hover::before {
+    opacity: 1;
+  }
+
+  /* Neon text effect */
+  .text-neon {
+    text-shadow: 0 0 10px currentColor, 0 0 20px currentColor;
+  }
+
+  /* Gaming border effect */
+  .border-gaming {
+    border: 1px solid rgba(168, 85, 247, 0.3);
+    position: relative;
+  }
+
+  .border-gaming::after {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    right: -2px;
+    bottom: -2px;
+    border-radius: inherit;
+    background: linear-gradient(45deg, rgba(168, 85, 247, 0.5), rgba(6, 182, 212, 0.5));
+    z-index: -1;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  .border-gaming:hover::after {
+    opacity: 1;
+  }
+}

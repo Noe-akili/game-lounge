@@ -1,0 +1,12 @@
+import { neon } from '@neondatabase/serverless';
+import dotenv from 'dotenv';
+import bcrypt from 'bcryptjs';
+dotenv.config({ path: 'server/.env' });
+const sql = neon(process.env.DATABASE_URL!);
+const hash = bcrypt.hashSync('employe123', 10);
+console.log('new hash', hash);
+await sql`UPDATE users SET password_hash = ${hash} WHERE email = 'john@gamelounge.com'`;
+console.log('updated');
+const rows = await sql`SELECT * FROM users WHERE email = 'john@gamelounge.com'`;
+console.log(rows);
+console.log('check', bcrypt.compareSync('employe123', rows[0].password_hash));

@@ -1,0 +1,14 @@
+{
+  "appId": "com.jetonqr.app",
+  "appName": "JETON-QR Pro+",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "CapacitorNodeJS": {
+      "nodeDir": "nodejs",
+      "startMode": "manual"
+    }
+  }
+}

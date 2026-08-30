@@ -1,0 +1,51 @@
+{
+  "name": "game-lounge",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "server": "tsx server/server.ts",
+    "seed": "tsx server/seed.ts",
+    "start": "tsx server/server.ts",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.0",
+    "bcryptjs": "^2.4.3",
+    "chart.js": "^4.5.1",
+    "cors": "^2.8.6",
+    "dotenv": "^16.6.0",
+    "drizzle-orm": "^0.38.0",
+    "express": "^4.22.2",
+    "express-rate-limit": "^8.7.0",
+    "gsap": "^3.13.0",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "jspdf": "^2.5.2",
+    "lucide-vue-next": "^0.469.0",
+    "motion": "^12.23.24",
+    "motion-v": "^1.7.0",
+    "pinia": "^2.3.1",
+    "sonner": "^1.7.4",
+    "vue": "^3.5.13",
+    "vue-chartjs": "^5.3.4",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@rollup/wasm-node": "^4.62.4",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.18",
+    "@types/express": "^5.0.3",
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/node": "^20.17.30",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "autoprefixer": "^10.5.4",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.19",
+    "tsx": "^4.19.3",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.7"
+  }
+}
