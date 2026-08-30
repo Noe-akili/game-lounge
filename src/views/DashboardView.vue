@@ -65,7 +65,7 @@ async function fetchData() {
   try {
     consoles.value = await api.get('/consoles')
   } catch (e) {
-    console.error('Fetch consoles error:', e)
+    console.error('Erreur chargement consoles:', e)
   } finally {
     loading.value = false
   }

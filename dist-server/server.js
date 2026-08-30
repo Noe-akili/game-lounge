@@ -66937,6 +66937,7 @@ CREATE TABLE IF NOT EXISTS sessions_jeu (
   joueur_id INTEGER NOT NULL,
   jeu_id INTEGER NOT NULL,
   employe_id INTEGER NOT NULL,
+  tarif_id INTEGER,
   debut TEXT NOT NULL,
   fin TEXT,
   duree_minutes INTEGER NOT NULL DEFAULT 0,
@@ -66993,7 +66994,18 @@ CREATE TABLE IF NOT EXISTS error_logs (
   created_at TEXT NOT NULL,
   sent INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  titre TEXT,
+  contenu TEXT NOT NULL,
+  auteur TEXT,
+  created_at TEXT NOT NULL
+);
 `);
+    try {
+      sqliteDb.exec(`ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER`);
+    } catch {
+    }
   }
   return sqliteDb;
 }
@@ -67021,30 +67033,51 @@ async function logError(error, endpoint, method) {
   const stmt = db.prepare(`INSERT INTO error_logs (message, stack, endpoint, method, created_at, sent) VALUES (?, ?, ?, ?, ?, ?)`);
   const now = (/* @__PURE__ */ new Date()).toISOString();
   stmt.run(error.message, error.stack || "", endpoint || "", method || "", now, 0);
+  const htmlBody = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #dc2626;">\u{1F534} Erreur d\xE9tect\xE9e</h2>
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Endpoint</td><td style="padding: 8px; border: 1px solid #ddd;">${endpoint || "N/A"}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">M\xE9thode</td><td style="padding: 8px; border: 1px solid #ddd;">${method || "N/A"}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Message</td><td style="padding: 8px; border: 1px solid #ddd;">${error.message}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Date</td><td style="padding: 8px; border: 1px solid #ddd;">${now}</td></tr>
+      </table>
+      <h3 style="margin-top: 20px;">Stack Trace:</h3>
+      <pre style="background: #f5f5f5; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 12px;">${error.stack || "N/A"}</pre>
+    </div>
+  `;
   if (emailTransporter) {
     try {
       await emailTransporter.sendMail({
-        from: `"Game Lounge Error" <${process.env.SMTP_USER}>`,
+        from: `"Game Lounge Erreur" <${process.env.SMTP_USER}>`,
         to: EMAIL_TO,
-        subject: `\u{1F534} Erreur Game Lounge - ${endpoint || "Unknown"}`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #dc2626;">\u{1F534} Erreur d\xE9tect\xE9e</h2>
-            <table style="width: 100%; border-collapse: collapse;">
-              <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Endpoint</td><td style="padding: 8px; border: 1px solid #ddd;">${endpoint || "N/A"}</td></tr>
-              <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">M\xE9thode</td><td style="padding: 8px; border: 1px solid #ddd;">${method || "N/A"}</td></tr>
-              <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Message</td><td style="padding: 8px; border: 1px solid #ddd;">${error.message}</td></tr>
-              <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Date</td><td style="padding: 8px; border: 1px solid #ddd;">${now}</td></tr>
-            </table>
-            <h3 style="margin-top: 20px;">Stack Trace:</h3>
-            <pre style="background: #f5f5f5; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 12px;">${error.stack || "N/A"}</pre>
-          </div>
-        `
+        subject: `\u{1F534} Erreur Game Lounge - ${endpoint || "Inconnu"}`,
+        html: htmlBody
       });
       db.prepare(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`).run(error.message, now);
       console.log(`\u{1F4E7} Erreur envoy\xE9e par email \xE0 ${EMAIL_TO}`);
     } catch (emailErr) {
       console.warn("\u26A0\uFE0F Envoi email \xE9chou\xE9:", emailErr.message);
+    }
+  } else if (process.env.SMTP_USER) {
+    try {
+      const nodemailerMod = await import("nodemailer");
+      const transport = nodemailerMod.createTransport({
+        host: process.env.SMTP_HOST || "smtp.gmail.com",
+        port: Number(process.env.SMTP_PORT) || 587,
+        secure: process.env.SMTP_SECURE === "true",
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+      });
+      await transport.sendMail({
+        from: `"Game Lounge Erreur" <${process.env.SMTP_USER}>`,
+        to: EMAIL_TO,
+        subject: `\u{1F534} Erreur Game Lounge - ${endpoint || "Inconnu"}`,
+        html: htmlBody
+      });
+      db.prepare(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`).run(error.message, now);
+      console.log(`\u{1F4E7} Erreur envoy\xE9e par email (fallback) \xE0 ${EMAIL_TO}`);
+    } catch (fallbackErr) {
+      console.warn("\u26A0\uFE0F Envoi email fallback \xE9chou\xE9:", fallbackErr.message);
     }
   }
 }
@@ -67145,7 +67178,7 @@ async function insert(table, record) {
   const clean = jsToRow({ ...record });
   delete clean.id;
   const cols = Object.keys(clean);
-  if (cols.length === 0) throw new Error("No columns to insert");
+  if (cols.length === 0) throw new Error("Aucune colonne \xE0 ins\xE9rer");
   const values = cols.map((c) => clean[c]);
   const db = getSqliteDb();
   const placeholders = cols.map(() => "?").join(", ");
@@ -67588,6 +67621,37 @@ app.get("/api/joueurs/:id/historique", authMiddleware, async (req, res) => {
   }));
   res.json({ joueur, sessions: enrichedSessions, transactions, factures });
 });
+app.get("/api/messages", authMiddleware, async (req, res) => {
+  const messages = await queryAll("messages");
+  res.json(messages.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")));
+});
+app.post("/api/messages", authMiddleware, async (req, res) => {
+  const { titre, contenu } = req.body;
+  if (!contenu || !contenu.trim()) return res.status(400).json({ message: "Contenu requis" });
+  const msg = await insert("messages", {
+    titre: titre || null,
+    contenu: contenu.trim().slice(0, 1e3),
+    auteur: req.user?.nom || "Syst\xE8me",
+    created_at: (/* @__PURE__ */ new Date()).toISOString()
+  });
+  res.status(201).json(msg);
+});
+app.put("/api/messages/:id", authMiddleware, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!isValidId(id)) return res.status(400).json({ message: "ID invalide" });
+  const { titre, contenu } = req.body;
+  const updates = {};
+  if (titre !== void 0) updates.titre = titre;
+  if (contenu !== void 0) updates.contenu = contenu.trim().slice(0, 1e3);
+  const msg = await update("messages", id, updates);
+  res.json(msg);
+});
+app.delete("/api/messages/:id", authMiddleware, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!isValidId(id)) return res.status(400).json({ message: "ID invalide" });
+  await remove("messages", id);
+  res.json({ success: true });
+});
 app.get("/api/tarifs", authMiddleware, async (req, res) => {
   res.json(await queryAll("tarifs"));
 });
@@ -67912,7 +67976,7 @@ app.get("/api/factures/:id/pdf", authMiddleware, async (req, res) => {
     res.setHeader("Content-Disposition", `attachment; filename="${f.numero_facture}.pdf"`);
     res.send(Buffer.from(doc.output("arraybuffer")));
   } catch (err) {
-    logError(err instanceof Error ? err : new Error(err.message || "PDF generation error"), "/api/factures/:id/pdf", "GET").catch(() => {
+    logError(err instanceof Error ? err : new Error(err.message || "Erreur de g\xE9n\xE9ration PDF"), "/api/factures/:id/pdf", "GET").catch(() => {
     });
     res.status(500).json({ message: "Erreur g\xE9n\xE9ration PDF", error: err.message });
   }
@@ -68350,7 +68414,7 @@ app.get("*", async (req, res) => {
   }
 });
 app.use((err, req, res, _next) => {
-  console.error("Server error:", err);
+  console.error("Erreur serveur:", err);
   logError(err instanceof Error ? err : new Error(String(err)), req.originalUrl, req.method).catch(() => {
   });
   res.status(500).json({ message: "Erreur interne du serveur" });

@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS sessions_jeu (
   joueur_id INTEGER NOT NULL,
   jeu_id INTEGER NOT NULL,
   employe_id INTEGER NOT NULL,
+  tarif_id INTEGER,
   debut TEXT NOT NULL,
   fin TEXT,
   duree_minutes INTEGER NOT NULL DEFAULT 0,
@@ -132,7 +133,16 @@ CREATE TABLE IF NOT EXISTS error_logs (
   created_at TEXT NOT NULL,
   sent INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  titre TEXT,
+  contenu TEXT NOT NULL,
+  auteur TEXT,
+  created_at TEXT NOT NULL
+);
 `)
+    // Migration: add tarif_id column if missing
+    try { sqliteDb.exec(`ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER`) } catch {}
   }
   return sqliteDb
 }
@@ -167,32 +177,54 @@ export async function logError(error: Error, endpoint?: string, method?: string)
   const now = new Date().toISOString()
   stmt.run(error.message, error.stack || '', endpoint || '', method || '', now, 0)
 
+  const htmlBody = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #dc2626;">🔴 Erreur détectée</h2>
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Endpoint</td><td style="padding: 8px; border: 1px solid #ddd;">${endpoint || 'N/A'}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Méthode</td><td style="padding: 8px; border: 1px solid #ddd;">${method || 'N/A'}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Message</td><td style="padding: 8px; border: 1px solid #ddd;">${error.message}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Date</td><td style="padding: 8px; border: 1px solid #ddd;">${now}</td></tr>
+      </table>
+      <h3 style="margin-top: 20px;">Stack Trace:</h3>
+      <pre style="background: #f5f5f5; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 12px;">${error.stack || 'N/A'}</pre>
+    </div>
+  `
+
   // Try to send email if transporter available
   if (emailTransporter) {
     try {
       await emailTransporter.sendMail({
-        from: `"Game Lounge Error" <${process.env.SMTP_USER}>`,
+        from: `"Game Lounge Erreur" <${process.env.SMTP_USER}>`,
         to: EMAIL_TO,
-        subject: `🔴 Erreur Game Lounge - ${endpoint || 'Unknown'}`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #dc2626;">🔴 Erreur détectée</h2>
-            <table style="width: 100%; border-collapse: collapse;">
-              <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Endpoint</td><td style="padding: 8px; border: 1px solid #ddd;">${endpoint || 'N/A'}</td></tr>
-              <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Méthode</td><td style="padding: 8px; border: 1px solid #ddd;">${method || 'N/A'}</td></tr>
-              <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Message</td><td style="padding: 8px; border: 1px solid #ddd;">${error.message}</td></tr>
-              <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Date</td><td style="padding: 8px; border: 1px solid #ddd;">${now}</td></tr>
-            </table>
-            <h3 style="margin-top: 20px;">Stack Trace:</h3>
-            <pre style="background: #f5f5f5; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 12px;">${error.stack || 'N/A'}</pre>
-          </div>
-        `,
+        subject: `🔴 Erreur Game Lounge - ${endpoint || 'Inconnu'}`,
+        html: htmlBody,
       })
-      // Mark as sent
       db.prepare(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`).run(error.message, now)
       console.log(`📧 Erreur envoyée par email à ${EMAIL_TO}`)
     } catch (emailErr) {
       console.warn('⚠️ Envoi email échoué:', (emailErr as Error).message)
+    }
+  } else if (process.env.SMTP_USER) {
+    // Fallback: try to send via fetch (useful in bundled APK mode without nodemailer)
+    try {
+      const nodemailerMod = await import('nodemailer')
+      const transport = nodemailerMod.createTransport({
+        host: process.env.SMTP_HOST || 'smtp.gmail.com',
+        port: Number(process.env.SMTP_PORT) || 587,
+        secure: process.env.SMTP_SECURE === 'true',
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+      })
+      await transport.sendMail({
+        from: `"Game Lounge Erreur" <${process.env.SMTP_USER}>`,
+        to: EMAIL_TO,
+        subject: `🔴 Erreur Game Lounge - ${endpoint || 'Inconnu'}`,
+        html: htmlBody,
+      })
+      db.prepare(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`).run(error.message, now)
+      console.log(`📧 Erreur envoyée par email (fallback) à ${EMAIL_TO}`)
+    } catch (fallbackErr) {
+      console.warn('⚠️ Envoi email fallback échoué:', (fallbackErr as Error).message)
     }
   }
 }
@@ -313,7 +345,7 @@ export async function insert(table: TableName, record: Record<string, unknown>):
   const clean = jsToRow({ ...record })
   delete clean.id
   const cols = Object.keys(clean)
-  if (cols.length === 0) throw new Error('No columns to insert')
+  if (cols.length === 0) throw new Error('Aucune colonne à insérer')
   const values = cols.map(c => clean[c])
 
   const db = getSqliteDb()

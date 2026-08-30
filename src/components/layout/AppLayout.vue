@@ -80,7 +80,7 @@ async function startEmbeddedServer() {
       serverReady.value = true
     }
   } catch (e) {
-    console.error('Server start failed:', e)
+    console.error('Échec démarrage serveur:', e)
     setTimeout(() => startEmbeddedServer(), 2000)
   }
 }

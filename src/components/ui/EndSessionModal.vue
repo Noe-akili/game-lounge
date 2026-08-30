@@ -190,7 +190,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       emit('ended')
       emit('close')
     } catch (e: any) {
-      console.error('Terminer session error', e)
+      console.error('Erreur terminaison session:', e)
       toast.error(e.message || 'Erreur lors de la terminaison')
     } finally {
       loading.value = false

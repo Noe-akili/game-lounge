@@ -276,6 +276,42 @@ app.get('/api/joueurs/:id/historique', authMiddleware, async (req: any, res: any
   res.json({ joueur, sessions: enrichedSessions, transactions, factures })
 })
 
+// ===== MESSAGES =====
+app.get('/api/messages', authMiddleware, async (req: any, res: any) => {
+  const messages = await queryAll('messages')
+  res.json(messages.sort((a: any, b: any) => (b.created_at || '').localeCompare(a.created_at || '')))
+})
+
+app.post('/api/messages', authMiddleware, async (req: any, res: any) => {
+  const { titre, contenu } = req.body
+  if (!contenu || !contenu.trim()) return res.status(400).json({ message: 'Contenu requis' })
+  const msg = await insert('messages', {
+    titre: titre || null,
+    contenu: contenu.trim().slice(0, 1000),
+    auteur: req.user?.nom || 'Système',
+    created_at: new Date().toISOString()
+  })
+  res.status(201).json(msg)
+})
+
+app.put('/api/messages/:id', authMiddleware, async (req: any, res: any) => {
+  const id = Number(req.params.id)
+  if (!isValidId(id)) return res.status(400).json({ message: 'ID invalide' })
+  const { titre, contenu } = req.body
+  const updates: any = {}
+  if (titre !== undefined) updates.titre = titre
+  if (contenu !== undefined) updates.contenu = contenu.trim().slice(0, 1000)
+  const msg = await update('messages', id, updates)
+  res.json(msg)
+})
+
+app.delete('/api/messages/:id', authMiddleware, async (req: any, res: any) => {
+  const id = Number(req.params.id)
+  if (!isValidId(id)) return res.status(400).json({ message: 'ID invalide' })
+  await remove('messages', id)
+  res.json({ success: true })
+})
+
 // ===== TARIFS =====
 app.get('/api/tarifs', authMiddleware, async (req: any, res: any) => {
   res.json(await queryAll('tarifs'))
@@ -598,7 +634,7 @@ app.get('/api/factures/:id/pdf', authMiddleware, async (req: any, res: any) => {
     res.setHeader('Content-Disposition', `attachment; filename="${f.numero_facture}.pdf"`)
     res.send(Buffer.from(doc.output('arraybuffer') as ArrayBuffer))
   } catch (err: any) {
-    logError(err instanceof Error ? err : new Error(err.message || 'PDF generation error'), '/api/factures/:id/pdf', 'GET').catch(() => {})
+    logError(err instanceof Error ? err : new Error(err.message || 'Erreur de génération PDF'), '/api/factures/:id/pdf', 'GET').catch(() => {})
     res.status(500).json({ message: 'Erreur génération PDF', error: err.message })
   }
 })
@@ -1086,7 +1122,7 @@ app.get('*', async (req: any, res: any) => {
 
 // ===== ERROR HANDLER =====
 app.use((err: any, req: any, res: any, _next: any) => {
-  console.error('Server error:', err)
+  console.error('Erreur serveur:', err)
   logError(err instanceof Error ? err : new Error(String(err)), req.originalUrl, req.method).catch(() => {})
   res.status(500).json({ message: 'Erreur interne du serveur' })
 })
