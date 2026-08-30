@@ -5,12 +5,14 @@ import { dirname, join } from 'node:path'
 import dotenv from 'dotenv'
 import nodemailer from 'nodemailer'
 
-// Load env from server/.env and frontend/.env
-dotenv.config({ path: join(dirname(fileURLToPath(import.meta.url)), '.env') })
+// Load env
+try {
+  const envDir = process.env.DATA_DIR || (typeof __dirname !== 'undefined' ? __dirname : '.')
+  dotenv.config({ path: join(envDir, '.env') })
+} catch {}
 dotenv.config()
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = join(__dirname, 'data')
+const DATA_DIR = process.env.DATA_DIR || join('.', 'data')
 const DB_PATH = join(DATA_DIR, 'app.db')
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })

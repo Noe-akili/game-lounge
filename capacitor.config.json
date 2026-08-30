@@ -2,10 +2,6 @@
   "appId": "com.gamelounge.app",
   "appName": "Game Lounge",
   "webDir": "dist",
-  "server": {
-    "url": "http://localhost:3001",
-    "cleartext": true
-  },
   "android": {
     "allowMixedContent": true
   }

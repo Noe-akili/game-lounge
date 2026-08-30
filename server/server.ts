@@ -5,6 +5,7 @@ import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { existsSync } from 'node:fs'
 import { queryAll, queryOne, insert, update, remove, logError } from './db.ts'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
@@ -1040,7 +1041,15 @@ app.delete('/api/parametres/fidelite/:id', authMiddleware, adminOnly, async (req
 
 // ===== STATIC FILES =====
 // All SQL queries use parameterized queries via db.ts (using ? and $1 placeholders) to prevent SQL injection
-app.use(express.static(join(__dirname, '../dist'), {
+const distPaths = [
+  join(__dirname, 'public'),
+  join(__dirname, '../dist'),
+  join(process.env.DATA_DIR || __dirname, '../dist'),
+  join(process.env.DATA_DIR || __dirname, 'public'),
+]
+const distDir = distPaths.find(p => existsSync(p)) || distPaths[0]
+
+app.use(express.static(distDir, {
   setHeaders: (res, path) => {
     if (path.endsWith('.html')) {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
@@ -1053,7 +1062,7 @@ app.use(express.static(join(__dirname, '../dist'), {
 }))
 app.get('*', async (req: any, res: any) => {
   if (!req.path.startsWith('/api')) {
-    res.sendFile(join(__dirname, '../dist/index.html'))
+    res.sendFile(join(distDir, 'index.html'))
   }
 })
 

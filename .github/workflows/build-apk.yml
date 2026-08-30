@@ -23,6 +23,32 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      - name: Bundle server
+        run: npx esbuild server/server.ts --bundle --platform=node --format=esm --outfile=dist-server/server.js --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+
+      - name: Download Node.js for Android ARM64
+        run: |
+          NODE_VERSION="22.12.0"
+          curl -sL "https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-arm64-musl.tar.xz" -o node-arm64.tar.xz
+          mkdir -p tmp-node
+          tar -xf node-arm64.tar.xz -C tmp-node
+          mkdir -p android/app/src/main/assets/nodejs/bin
+          cp tmp-node/node-v${NODE_VERSION}-linux-arm64-musl/bin/node android/app/src/main/assets/nodejs/bin/node
+          chmod +x android/app/src/main/assets/nodejs/bin/node
+          ls -lh android/app/src/main/assets/nodejs/bin/node
+          rm -rf tmp-node node-arm64.tar.xz
+
+      - name: Copy frontend to Android assets
+        run: |
+          mkdir -p android/app/src/main/assets/server/public
+          cp -r dist/* android/app/src/main/assets/server/public/
+
+      - name: Copy server bundle to Android assets
+        run: |
+          mkdir -p android/app/src/main/assets/server
+          cp dist-server/server.js android/app/src/main/assets/server/server.js
+          cp server/.env android/app/src/main/assets/server/.env 2>/dev/null || true
+
       - name: Sync Capacitor
         run: npx cap sync android
 

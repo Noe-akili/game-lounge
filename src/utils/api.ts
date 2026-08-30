@@ -1,5 +1,6 @@
 // @ts-nocheck
-const API_BASE = '/api'
+const isCapacitor = typeof window !== 'undefined' && (window as any).Capacitor
+const API_BASE = isCapacitor ? 'http://127.0.0.1:3001/api' : '/api'
 
 async function request(path, options = {}) {
   const token = localStorage.getItem('gl_token')
