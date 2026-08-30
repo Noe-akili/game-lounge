@@ -357,14 +357,18 @@ export async function query(table: TableName, conditions: Record<string, unknown
 export async function insert(table: TableName, record: Record<string, unknown>): Promise<Record<string, unknown>> {
   const clean = jsToRow({ ...record })
   delete clean.id
-  const ts = now()
-  if (!clean.created_at) clean.created_at = ts
-  clean.updated_at = ts
+  // Auto-add created_at/updated_at only if table has these columns
+  const db = getSqliteDb()
+  try {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c: any) => c.name)
+    const ts = now()
+    if (cols.includes('created_at') && !clean.created_at) clean.created_at = ts
+    if (cols.includes('updated_at')) clean.updated_at = ts
+  } catch {}
   const cols = Object.keys(clean)
   if (cols.length === 0) throw new Error('Aucune colonne à insérer')
   const values = cols.map(c => clean[c])
 
-  const db = getSqliteDb()
   const placeholders = cols.map(() => '?').join(', ')
   const stmt = db.prepare(`INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})`)
   const result = stmt.run(...values as unknown[])
@@ -380,7 +384,11 @@ export async function insert(table: TableName, record: Record<string, unknown>):
 export async function update(table: TableName, id: number, updates: Record<string, unknown>): Promise<Record<string, unknown> | null> {
   const clean = jsToRow({ ...updates })
   delete clean.id
-  clean.updated_at = now()
+  // Auto-add updated_at only if table has this column
+  try {
+    const tableCols = getSqliteDb().prepare(`PRAGMA table_info(${table})`).all().map((c: any) => c.name)
+    if (tableCols.includes('updated_at')) clean.updated_at = now()
+  } catch {}
   const cols = Object.keys(clean)
   const values = cols.map(c => clean[c])
 

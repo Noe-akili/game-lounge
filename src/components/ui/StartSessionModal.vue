@@ -21,6 +21,7 @@
       </div>
 
       <div class="max-h-[50vh] overflow-y-auto pr-1">
+        <!-- ÉTAPE 0: Joueur -->
         <div v-if="step === 0">
           <label class="block text-sm font-medium text-txt-muted mb-2">Rechercher un joueur</label>
           <div class="relative mb-3">
@@ -48,6 +49,7 @@
           </button>
         </div>
 
+        <!-- ÉTAPE 1: Console -->
         <div v-if="step === 1">
           <p class="text-sm text-txt-dim mb-3">Consoles disponibles :</p>
           <div class="space-y-2">
@@ -66,9 +68,10 @@
           </div>
         </div>
 
+        <!-- ÉTAPE 2: Jeu -->
         <div v-if="step === 2">
-          <p class="text-sm text-txt-dim mb-3">Choisir un jeu :</p>
-          <div class="grid grid-cols-2 gap-2 sm:gap-3 mb-4">
+          <p class="text-sm text-txt-dim mb-3">Choisir un jeu <span class="text-neon-violet font-medium">{{ selectedConsole?.type }}</span> :</p>
+          <div class="grid grid-cols-2 gap-2 sm:gap-3">
             <button v-for="j in jeux" :key="j.id"
               @click="selectedJeu = j"
               class="p-2 sm:p-3 rounded-xl border transition-all text-center"
@@ -79,31 +82,43 @@
               <p class="text-xs sm:text-sm font-medium truncate">{{ j.titre }}</p>
               <p class="text-[10px] sm:text-xs text-txt-dim">{{ j.genre }}</p>
             </button>
+            <p v-if="jeux.length === 0" class="col-span-2 text-center text-txt-dim py-6">Aucun jeu disponible</p>
           </div>
+        </div>
 
-          <p class="text-sm text-txt-dim mb-2">Choisir un tarif <span v-if="selectedJeu" class="text-neon-violet">pour {{ selectedJeu.titre }} ({{ selectedConsole?.type }})</span> :</p>
-          <div v-if="filteredTarifs.length === 0" class="text-center py-6 text-txt-dim text-sm">Aucun tarif disponible pour ce jeu</div>
-          <div v-else class="space-y-2 max-h-32 overflow-y-auto">
+        <!-- ÉTAPE 3: Tarif -->
+        <div v-if="step === 3">
+          <p class="text-sm text-txt-dim mb-1">Session : <span class="text-neon-violet font-medium">{{ selectedJeu?.titre }}</span> sur <span class="text-neon-green font-medium">{{ selectedConsole?.nom }}</span></p>
+          <p class="text-sm text-txt-dim mb-3">Choisir un tarif :</p>
+          <div v-if="filteredTarifs.length === 0" class="text-center py-8 text-txt-dim">
+            <p class="text-sm">Aucun tarif pour ce jeu</p>
+            <p class="text-xs mt-1">Créez un tarif dans Paramètres → Tarifs</p>
+          </div>
+          <div v-else class="space-y-2">
             <button v-for="t in filteredTarifs" :key="t.id"
-              @click="selectedTarif = t; dureeMin = t.duree_minutes; prixTarif = t.prix"
+              @click="selectedTarif = t"
               class="w-full flex items-center justify-between p-3 sm:p-4 rounded-xl border transition-all"
               :class="selectedTarif?.id === t.id ? 'border-neon-blue bg-neon-blue/10' : 'border-white/5 hover:border-white/20'">
-              <div class="min-w-0 text-left">
-                <p class="font-medium text-sm truncate">{{ t.description || t.type }}</p>
-                <p class="text-xs text-txt-dim">{{ t.duree_minutes }}min · {{ t.console_type || '' }} {{ t.jeu || '' }}</p>
+              <div class="min-w-0 text-left flex-1">
+                <p class="font-medium text-sm truncate">{{ t.description || `${t.type} ${t.jeu || ''}` }}</p>
+                <div class="flex items-center gap-2 mt-1">
+                  <span class="text-xs px-2 py-0.5 rounded-full" :class="t.duree_minutes <= 15 ? 'bg-neon-yellow/15 text-neon-yellow' : t.duree_minutes <= 30 ? 'bg-neon-blue/15 text-neon-blue' : 'bg-neon-green/15 text-neon-green'">
+                    {{ t.duree_minutes }}min
+                  </span>
+                  <span v-if="t.console_type" class="text-xs text-txt-dim">{{ t.console_type }}</span>
+                </div>
               </div>
-              <span class="font-gaming font-bold text-neon-green shrink-0 ml-2">{{ formatCurrency(t.prix) }}</span>
+              <span class="font-gaming font-bold text-neon-green shrink-0 ml-3 text-lg">{{ formatCurrency(t.prix) }}</span>
             </button>
           </div>
-          <div v-if="selectedTarifAuto" class="mt-2 text-sm text-txt-dim">Durée auto: <span class="font-gaming text-neon-green">{{ selectedTarifAuto.duree_minutes }}min</span> | Prix auto: <span class="font-gaming text-neon-green">{{ formatCurrency(selectedTarifAuto.prix) }}</span></div>
         </div>
       </div>
 
       <div class="flex gap-3 mt-4 sm:mt-6 pt-4 border-t border-white/5">
         <button v-if="step > 0" @click="prevStep" class="btn-neon-outline flex-1">Retour</button>
-        <button v-if="step < 2" @click="nextStep" :disabled="!canProceed"
+        <button v-if="step < 3" @click="nextStep" :disabled="!canProceed"
           class="btn-neon-violet flex-1">Suivant</button>
-        <button v-if="step === 2" @click="startSession" :disabled="!selectedJeu || !selectedTarif || loading"
+        <button v-if="step === 3" @click="startSession" :disabled="!selectedTarif || loading"
           class="btn-neon-green flex-1 flex items-center justify-center gap-2">
           <Loader2 v-if="loading" class="w-5 h-5 animate-spin" />
           <Play v-else class="w-5 h-5" />
@@ -142,7 +157,7 @@ import { isValidNom, isValidPhone, isValidEmail, sanitizeInput, isValidId } from
 const props = defineProps({ open: Boolean, console: Object })
 const emit = defineEmits(['close', 'started'])
 
-const steps = ['Joueur', 'Console', 'Jeu']
+const steps = ['Joueur', 'Console', 'Jeu', 'Tarif']
 const step = ref(0)
 const loading = ref(false)
 const searchQuery = ref('')
@@ -154,12 +169,10 @@ const selectedJeu = ref(null)
 const selectedTarif = ref(null)
 const jeux = ref([])
 const tarifs = ref([])
-const dureeMin = ref('')
-const prixTarif = ref('')
 const showNewPlayer = ref(false)
 const newPlayer = reactive({ nom: '', telephone: '', email: '' })
 
-  const availableConsoles = computed(() => {
+const availableConsoles = computed(() => {
   return allConsoles.value.filter(c => c.etat === 'disponible' && !c.session_id)
 })
 
@@ -170,28 +183,20 @@ const filteredJoueurs = computed(() => {
 })
 
 const filteredTarifs = computed(() => {
-  if (!selectedJeu.value || !selectedConsole.value) return tarifs.value
+  if (!selectedJeu.value || !selectedConsole.value) return []
   const consoleType = selectedConsole.value.type
   const jeuTitre = selectedJeu.value.titre
-  // Filtrer par console_type et jeu, si disponible, sinon montrer tous
-  const filtered = tarifs.value.filter(t => {
+  return tarifs.value.filter(t => {
     const matchConsole = !t.console_type || t.console_type === consoleType
-    const matchJeu = !t.jeu || t.jeu === jeuTitre || t.jeu === jeuTitre.split(' ')[0]
+    const matchJeu = !t.jeu || t.jeu === jeuTitre
     return matchConsole && matchJeu
   })
-  return filtered.length > 0 ? filtered : tarifs.value
-})
-
-const selectedTarifAuto = computed(() => {
-  const filtered = filteredTarifs.value
-  if (filtered.length === 0) return null
-  // Prendre le premier tarif matching
-  return filtered[0]
 })
 
 const canProceed = computed(() => {
   if (step.value === 0) return !!selectedJoueur.value
   if (step.value === 1) return !!selectedConsole.value
+  if (step.value === 2) return !!selectedJeu.value
   return true
 })
 
@@ -205,21 +210,9 @@ watch(() => props.open, (v) => {
     searchQuery.value = ''
     loadData()
     if (props.console) {
+      step.value = 2
       loadJeux(props.console.id)
     }
-  }
-})
-
-watch([selectedConsole, selectedJeu], () => {
-  const autoTarif = selectedTarifAuto.value
-  if (autoTarif) {
-    selectedTarif.value = autoTarif
-    dureeMin.value = autoTarif.duree_minutes
-    prixTarif.value = autoTarif.prix
-  } else {
-    selectedTarif.value = null
-    dureeMin.value = ''
-    prixTarif.value = ''
   }
 })
 
@@ -247,20 +240,19 @@ async function onSearch() {
 }
 
 function nextStep() {
-  if (step.value === 0 && selectedConsole.value) {
-    loadJeux(selectedConsole.value.id)
-    step.value = 2
-    return
-  }
   if (step.value === 1 && selectedConsole.value) {
     loadJeux(selectedConsole.value.id)
+    selectedJeu.value = null
+    selectedTarif.value = null
+  }
+  if (step.value === 2 && selectedJeu.value) {
+    selectedTarif.value = null
   }
   step.value++
 }
 
 function prevStep() {
-  if (step.value === 2 && props.console) step.value = 0
-  else step.value--
+  step.value--
 }
 
 async function loadJeux(consoleId) {
@@ -269,8 +261,8 @@ async function loadJeux(consoleId) {
 }
 
 async function createPlayer() {
-  if (!isValidNom(newPlayer.nom)) return toast.error('Nom invalide (2-50 caractères, lettres/chiffres/ -\'&)')
-  if (!isValidPhone(newPlayer.telephone)) return toast.error('Téléphone invalide (8-15 chiffres, ex: +243...)')
+  if (!isValidNom(newPlayer.nom)) return toast.error('Nom invalide (2-50 caractères)')
+  if (!isValidPhone(newPlayer.telephone)) return toast.error('Téléphone invalide (8-15 chiffres)')
   if (newPlayer.email && !isValidEmail(newPlayer.email)) return toast.error('Email invalide')
   newPlayer.nom = sanitizeInput(newPlayer.nom, 50)
   if (newPlayer.email) newPlayer.email = sanitizeInput(newPlayer.email, 100)
@@ -284,7 +276,7 @@ async function createPlayer() {
   } catch (e) { toast.error(e.message) }
 }
 
-  async function startSession() {
+async function startSession() {
   if (!isValidId(selectedConsole.value?.id)) return toast.error('Console invalide')
   if (!isValidId(selectedJoueur.value?.id)) return toast.error('Joueur invalide')
   if (!isValidId(selectedJeu.value?.id)) return toast.error('Jeu invalide')
@@ -296,8 +288,6 @@ async function createPlayer() {
       joueur_id: selectedJoueur.value.id,
       jeu_id: selectedJeu.value.id,
       tarif_id: selectedTarif.value.id,
-      tarif_prix: selectedTarif.value.prix,
-      duree_minutes: selectedTarif.value.duree_minutes,
     })
     emit('started')
     emit('close')

@@ -67193,13 +67193,17 @@ async function queryOne(table, filterFn) {
 async function insert(table, record) {
   const clean = jsToRow({ ...record });
   delete clean.id;
-  const ts = now();
-  if (!clean.created_at) clean.created_at = ts;
-  clean.updated_at = ts;
+  const db = getSqliteDb();
+  try {
+    const cols2 = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+    const ts = now();
+    if (cols2.includes("created_at") && !clean.created_at) clean.created_at = ts;
+    if (cols2.includes("updated_at")) clean.updated_at = ts;
+  } catch {
+  }
   const cols = Object.keys(clean);
   if (cols.length === 0) throw new Error("Aucune colonne \xE0 ins\xE9rer");
   const values = cols.map((c) => clean[c]);
-  const db = getSqliteDb();
   const placeholders = cols.map(() => "?").join(", ");
   const stmt = db.prepare(`INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders})`);
   const result = stmt.run(...values);
@@ -67212,7 +67216,11 @@ async function insert(table, record) {
 async function update(table, id, updates) {
   const clean = jsToRow({ ...updates });
   delete clean.id;
-  clean.updated_at = now();
+  try {
+    const tableCols = getSqliteDb().prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+    if (tableCols.includes("updated_at")) clean.updated_at = now();
+  } catch {
+  }
   const cols = Object.keys(clean);
   const values = cols.map((c) => clean[c]);
   const db = getSqliteDb();
