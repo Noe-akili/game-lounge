@@ -265,15 +265,23 @@ async function syncToNeon(table: string, operation: string, data?: any) {
   try {
     if (operation === 'insert' && data) {
       const cols = Object.keys(data).filter(k => k !== 'id')
-      const vals = cols.map(c => data[c])
+      const vals = cols.map(c => data[c] == null ? null : String(data[c]))
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ')
-      await neonSql(`INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders}) ON CONFLICT (id) DO NOTHING`, vals.map(String))
+      const updateCols = cols.filter(c => c !== 'id')
+      const updateClause = updateCols.map((c, i) => `${c} = $${i + 1}`).join(', ')
+      await neonSql(
+        updateCols.length > 0
+          ? `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders}) ON CONFLICT (id) DO UPDATE SET ${updateClause}`
+          : `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders}) ON CONFLICT (id) DO NOTHING`,
+        vals
+      )
     } else if (operation === 'update' && data) {
       const { id, ...updates } = data
       const cols = Object.keys(updates)
       if (cols.length > 0) {
         const setClause = cols.map((c, i) => `${c} = $${i + 1}`).join(', ')
-        await neonSql(`UPDATE ${table} SET ${setClause} WHERE id = $${cols.length + 1}`, [...cols.map(c => String(updates[c])), String(id)])
+        const vals = cols.map(c => updates[c] == null ? null : String(updates[c]))
+        await neonSql(`UPDATE ${table} SET ${setClause} WHERE id = $${cols.length + 1}`, [...vals, String(id)])
       }
     } else if (operation === 'delete' && data) {
       await neonSql(`DELETE FROM ${table} WHERE id = $1`, [String(data.id)])
@@ -298,6 +306,7 @@ if (useNeon && neonSql) {
       await neonSql(`CREATE TABLE IF NOT EXISTS jetons_transactions (id SERIAL PRIMARY KEY, joueur_id INTEGER NOT NULL, type TEXT NOT NULL, quantite INTEGER NOT NULL, raison TEXT, session_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT)`)
       await neonSql(`CREATE TABLE IF NOT EXISTS parametres_fidelite (id SERIAL PRIMARY KEY, regle_type TEXT NOT NULL, seuil INTEGER NOT NULL, jetons_attribues INTEGER NOT NULL, actif INTEGER NOT NULL DEFAULT 1, updated_at TEXT)`)
       await neonSql(`CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, titre TEXT, contenu TEXT NOT NULL, auteur TEXT, created_at TEXT NOT NULL, updated_at TEXT)`)
+      await neonSql(`CREATE TABLE IF NOT EXISTS error_logs (id SERIAL PRIMARY KEY, message TEXT NOT NULL, stack TEXT, endpoint TEXT, method TEXT, created_at TEXT NOT NULL, sent INTEGER NOT NULL DEFAULT 0, updated_at TEXT)`)
 
       // Migrations: add missing columns to existing Neon tables
       const neonMigrations = [
@@ -313,6 +322,7 @@ if (useNeon && neonSql) {
         `ALTER TABLE jetons_transactions ADD COLUMN IF NOT EXISTS updated_at TEXT`,
         `ALTER TABLE parametres_fidelite ADD COLUMN IF NOT EXISTS updated_at TEXT`,
         `ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE error_logs ADD COLUMN IF NOT EXISTS updated_at TEXT`,
       ]
       for (const sql of neonMigrations) {
         try { await neonSql(sql) } catch {}
@@ -326,7 +336,7 @@ if (useNeon && neonSql) {
   })()
 }
 
-type TableName = 'users' | 'consoles' | 'jeux' | 'joueurs' | 'tarifs' | 'sessions_jeu' | 'factures' | 'lignes_facture' | 'jetons_transactions' | 'parametres_fidelite' | 'messages'
+type TableName = 'users' | 'consoles' | 'jeux' | 'joueurs' | 'tarifs' | 'sessions_jeu' | 'factures' | 'lignes_facture' | 'jetons_transactions' | 'parametres_fidelite' | 'messages' | 'error_logs'
 
 function rowToJs(row: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
@@ -441,7 +451,7 @@ export async function raw(table: TableName): Promise<Record<string, unknown>[]> 
 }
 
 export async function getData(): Promise<Record<string, Record<string, unknown>[]>> {
-  const [users, consoles, jeux, joueurs, tarifs, sessions_jeu, factures, lignes_facture, jetons_transactions, parametres_fidelite, messages] = await Promise.all([
+  const [users, consoles, jeux, joueurs, tarifs, sessions_jeu, factures, lignes_facture, jetons_transactions, parametres_fidelite, messages, error_logs] = await Promise.all([
     queryAll('users'),
     queryAll('consoles'),
     queryAll('jeux'),
@@ -453,8 +463,9 @@ export async function getData(): Promise<Record<string, Record<string, unknown>[
     queryAll('jetons_transactions'),
     queryAll('parametres_fidelite'),
     queryAll('messages'),
+    queryAll('error_logs'),
   ])
-  return { users, consoles, jeux, joueurs, tarifs, sessions_jeu, factures, lignes_facture, jetons_transactions, parametres_fidelite, messages }
+  return { users, consoles, jeux, joueurs, tarifs, sessions_jeu, factures, lignes_facture, jetons_transactions, parametres_fidelite, messages, error_logs }
 }
 
 export function save(): void {}
@@ -473,7 +484,7 @@ let lastSyncAt: string | null = null
 let syncInProgress = false
 let lastPollAt: string = now()
 
-const SYNC_TABLES: TableName[] = ['users', 'consoles', 'jeux', 'joueurs', 'tarifs', 'sessions_jeu', 'factures', 'lignes_facture', 'jetons_transactions', 'parametres_fidelite', 'messages']
+const SYNC_TABLES: TableName[] = ['users', 'consoles', 'jeux', 'joueurs', 'tarifs', 'sessions_jeu', 'factures', 'lignes_facture', 'jetons_transactions', 'parametres_fidelite', 'messages', 'error_logs']
 
 export function isSyncEnabled(): boolean { return syncEnabled && useNeon }
 export function setSyncEnabled(v: boolean) {
@@ -554,7 +565,8 @@ async function pushTableToNeon(table: TableName): Promise<number> {
       const cols = Object.keys(row)
       const vals = cols.map(c => {
         const v = row[c]
-        return v === true ? '1' : v === false ? '0' : String(v ?? '')
+        if (v === null || v === undefined) return null
+        return v === true ? '1' : v === false ? '0' : String(v)
       })
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ')
       await neonSql(

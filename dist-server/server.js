@@ -67117,15 +67117,21 @@ async function syncToNeon(table, operation, data) {
   try {
     if (operation === "insert" && data) {
       const cols = Object.keys(data).filter((k) => k !== "id");
-      const vals = cols.map((c) => data[c]);
+      const vals = cols.map((c) => data[c] == null ? null : String(data[c]));
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
-      await neonSql(`INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders}) ON CONFLICT (id) DO NOTHING`, vals.map(String));
+      const updateCols = cols.filter((c) => c !== "id");
+      const updateClause = updateCols.map((c, i) => `${c} = $${i + 1}`).join(", ");
+      await neonSql(
+        updateCols.length > 0 ? `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders}) ON CONFLICT (id) DO UPDATE SET ${updateClause}` : `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders}) ON CONFLICT (id) DO NOTHING`,
+        vals
+      );
     } else if (operation === "update" && data) {
       const { id, ...updates } = data;
       const cols = Object.keys(updates);
       if (cols.length > 0) {
         const setClause = cols.map((c, i) => `${c} = $${i + 1}`).join(", ");
-        await neonSql(`UPDATE ${table} SET ${setClause} WHERE id = $${cols.length + 1}`, [...cols.map((c) => String(updates[c])), String(id)]);
+        const vals = cols.map((c) => updates[c] == null ? null : String(updates[c]));
+        await neonSql(`UPDATE ${table} SET ${setClause} WHERE id = $${cols.length + 1}`, [...vals, String(id)]);
       }
     } else if (operation === "delete" && data) {
       await neonSql(`DELETE FROM ${table} WHERE id = $1`, [String(data.id)]);
@@ -67148,6 +67154,7 @@ if (useNeon && neonSql) {
       await neonSql(`CREATE TABLE IF NOT EXISTS jetons_transactions (id SERIAL PRIMARY KEY, joueur_id INTEGER NOT NULL, type TEXT NOT NULL, quantite INTEGER NOT NULL, raison TEXT, session_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT)`);
       await neonSql(`CREATE TABLE IF NOT EXISTS parametres_fidelite (id SERIAL PRIMARY KEY, regle_type TEXT NOT NULL, seuil INTEGER NOT NULL, jetons_attribues INTEGER NOT NULL, actif INTEGER NOT NULL DEFAULT 1, updated_at TEXT)`);
       await neonSql(`CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, titre TEXT, contenu TEXT NOT NULL, auteur TEXT, created_at TEXT NOT NULL, updated_at TEXT)`);
+      await neonSql(`CREATE TABLE IF NOT EXISTS error_logs (id SERIAL PRIMARY KEY, message TEXT NOT NULL, stack TEXT, endpoint TEXT, method TEXT, created_at TEXT NOT NULL, sent INTEGER NOT NULL DEFAULT 0, updated_at TEXT)`);
       const neonMigrations = [
         `ALTER TABLE sessions_jeu ADD COLUMN IF NOT EXISTS tarif_id INTEGER`,
         `ALTER TABLE sessions_jeu ADD COLUMN IF NOT EXISTS updated_at TEXT`,
@@ -67160,7 +67167,8 @@ if (useNeon && neonSql) {
         `ALTER TABLE lignes_facture ADD COLUMN IF NOT EXISTS updated_at TEXT`,
         `ALTER TABLE jetons_transactions ADD COLUMN IF NOT EXISTS updated_at TEXT`,
         `ALTER TABLE parametres_fidelite ADD COLUMN IF NOT EXISTS updated_at TEXT`,
-        `ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TEXT`
+        `ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE error_logs ADD COLUMN IF NOT EXISTS updated_at TEXT`
       ];
       for (const sql of neonMigrations) {
         try {
@@ -67269,7 +67277,7 @@ var syncEnabled = false;
 var lastSyncAt = null;
 var syncInProgress = false;
 var lastPollAt = now();
-var SYNC_TABLES = ["users", "consoles", "jeux", "joueurs", "tarifs", "sessions_jeu", "factures", "lignes_facture", "jetons_transactions", "parametres_fidelite", "messages"];
+var SYNC_TABLES = ["users", "consoles", "jeux", "joueurs", "tarifs", "sessions_jeu", "factures", "lignes_facture", "jetons_transactions", "parametres_fidelite", "messages", "error_logs"];
 function setSyncEnabled(v) {
   syncEnabled = v;
   if (!v) {
@@ -67342,7 +67350,8 @@ async function pushTableToNeon(table) {
       const cols = Object.keys(row);
       const vals = cols.map((c) => {
         const v = row[c];
-        return v === true ? "1" : v === false ? "0" : String(v ?? "");
+        if (v === null || v === void 0) return null;
+        return v === true ? "1" : v === false ? "0" : String(v);
       });
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
       await neonSql(
@@ -67460,7 +67469,7 @@ var TITRE_REGEX = /^[a-zA-ZÀ-ÿ0-9\s\-'&]{2,100}$/;
 var GENRE_REGEX = /^[a-zA-ZÀ-ÿ0-9\s\-'&]{2,50}$/;
 var ROLE_REGEX = /^(admin|employe)$/;
 var CONSOLE_TYPE_REGEX = /^(PS5|PS4|XBOX|PC|SWITCH)$/;
-var TARIF_TYPE_REGEX = /^(horaire|forfait)$/;
+var TARIF_TYPE_REGEX = /^(horaire|forfait|session|partie)$/;
 var REGLE_TYPE_REGEX = /^(temps|montant)$/;
 var JETON_TYPE_REGEX = /^(gain|depense|bonus)$/;
 var STATUT_SESSION_REGEX = /^(en_cours|pause|terminee|annulee)$/;
