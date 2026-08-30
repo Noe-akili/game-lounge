@@ -68421,7 +68421,81 @@ app.use((err, req, res, _next) => {
 });
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`\u{1F3AE} Game Lounge API running on http://0.0.0.0:${PORT}`);
+  autoSeed().catch(() => {
+  });
 });
+async function autoSeed() {
+  const users = await queryAll("users");
+  if (users.length > 0) return;
+  console.log("\u{1F331} Initialisation de la base de donn\xE9es...");
+  const adminHash = import_bcryptjs.default.hashSync("admin123", 10);
+  const empHash = import_bcryptjs.default.hashSync("employe123", 10);
+  await insert("users", { email: "admin@gamelounge.com", password_hash: adminHash, role: "admin", nom: "Admin", created_at: (/* @__PURE__ */ new Date()).toISOString() });
+  await insert("users", { email: "john@gamelounge.com", password_hash: empHash, role: "employe", nom: "John Doe", created_at: (/* @__PURE__ */ new Date()).toISOString() });
+  const consolesData = [
+    { nom: "PS5 - Poste 1", type: "PS5", poste_numero: 1 },
+    { nom: "PS5 - Poste 2", type: "PS5", poste_numero: 2 },
+    { nom: "PS4 - Poste 3", type: "PS4", poste_numero: 3 },
+    { nom: "PS4 - Poste 4", type: "PS4", poste_numero: 4 },
+    { nom: "PS5 - Poste 5", type: "PS5", poste_numero: 5 },
+    { nom: "PS4 - Poste 6", type: "PS4", poste_numero: 6 }
+  ];
+  for (const c of consolesData) await insert("consoles", { ...c, etat: "disponible", created_at: (/* @__PURE__ */ new Date()).toISOString() });
+  const ps4Games = ["FIFA 26", "Mortal Kombat", "Tekken", "Need for Speed", "WWE 2K25", "NBA 2K25", "Fortnite"];
+  const ps5Games = ["FIFA 26", "Mortal Kombat", "Tekken 8", "Gran Turismo 7", "Need for Speed", "WWE 2K25", "NBA 2K25", "Call of Duty"];
+  const ps4Consoles = await queryAll("consoles");
+  for (const titre of ps4Games) {
+    const c = ps4Consoles.find((x) => x.type === "PS4");
+    if (c) await insert("jeux", { titre, genre: "Sport/Combat", console_id: c.id, actif: 1, created_at: (/* @__PURE__ */ new Date()).toISOString() });
+  }
+  const ps5Consoles = await queryAll("consoles");
+  for (const titre of ps5Games) {
+    const c = ps5Consoles.find((x) => x.type === "PS5");
+    if (c) await insert("jeux", { titre, genre: "Sport/Combat/Course", console_id: c.id, actif: 1, created_at: (/* @__PURE__ */ new Date()).toISOString() });
+  }
+  const tarifs = [
+    { type: "session", console_type: "PS4", jeu: "FIFA 26", duree_minutes: 30, prix: 2e3, description: "FIFA 26 PS4 - 30min" },
+    { type: "session", console_type: "PS4", jeu: "FIFA 26", duree_minutes: 60, prix: 4e3, description: "FIFA 26 PS4 - 1h" },
+    { type: "session", console_type: "PS4", jeu: "Mortal Kombat", duree_minutes: 30, prix: 1500, description: "MK PS4 - 30min" },
+    { type: "session", console_type: "PS4", jeu: "Mortal Kombat", duree_minutes: 60, prix: 3e3, description: "MK PS4 - 1h" },
+    { type: "session", console_type: "PS4", jeu: "Tekken", duree_minutes: 30, prix: 1500, description: "Tekken PS4 - 30min" },
+    { type: "session", console_type: "PS4", jeu: "Tekken", duree_minutes: 60, prix: 3e3, description: "Tekken PS4 - 1h" },
+    { type: "session", console_type: "PS4", jeu: "Need for Speed", duree_minutes: 15, prix: 500, description: "NFS PS4 - 15min" },
+    { type: "session", console_type: "PS4", jeu: "Need for Speed", duree_minutes: 30, prix: 1e3, description: "NFS PS4 - 30min" },
+    { type: "session", console_type: "PS4", jeu: "Need for Speed", duree_minutes: 60, prix: 2e3, description: "NFS PS4 - 1h" },
+    { type: "session", console_type: "PS4", jeu: "WWE 2K25", duree_minutes: 30, prix: 2e3, description: "WWE PS4 - 30min" },
+    { type: "session", console_type: "PS4", jeu: "WWE 2K25", duree_minutes: 60, prix: 4e3, description: "WWE PS4 - 1h" },
+    { type: "session", console_type: "PS4", jeu: "NBA 2K25", duree_minutes: 30, prix: 2500, description: "NBA PS4 - 30min" },
+    { type: "session", console_type: "PS4", jeu: "NBA 2K25", duree_minutes: 60, prix: 4e3, description: "NBA PS4 - 1h" },
+    { type: "session", console_type: "PS4", jeu: "Fortnite", duree_minutes: 15, prix: 500, description: "Fortnite PS4 - 15min" },
+    { type: "session", console_type: "PS4", jeu: "Fortnite", duree_minutes: 30, prix: 2e3, description: "Fortnite PS4 - 30min" },
+    { type: "session", console_type: "PS4", jeu: "Fortnite", duree_minutes: 60, prix: 3e3, description: "Fortnite PS4 - 1h" },
+    { type: "session", console_type: "PS5", jeu: "FIFA 26", duree_minutes: 30, prix: 4e3, description: "FIFA 26 PS5 - 30min" },
+    { type: "session", console_type: "PS5", jeu: "FIFA 26", duree_minutes: 60, prix: 8e3, description: "FIFA 26 PS5 - 1h" },
+    { type: "session", console_type: "PS5", jeu: "Mortal Kombat", duree_minutes: 30, prix: 3e3, description: "MK PS5 - 30min" },
+    { type: "session", console_type: "PS5", jeu: "Mortal Kombat", duree_minutes: 60, prix: 6e3, description: "MK PS5 - 1h" },
+    { type: "session", console_type: "PS5", jeu: "Tekken 8", duree_minutes: 30, prix: 3e3, description: "Tekken 8 PS5 - 30min" },
+    { type: "session", console_type: "PS5", jeu: "Tekken 8", duree_minutes: 60, prix: 6e3, description: "Tekken 8 PS5 - 1h" },
+    { type: "session", console_type: "PS5", jeu: "Gran Turismo 7", duree_minutes: 15, prix: 2e3, description: "GT7 PS5 - 15min" },
+    { type: "session", console_type: "PS5", jeu: "Gran Turismo 7", duree_minutes: 30, prix: 3500, description: "GT7 PS5 - 30min" },
+    { type: "session", console_type: "PS5", jeu: "Gran Turismo 7", duree_minutes: 60, prix: 7e3, description: "GT7 PS5 - 1h" },
+    { type: "session", console_type: "PS5", jeu: "Need for Speed", duree_minutes: 15, prix: 1e3, description: "NFS PS5 - 15min" },
+    { type: "session", console_type: "PS5", jeu: "Need for Speed", duree_minutes: 30, prix: 2e3, description: "NFS PS5 - 30min" },
+    { type: "session", console_type: "PS5", jeu: "Need for Speed", duree_minutes: 60, prix: 4e3, description: "NFS PS5 - 1h" },
+    { type: "session", console_type: "PS5", jeu: "WWE 2K25", duree_minutes: 30, prix: 3e3, description: "WWE PS5 - 30min" },
+    { type: "session", console_type: "PS5", jeu: "WWE 2K25", duree_minutes: 60, prix: 6e3, description: "WWE PS5 - 1h" },
+    { type: "session", console_type: "PS5", jeu: "NBA 2K25", duree_minutes: 30, prix: 4e3, description: "NBA PS5 - 30min" },
+    { type: "session", console_type: "PS5", jeu: "NBA 2K25", duree_minutes: 60, prix: 7e3, description: "NBA PS5 - 1h" },
+    { type: "session", console_type: "PS5", jeu: "Call of Duty", duree_minutes: 15, prix: 1500, description: "CoD PS5 - 15min" },
+    { type: "session", console_type: "PS5", jeu: "Call of Duty", duree_minutes: 30, prix: 3e3, description: "CoD PS5 - 30min" },
+    { type: "session", console_type: "PS5", jeu: "Call of Duty", duree_minutes: 60, prix: 6e3, description: "CoD PS5 - 1h" }
+  ];
+  for (const t of tarifs) await insert("tarifs", { ...t, actif: true });
+  await insert("parametres_fidelite", { regle_type: "temps", seuil: 60, jetons_attribues: 1, actif: true });
+  console.log("\u2705 Base initialis\xE9e avec succ\xE8s");
+  console.log("   admin@gamelounge.com / admin123");
+  console.log("   john@gamelounge.com / employe123");
+}
 /*! Bundled license information:
 
 depd/index.js:
