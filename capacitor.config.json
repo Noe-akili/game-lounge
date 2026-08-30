@@ -1,14 +1,12 @@
 {
-  "appId": "com.jetonqr.app",
-  "appName": "JETON-QR Pro+",
+  "appId": "com.gamelounge.app",
+  "appName": "Game Lounge",
   "webDir": "dist",
-  "android": {
-    "allowMixedContent": false
+  "server": {
+    "url": "http://localhost:3001",
+    "cleartext": true
   },
-  "plugins": {
-    "CapacitorNodeJS": {
-      "nodeDir": "nodejs",
-      "startMode": "manual"
-    }
+  "android": {
+    "allowMixedContent": true
   }
 }
