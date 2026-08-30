@@ -67083,11 +67083,12 @@ async function logError(error, endpoint, method) {
 }
 var neonSql = null;
 var useNeon = false;
+var neonModule = null;
 var DATABASE_URL = process.env.DATABASE_URL || "";
 if (DATABASE_URL) {
   try {
-    const { neon } = await import("@neondatabase/serverless");
-    neonSql = neon(DATABASE_URL);
+    neonModule = await import("@neondatabase/serverless");
+    neonSql = neonModule.neon(DATABASE_URL);
     useNeon = true;
     console.log("\u{1F310} Neon DB configur\xE9e - synchronisation bidirectionnelle activ\xE9e");
   } catch (e) {
@@ -67147,6 +67148,26 @@ if (useNeon && neonSql) {
       await neonSql(`CREATE TABLE IF NOT EXISTS jetons_transactions (id SERIAL PRIMARY KEY, joueur_id INTEGER NOT NULL, type TEXT NOT NULL, quantite INTEGER NOT NULL, raison TEXT, session_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT)`);
       await neonSql(`CREATE TABLE IF NOT EXISTS parametres_fidelite (id SERIAL PRIMARY KEY, regle_type TEXT NOT NULL, seuil INTEGER NOT NULL, jetons_attribues INTEGER NOT NULL, actif INTEGER NOT NULL DEFAULT 1, updated_at TEXT)`);
       await neonSql(`CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, titre TEXT, contenu TEXT NOT NULL, auteur TEXT, created_at TEXT NOT NULL, updated_at TEXT)`);
+      const neonMigrations = [
+        `ALTER TABLE sessions_jeu ADD COLUMN IF NOT EXISTS tarif_id INTEGER`,
+        `ALTER TABLE sessions_jeu ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE consoles ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE jeux ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE joueurs ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE tarifs ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE factures ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE lignes_facture ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE jetons_transactions ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE parametres_fidelite ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TEXT`
+      ];
+      for (const sql of neonMigrations) {
+        try {
+          await neonSql(sql);
+        } catch {
+        }
+      }
       console.log("\u2705 Tables Neon pr\xEAtes");
     } catch (e) {
       console.warn("\u26A0\uFE0F Neon table init failed:", e.message?.slice(0, 100));
@@ -67251,6 +67272,19 @@ var lastPollAt = now();
 var SYNC_TABLES = ["users", "consoles", "jeux", "joueurs", "tarifs", "sessions_jeu", "factures", "lignes_facture", "jetons_transactions", "parametres_fidelite", "messages"];
 function setSyncEnabled(v) {
   syncEnabled = v;
+  if (!v) {
+    useNeon = false;
+    neonSql = null;
+    console.log("\u{1F534} Synchronisation Neon d\xE9sactiv\xE9e");
+  } else if (DATABASE_URL && neonModule) {
+    try {
+      neonSql = neonModule.neon(DATABASE_URL);
+      useNeon = true;
+      console.log("\u{1F7E2} Synchronisation Neon r\xE9activ\xE9e");
+    } catch {
+      console.warn("\u26A0\uFE0F Impossible de r\xE9activer Neon");
+    }
+  }
 }
 function getSyncStatus() {
   return { enabled: syncEnabled, neonConnected: useNeon, lastSync: lastSyncAt, syncing: syncInProgress, lastPoll: lastPollAt };

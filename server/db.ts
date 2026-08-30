@@ -232,13 +232,14 @@ export async function logError(error: Error, endpoint?: string, method?: string)
 // Neon sync - Secondaire (optionnel, seulement si connecté)
 let neonSql: any = null
 let useNeon = false
+let neonModule: any = null
 
 const DATABASE_URL = process.env.DATABASE_URL || ''
 
 if (DATABASE_URL) {
   try {
-    const { neon } = await import('@neondatabase/serverless')
-    neonSql = neon(DATABASE_URL)
+    neonModule = await import('@neondatabase/serverless')
+    neonSql = neonModule.neon(DATABASE_URL)
     useNeon = true
     console.log('🌐 Neon DB configurée - synchronisation bidirectionnelle activée')
   } catch (e) {
@@ -297,6 +298,26 @@ if (useNeon && neonSql) {
       await neonSql(`CREATE TABLE IF NOT EXISTS jetons_transactions (id SERIAL PRIMARY KEY, joueur_id INTEGER NOT NULL, type TEXT NOT NULL, quantite INTEGER NOT NULL, raison TEXT, session_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT)`)
       await neonSql(`CREATE TABLE IF NOT EXISTS parametres_fidelite (id SERIAL PRIMARY KEY, regle_type TEXT NOT NULL, seuil INTEGER NOT NULL, jetons_attribues INTEGER NOT NULL, actif INTEGER NOT NULL DEFAULT 1, updated_at TEXT)`)
       await neonSql(`CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, titre TEXT, contenu TEXT NOT NULL, auteur TEXT, created_at TEXT NOT NULL, updated_at TEXT)`)
+
+      // Migrations: add missing columns to existing Neon tables
+      const neonMigrations = [
+        `ALTER TABLE sessions_jeu ADD COLUMN IF NOT EXISTS tarif_id INTEGER`,
+        `ALTER TABLE sessions_jeu ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE consoles ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE jeux ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE joueurs ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE tarifs ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE factures ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE lignes_facture ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE jetons_transactions ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE parametres_fidelite ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+        `ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+      ]
+      for (const sql of neonMigrations) {
+        try { await neonSql(sql) } catch {}
+      }
+
       console.log('✅ Tables Neon prêtes')
     } catch (e) {
       console.warn('⚠️ Neon table init failed:', (e as Error).message?.slice(0, 100))
@@ -455,7 +476,22 @@ let lastPollAt: string = now()
 const SYNC_TABLES: TableName[] = ['users', 'consoles', 'jeux', 'joueurs', 'tarifs', 'sessions_jeu', 'factures', 'lignes_facture', 'jetons_transactions', 'parametres_fidelite', 'messages']
 
 export function isSyncEnabled(): boolean { return syncEnabled && useNeon }
-export function setSyncEnabled(v: boolean) { syncEnabled = v }
+export function setSyncEnabled(v: boolean) {
+  syncEnabled = v
+  if (!v) {
+    useNeon = false
+    neonSql = null
+    console.log('🔴 Synchronisation Neon désactivée')
+  } else if (DATABASE_URL && neonModule) {
+    try {
+      neonSql = neonModule.neon(DATABASE_URL)
+      useNeon = true
+      console.log('🟢 Synchronisation Neon réactivée')
+    } catch {
+      console.warn('⚠️ Impossible de réactiver Neon')
+    }
+  }
+}
 export function getSyncStatus() {
   return { enabled: syncEnabled, neonConnected: useNeon, lastSync: lastSyncAt, syncing: syncInProgress, lastPoll: lastPollAt }
 }
