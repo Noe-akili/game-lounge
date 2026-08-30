@@ -26,7 +26,12 @@
           </router-link>
         </nav>
 
-        <div class="p-3 border-t border-white/5">
+        <div class="p-3 border-t border-white/5 space-y-2">
+          <button @click="toggleTheme" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-bg-hover text-txt-dim transition-colors">
+            <Moon v-if="settings.themeMode === 'dark'" class="w-4 h-4 text-neon-blue" />
+            <Sun v-else class="w-4 h-4 text-neon-yellow" />
+            <span class="text-sm">{{ settings.themeMode === 'dark' ? 'Mode clair' : 'Mode sombre' }}</span>
+          </button>
           <div class="flex items-center gap-3 p-3 rounded-xl bg-bg-surface">
             <div class="w-9 h-9 rounded-full bg-neon-violet/20 flex items-center justify-center text-neon-violet font-bold text-sm">
               {{ userInitials }}
@@ -49,9 +54,10 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useSettingsStore } from '@/stores/settings'
 import {
   Gamepad2, X, LayoutDashboard, PlayCircle, Users, CreditCard, Coins,
-  MessageSquare, Settings, LogOut, Monitor, Joystick, Receipt, BarChart3, DollarSign, UserCog
+  MessageSquare, Settings, LogOut, Monitor, Joystick, Receipt, BarChart3, DollarSign, UserCog, Moon, Sun
 } from 'lucide-vue-next'
 
 const props = defineProps({ open: Boolean })
@@ -59,6 +65,7 @@ defineEmits(['close'])
 
 const auth = useAuthStore()
 const router = useRouter()
+const settings = useSettingsStore()
 
 const menuItems = computed(() => {
   if (auth.user?.role === 'admin') {
@@ -66,9 +73,9 @@ const menuItems = computed(() => {
       { to: '/admin', label: 'Tableau de bord', icon: LayoutDashboard },
       { to: '/admin/consoles', label: 'Consoles', icon: Monitor },
       { to: '/admin/jeux', label: 'Jeux', icon: Joystick },
-      { to: '/admin/joueurs', label: 'Joueurs', icon: Users },
+      { to: '/joueurs', label: 'Joueurs', icon: Users },
       { to: '/admin/tarifs', label: 'Tarifs', icon: DollarSign },
-      { to: '/admin/factures', label: 'Factures', icon: Receipt },
+      { to: '/paiements', label: 'Factures', icon: Receipt },
       { to: '/admin/rapports', label: 'Rapports', icon: BarChart3 },
       { to: '/admin/parametres', label: 'Paramètres', icon: Settings },
     ]
@@ -91,6 +98,10 @@ const userInitials = computed(() => {
 function handleLogout() {
   auth.logout()
   router.push('/login')
+}
+
+function toggleTheme() {
+  settings.setTheme(settings.themeMode === 'dark' ? 'light' : 'dark')
 }
 </script>
 

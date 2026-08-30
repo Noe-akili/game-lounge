@@ -28,9 +28,9 @@
           >
             <Plus class="w-6 h-6" />
           </motion.button>
-          <router-link to="/admin/joueurs"
+          <router-link to="/joueurs"
             class="flex flex-col items-center justify-center gap-0.5 w-10 py-1 rounded-xl transition-colors"
-            :class="isActive('/admin/joueurs') ? 'text-neon-violet' : 'text-txt-dim'">
+            :class="isActive('/joueurs') ? 'text-neon-violet' : 'text-txt-dim'">
             <Users class="w-5 h-5" />
             <span class="text-[8px] font-medium">Joueurs</span>
           </router-link>

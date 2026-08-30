@@ -50,6 +50,37 @@
     </div>
 
     <div class="card w-full max-w-full min-w-0 overflow-hidden">
+      <div class="flex items-center gap-3 mb-4">
+        <Cloud class="w-5 h-5 text-neon-blue shrink-0" />
+        <h4 class="font-gaming font-bold truncate">Synchronisation cloud (Neon)</h4>
+      </div>
+      <div v-if="!syncStatus.neonEnabled" class="text-center py-6">
+        <CloudOff class="w-10 h-10 text-txt-dim mx-auto mb-2" />
+        <p class="text-txt-dim text-sm">Cloud Neon non configuré</p>
+        <p class="text-xs text-txt-dim mt-1">Configurez DATABASE_URL dans .env pour activer</p>
+      </div>
+      <div v-else class="space-y-4 w-full max-w-full min-w-0 overflow-hidden">
+        <div class="flex items-center justify-between p-3 bg-bg-surface rounded-xl">
+          <div class="flex items-center gap-3">
+            <div class="w-3 h-3 rounded-full" :class="syncStatus.enabled ? 'bg-neon-green animate-pulse' : 'bg-txt-dim'"></div>
+            <span class="font-medium text-sm">{{ syncStatus.enabled ? 'Sync active' : 'Sync désactivée' }}</span>
+          </div>
+          <button @click="toggleSync" class="relative w-12 h-6 rounded-full transition-colors" :class="syncStatus.enabled ? 'bg-neon-green' : 'bg-bg-hover'">
+            <div class="absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform" :class="syncStatus.enabled ? 'translate-x-6' : 'translate-x-0.5'"></div>
+          </button>
+        </div>
+        <div v-if="syncStatus.lastSync" class="text-xs text-txt-dim px-1">
+          Dernière sync : {{ formatDate(syncStatus.lastSync) }}
+        </div>
+        <button @click="runSync" :disabled="syncing || !syncStatus.enabled" class="btn-neon-violet w-full flex items-center justify-center gap-2">
+          <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': syncing }" />
+          {{ syncing ? 'Synchronisation en cours...' : 'Synchroniser maintenant' }}
+        </button>
+        <p class="text-xs text-txt-dim text-center">Compare et fusionne les données locales SQLite ↔ Neon cloud</p>
+      </div>
+    </div>
+
+    <div class="card w-full max-w-full min-w-0 overflow-hidden">
       <h4 class="font-gaming font-bold mb-4 truncate">Affichage</h4>
       <div class="space-y-6 w-full max-w-full min-w-0 overflow-hidden">
 
@@ -152,9 +183,10 @@ import { api } from '@/utils/api'
 import { toast } from 'sonner'
 import Loader from '@/components/ui/Loader.vue'
 import Modal from '@/components/ui/Modal.vue'
-import { Plus, Pencil, Trash2, Settings, Moon, Sun } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2, Settings, Moon, Sun, Cloud, CloudOff, RefreshCw } from 'lucide-vue-next'
 import { isValidRegleType, isValidSeuil, isValidJetonsAttribues } from '@/utils/validators'
 import { useSettingsStore } from '@/stores/settings'
+import { formatDate } from '@/utils/helpers'
 
 const settings = useSettingsStore()
 const loading = ref(true)
@@ -165,6 +197,8 @@ const selected = ref(null)
 const editingId = ref(null)
 const form = reactive({ regle_type: 'temps', seuil: 60, jetons_attribues: 1, actif: true })
 const config = reactive({ taux_tva: 20 })
+const syncStatus = ref({ enabled: false, neonEnabled: false, lastSync: null, syncing: false })
+const syncing = ref(false)
 
 function changeFont(mode: string) {
   settings.setFont(mode)
@@ -238,5 +272,29 @@ async function deleteParametre(id) {
   catch (e) { toast.error(e.message) }
 }
 
-onMounted(fetchData)
+async function fetchSyncStatus() {
+  try { syncStatus.value = await api.get('/sync/status') } catch {}
+}
+
+async function toggleSync() {
+  try {
+    const res = await api.post('/sync/toggle', { enabled: !syncStatus.value.enabled })
+    syncStatus.value = { ...syncStatus.value, enabled: res.enabled }
+    toast.success(res.enabled ? 'Sync activée' : 'Sync désactivée')
+  } catch (e: any) { toast.error(e.message) }
+}
+
+async function runSync() {
+  syncing.value = true
+  try {
+    const res = await api.post('/sync/run')
+    const totalPushed = Object.values(res.pushed || {}).reduce((a: number, b: number) => a + b, 0)
+    const totalPulled = Object.values(res.pulled || {}).reduce((a: number, b: number) => a + b, 0)
+    toast.success(`Sync terminée en ${res.duration}ms — ${totalPushed} envoyé(s), ${totalPulled} reçu(s)`)
+    fetchSyncStatus()
+  } catch (e: any) { toast.error(e.message) }
+  finally { syncing.value = false }
+}
+
+onMounted(() => { fetchData(); fetchSyncStatus() })
 </script>

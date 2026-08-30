@@ -13,6 +13,10 @@
       </div>
 
       <div class="flex items-center gap-4">
+        <div v-if="syncEnabled" class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-neon-green/10 border border-neon-green/20" title="Sync cloud active">
+          <Cloud class="w-3.5 h-3.5 text-neon-green" :class="{ 'animate-pulse': syncActive }" />
+          <span class="text-[10px] font-medium text-neon-green">Sync</span>
+        </div>
         <div class="text-right hidden sm:block">
           <p class="text-sm font-medium font-gaming">{{ currentTime }}</p>
           <p class="text-[10px] text-txt-dim">{{ currentDate }}</p>
@@ -29,17 +33,37 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { Menu, X, Bell } from 'lucide-vue-next'
+import { Menu, X, Bell, Cloud } from 'lucide-vue-next'
+import { api } from '@/utils/api'
+import { useAuthStore } from '@/stores/auth'
 
 defineProps({ sidebarOpen: Boolean })
 defineEmits(['toggleSidebar'])
 
 const route = useRoute()
+const auth = useAuthStore()
 const now = ref(new Date())
 let timer = null
+let syncTimer = null
+const syncEnabled = ref(false)
+const syncActive = ref(false)
 
-onMounted(() => { timer = setInterval(() => { now.value = new Date() }, 1000) })
-onUnmounted(() => clearInterval(timer))
+async function checkSync() {
+  try {
+    if (auth.user?.role === 'admin') {
+      const s = await api.get('/sync/status')
+      syncEnabled.value = s.enabled && s.neonConnected
+      syncActive.value = s.syncing
+    }
+  } catch {}
+}
+
+onMounted(() => {
+  timer = setInterval(() => { now.value = new Date() }, 1000)
+  checkSync()
+  syncTimer = setInterval(checkSync, 30000)
+})
+onUnmounted(() => { clearInterval(timer); clearInterval(syncTimer) })
 
 const currentTime = computed(() =>
   now.value.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
@@ -61,10 +85,7 @@ const pageTitle = computed(() => {
     '/admin': 'Tableau de bord Admin',
     '/admin/consoles': 'Gestion des consoles',
     '/admin/jeux': 'Catalogue des jeux',
-    '/admin/joueurs': 'Gestion des joueurs',
     '/admin/tarifs': 'Paramétrage des tarifs',
-    '/admin/jetons': 'Gestion des jetons',
-    '/admin/factures': 'Factures',
     '/admin/rapports': 'Rapports & Statistiques',
     '/admin/parametres': 'Paramètres',
     '/admin/utilisateurs': 'Utilisateurs',

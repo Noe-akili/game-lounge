@@ -31,7 +31,7 @@
           <Joystick class="w-4 h-4" />
           <span>Jeux</span>
         </router-link>
-        <router-link to="/admin/joueurs" class="sidebar-link" active-class="sidebar-link-active">
+        <router-link to="/joueurs" class="sidebar-link" active-class="sidebar-link-active">
           <Users class="w-4 h-4" />
           <span>Joueurs</span>
         </router-link>
@@ -39,7 +39,7 @@
           <DollarSign class="w-4 h-4" />
           <span>Tarifs</span>
         </router-link>
-        <router-link to="/admin/jetons" class="sidebar-link" active-class="sidebar-link-active">
+        <router-link to="/jetons" class="sidebar-link" active-class="sidebar-link-active">
           <Coins class="w-4 h-4" />
           <span>Jetons</span>
         </router-link>
@@ -49,7 +49,7 @@
         </router-link>
 
         <span class="px-4 py-2 mt-4 text-[10px] font-semibold text-txt-dim uppercase tracking-widest">Rapports</span>
-        <router-link to="/admin/factures" class="sidebar-link" active-class="sidebar-link-active">
+        <router-link to="/paiements" class="sidebar-link" active-class="sidebar-link-active">
           <Receipt class="w-4 h-4" />
           <span>Factures</span>
         </router-link>
@@ -102,7 +102,12 @@
       </template>
     </nav>
 
-    <div class="p-3 border-t border-white/5">
+    <div class="p-3 border-t border-white/5 space-y-2">
+      <button @click="toggleTheme" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-bg-hover text-txt-dim transition-colors">
+        <Moon v-if="settings.themeMode === 'dark'" class="w-4 h-4 text-neon-blue" />
+        <Sun v-else class="w-4 h-4 text-neon-yellow" />
+        <span class="text-sm">{{ settings.themeMode === 'dark' ? 'Mode clair' : 'Mode sombre' }}</span>
+      </button>
       <div class="flex items-center gap-3 p-3 rounded-xl bg-bg-surface">
         <div class="w-9 h-9 rounded-full bg-neon-violet/20 flex items-center justify-center text-neon-violet font-bold text-sm">
           {{ userInitials }}
@@ -123,13 +128,15 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useSettingsStore } from '@/stores/settings'
 import {
   Gamepad2, LayoutDashboard, Monitor, Joystick, Users, DollarSign, Coins,
-  Receipt, BarChart3, Settings, UserCog, LogOut, PlayCircle, CreditCard, MessageSquare
+  Receipt, BarChart3, Settings, UserCog, LogOut, PlayCircle, CreditCard, MessageSquare, Moon, Sun
 } from 'lucide-vue-next'
 
 const auth = useAuthStore()
 const router = useRouter()
+const settings = useSettingsStore()
 
 const isAdmin = computed(() => auth.user?.role === 'admin')
 const userInitials = computed(() => {
@@ -140,5 +147,9 @@ const userInitials = computed(() => {
 function handleLogout() {
   auth.logout()
   router.push('/login')
+}
+
+function toggleTheme() {
+  settings.setTheme(settings.themeMode === 'dark' ? 'light' : 'dark')
 }
 </script>

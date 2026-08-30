@@ -6,7 +6,7 @@ import rateLimit from 'express-rate-limit'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { existsSync } from 'node:fs'
-import { queryAll, queryOne, insert, update, remove, logError } from './db.ts'
+import { queryAll, queryOne, insert, update, remove, logError, getSyncStatus, setSyncEnabled, runFullSync, isNeonEnabled } from './db.ts'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import {
@@ -387,7 +387,7 @@ app.get('/api/sessions/:id', authMiddleware, async (req: any, res: any) => {
 })
 
 app.post('/api/sessions', authMiddleware, async (req: any, res: any) => {
-  const { console_id, joueur_id, jeu_id, tarif_id, tarif_prix: bodyTarifPrix, duree_minutes: bodyDuree } = req.body
+  const { console_id, joueur_id, jeu_id, tarif_id } = req.body
   if (!console_id || !joueur_id || !jeu_id) return res.status(400).json({ message: 'Console, joueur et jeu requis' })
   if (!isValidId(console_id)) return res.status(400).json({ message: 'Console ID invalide' })
   if (!isValidId(joueur_id)) return res.status(400).json({ message: 'Joueur ID invalide' })
@@ -408,8 +408,6 @@ app.post('/api/sessions', authMiddleware, async (req: any, res: any) => {
       tarif_id_val = selectedTarif.id
     }
   }
-  if (bodyTarifPrix) tarif_prix = Number(bodyTarifPrix)
-  if (bodyDuree) duree_minutes = Number(bodyDuree)
 
   const session = await insert('sessions_jeu', {
     console_id: Number(console_id), joueur_id: Number(joueur_id), jeu_id: Number(jeu_id),
@@ -1037,6 +1035,26 @@ app.delete('/api/parametres/fidelite/:id', authMiddleware, adminOnly, async (req
   if (!p) return res.status(404).json({ message: 'Paramètre non trouvé' })
   await remove('parametres_fidelite', id)
   res.json({ success: true })
+})
+
+// ===== SYNC =====
+app.get('/api/sync/status', authMiddleware, adminOnly, async (req: any, res: any) => {
+  res.json({ ...getSyncStatus(), neonEnabled: isNeonEnabled() })
+})
+
+app.post('/api/sync/toggle', authMiddleware, adminOnly, async (req: any, res: any) => {
+  const { enabled } = req.body
+  setSyncEnabled(!!enabled)
+  res.json({ enabled: !!enabled, ...getSyncStatus() })
+})
+
+app.post('/api/sync/run', authMiddleware, adminOnly, async (req: any, res: any) => {
+  try {
+    const result = await runFullSync()
+    res.json({ success: true, ...result })
+  } catch (e: any) {
+    res.status(400).json({ message: e.message })
+  }
 })
 
 // ===== STATIC FILES =====

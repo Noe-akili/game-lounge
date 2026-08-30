@@ -49,7 +49,10 @@
           <select v-model="form.type" class="input-field"><option value="partie">Partie</option><option value="session">Session</option><option value="horaire">Par heure</option><option value="forfait">Forfait</option></select>
           <div class="grid grid-cols-2 gap-3">
             <select v-model="form.console_type" class="input-field"><option value="PS4">PS4</option><option value="PS5">PS5</option></select>
-            <input v-model="form.jeu" placeholder="Jeu (ex: FIFA 26)" class="input-field" />
+            <select v-model="form.jeu" class="input-field">
+              <option value="">Aucun jeu</option>
+              <option v-for="j in filteredJeux" :key="j.id" :value="j.titre">{{ j.titre }}</option>
+            </select>
           </div>
           <input v-model.number="form.duree_minutes" type="number" placeholder="Durée (minutes)" class="input-field" />
           <input v-model.number="form.prix" type="number" placeholder="Prix (FC)" class="input-field" />
@@ -77,12 +80,18 @@ import Loader from '@/components/ui/Loader.vue'
 import { isValidTarifType, isValidDuree, isValidPrix, sanitizeInput } from '@/utils/validators'
 
 const tarifs = ref([])
+const jeux = ref([])
 const loading = ref(true)
 const showAdd = ref(false)
 const editing = ref(null)
 const filterConsole = ref('')
 const filterJeu = ref('')
 const form = reactive({ type: 'session', duree_minutes: 60, prix: 2000, description: '', console_type: 'PS5', jeu: '' })
+
+const filteredJeux = computed(() => {
+  if (!form.console_type) return jeux.value
+  return jeux.value.filter((j: any) => !j.console_id || j.console_id === null || true)
+})
 
 const filteredTarifs = computed(() => {
   return tarifs.value.filter((t: any) => {
@@ -99,7 +108,14 @@ const uniqueJeux = computed(() => {
 
 async function fetchData() {
   loading.value = true
-  try { tarifs.value = await api.get('/tarifs') } catch {} finally { loading.value = false }
+  try {
+    const [tarifsData, jeuxData] = await Promise.all([
+      api.get('/tarifs'),
+      api.get('/jeux')
+    ])
+    tarifs.value = tarifsData
+    jeux.value = jeuxData
+  } catch {} finally { loading.value = false }
 }
 function editTarif(t) { editing.value = t.id; form.type = t.type; form.duree_minutes = t.duree_minutes; form.prix = t.prix; form.description = t.description || ''; form.console_type = t.console_type || 'PS5'; form.jeu = t.jeu || ''; showAdd.value = false }
 

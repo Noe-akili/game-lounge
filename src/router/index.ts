@@ -36,19 +36,19 @@ const routes = [
       {
         path: 'joueurs',
         name: 'Joueurs',
-        component: () => import('@/views/JoueursView.vue'),
+        component: () => import('@/views/admin/AdminJoueurs.vue'),
         meta: { roles: ['employe', 'admin'] }
       },
       {
         path: 'paiements',
         name: 'Paiements',
-        component: () => import('@/views/PaiementsView.vue'),
+        component: () => import('@/views/admin/AdminFactures.vue'),
         meta: { roles: ['employe', 'admin'] }
       },
       {
         path: 'jetons',
         name: 'Jetons',
-        component: () => import('@/views/JetonsView.vue'),
+        component: () => import('@/views/admin/AdminJetons.vue'),
         meta: { roles: ['employe', 'admin'] }
       },
       {
@@ -82,27 +82,9 @@ const routes = [
         meta: { roles: ['admin'] }
       },
       {
-        path: 'admin/joueurs',
-        name: 'AdminJoueurs',
-        component: () => import('@/views/admin/AdminJoueurs.vue'),
-        meta: { roles: ['admin'] }
-      },
-      {
         path: 'admin/tarifs',
         name: 'AdminTarifs',
         component: () => import('@/views/admin/AdminTarifs.vue'),
-        meta: { roles: ['admin'] }
-      },
-      {
-        path: 'admin/jetons',
-        name: 'AdminJetons',
-        component: () => import('@/views/admin/AdminJetons.vue'),
-        meta: { roles: ['admin'] }
-      },
-      {
-        path: 'admin/factures',
-        name: 'AdminFactures',
-        component: () => import('@/views/admin/AdminFactures.vue'),
         meta: { roles: ['admin'] }
       },
       {

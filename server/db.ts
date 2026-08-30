@@ -3,7 +3,8 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import dotenv from 'dotenv'
-import nodemailer from 'nodemailer'
+let nodemailer: any = null
+try { nodemailer = await import('nodemailer') } catch {}
 
 // Load env
 try {
@@ -385,4 +386,105 @@ export function getDb() {
 
 export function isNeonEnabled(): boolean {
   return useNeon
+}
+
+// ===== BIDIRECTIONAL SYNC =====
+let syncEnabled = false
+let lastSyncAt: string | null = null
+let syncInProgress = false
+
+const SYNC_TABLES: TableName[] = ['users', 'consoles', 'jeux', 'joueurs', 'tarifs', 'sessions_jeu', 'factures', 'lignes_facture', 'jetons_transactions', 'parametres_fidelite']
+
+export function isSyncEnabled(): boolean { return syncEnabled && useNeon }
+export function setSyncEnabled(v: boolean) { syncEnabled = v }
+export function getSyncStatus() {
+  return { enabled: syncEnabled, neonConnected: useNeon, lastSync: lastSyncAt, syncing: syncInProgress }
+}
+
+async function pullTableFromNeon(table: TableName): Promise<number> {
+  if (!neonSql) return 0
+  const neonRows: any[] = await neonSql(`SELECT * FROM ${table}`)
+  if (!neonRows || neonRows.length === 0) return 0
+
+  const db = getSqliteDb()
+  const sqliteRows = db.prepare(`SELECT * FROM ${table}`).all() as Record<string, unknown>[]
+  const sqliteMap = new Map(sqliteRows.map(r => [r.id, r]))
+
+  let merged = 0
+  for (const nr of neonRows) {
+    const local = sqliteMap.get(nr.id)
+    if (!local) {
+      // Existe dans Neon mais pas en local → insert
+      const cols = Object.keys(nr)
+      const placeholders = cols.map(() => '?').join(', ')
+      const vals = cols.map(c => nr[c] === true ? 1 : nr[c] === false ? 0 : nr[c])
+      try {
+        db.prepare(`INSERT OR IGNORE INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})`).run(...vals)
+        merged++
+      } catch {}
+    } else {
+      // Existe des deux côtés → comparer created_at, prendre le plus récent
+      const neonDate = new Date(nr.created_at || 0).getTime()
+      const localDate = new Date(local.created_at as string || 0).getTime()
+      if (neonDate > localDate) {
+        const { id, ...updates } = nr
+        const cols = Object.keys(updates)
+        if (cols.length > 0) {
+          const setClause = cols.map(c => `${c} = ?`).join(', ')
+          const vals = cols.map(c => updates[c] === true ? 1 : updates[c] === false ? 0 : updates[c])
+          try {
+            db.prepare(`UPDATE ${table} SET ${setClause} WHERE id = ?`).run(...vals, id)
+            merged++
+          } catch {}
+        }
+      }
+    }
+  }
+  return merged
+}
+
+async function pushTableToNeon(table: TableName): Promise<number> {
+  if (!neonSql) return 0
+  const db = getSqliteDb()
+  const sqliteRows = db.prepare(`SELECT * FROM ${table}`).all() as Record<string, unknown>[]
+  if (sqliteRows.length === 0) return 0
+
+  let pushed = 0
+  for (const row of sqliteRows) {
+    try {
+      const cols = Object.keys(row)
+      const vals = cols.map(c => {
+        const v = row[c]
+        return v === true ? '1' : v === false ? '0' : String(v ?? '')
+      })
+      const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ')
+      await neonSql(
+        `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders}) ON CONFLICT (id) DO UPDATE SET ${cols.filter(c => c !== 'id').map((c, i) => `${c} = $${i + 1}`).join(', ')}`,
+        vals
+      )
+      pushed++
+    } catch {}
+  }
+  return pushed
+}
+
+export async function runFullSync(): Promise<{ pushed: Record<string, number>, pulled: Record<string, number>, duration: number }> {
+  if (!useNeon || !neonSql) throw new Error('Neon non connecté')
+  if (syncInProgress) throw new Error('Sync déjà en cours')
+  syncInProgress = true
+  const start = Date.now()
+  const pushed: Record<string, number> = {}
+  const pulled: Record<string, number> = {}
+
+  try {
+    for (const table of SYNC_TABLES) {
+      pushed[table] = await pushTableToNeon(table)
+      pulled[table] = await pullTableFromNeon(table)
+    }
+    lastSyncAt = new Date().toISOString()
+  } finally {
+    syncInProgress = false
+  }
+
+  return { pushed, pulled, duration: Date.now() - start }
 }

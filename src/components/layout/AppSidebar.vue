@@ -47,28 +47,28 @@
             <Joystick class="w-4 h-4" />
             <span>Jeux</span>
           </router-link>
-          <router-link to="/admin/joueurs" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
-            <Users class="w-4 h-4" />
-            <span>Joueurs</span>
-          </router-link>
+           <router-link to="/joueurs" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
+             <Users class="w-4 h-4" />
+             <span>Joueurs</span>
+           </router-link>
           <router-link to="/admin/tarifs" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
             <DollarSign class="w-4 h-4" />
             <span>Tarifs</span>
           </router-link>
-          <router-link to="/admin/jetons" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
-            <Coins class="w-4 h-4" />
-            <span>Jetons</span>
-          </router-link>
+           <router-link to="/jetons" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
+             <Coins class="w-4 h-4" />
+             <span>Jetons</span>
+           </router-link>
           <router-link to="/messages" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
             <MessageSquare class="w-4 h-4" />
             <span>Messages</span>
           </router-link>
 
      <span class="px-4 py-2 mt-4 text-[10px] font-semibold text-txt-dim uppercase tracking-widest">Rapports</span>
-     <router-link to="/admin/factures" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
-      <Receipt class="w-4 h-4" />
-      <span>Factures</span>
-     </router-link>
+      <router-link to="/paiements" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
+       <Receipt class="w-4 h-4" />
+       <span>Factures</span>
+      </router-link>
      <router-link to="/admin/rapports" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
       <BarChart3 class="w-4 h-4" />
       <span>Rapports</span>
@@ -118,17 +118,22 @@
     </template>
    </nav>
 
-   <div class="p-3 border-t border-white/5">
+   <div class="p-3 border-t border-white/5 space-y-2">
+    <button @click="toggleTheme" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-bg-hover text-txt-dim transition-colors">
+      <Moon v-if="settings.themeMode === 'dark'" class="w-4 h-4 text-neon-blue" />
+      <Sun v-else class="w-4 h-4 text-neon-yellow" />
+      <span class="text-sm">{{ settings.themeMode === 'dark' ? 'Mode clair' : 'Mode sombre' }}</span>
+    </button>
     <div class="flex items-center gap-3 p-3 rounded-xl bg-bg-surface">
      <div class="w-9 h-9 rounded-full bg-neon-violet/20 flex items-center justify-center text-neon-violet font-bold text-sm">
-      {{ userInitials }}
+       {{ userInitials }}
      </div>
      <div class="flex-1 min-w-0">
-      <p class="text-sm font-medium truncate">{{ auth.user?.nom }}</p>
-      <p class="text-[10px] text-txt-dim uppercase">{{ auth.user?.role === 'admin' ? 'Administrateur' : 'Employé' }}</p>
+       <p class="text-sm font-medium truncate">{{ auth.user?.nom }}</p>
+       <p class="text-[10px] text-txt-dim uppercase">{{ auth.user?.role === 'admin' ? 'Administrateur' : 'Employé' }}</p>
      </div>
      <button @click="handleLogout" class="p-2 rounded-lg hover:bg-bg-hover text-txt-dim hover:text-neon-red transition-colors">
-      <LogOut class="w-4 h-4" />
+       <LogOut class="w-4 h-4" />
      </button>
     </div>
    </div>
@@ -141,9 +146,10 @@ import { computed } from 'vue'
 import { motion } from 'motion-v'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useSettingsStore } from '@/stores/settings'
 import {
  Gamepad2, LayoutDashboard, Monitor, Joystick, Users, DollarSign, Coins,
- Receipt, BarChart3, Settings, UserCog, LogOut, PlayCircle, CreditCard, MessageSquare, X
+ Receipt, BarChart3, Settings, UserCog, LogOut, PlayCircle, CreditCard, MessageSquare, X, Moon, Sun
 } from 'lucide-vue-next'
 
 const props = defineProps({ open: Boolean })
@@ -151,6 +157,7 @@ defineEmits(['close'])
 
 const auth = useAuthStore()
 const router = useRouter()
+const settings = useSettingsStore()
 
 const isAdmin = computed(() => auth.user?.role === 'admin')
 const userInitials = computed(() => {
@@ -161,6 +168,10 @@ const userInitials = computed(() => {
 function handleLogout() {
  auth.logout()
  router.push('/login')
+}
+
+function toggleTheme() {
+ settings.setTheme(settings.themeMode === 'dark' ? 'light' : 'dark')
 }
 </script>
 

@@ -24,7 +24,7 @@ jobs:
         run: npm run build
 
       - name: Bundle server
-        run: npx esbuild server/server.ts --bundle --platform=node --format=esm --outfile=dist-server/server.js --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+        run: npx esbuild server/server.ts --bundle --platform=node --format=esm --outfile=dist-server/server.js --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" --external:nodemailer --external:@neondatabase/serverless
 
       - name: Download Node.js for Android ARM64
         run: |
