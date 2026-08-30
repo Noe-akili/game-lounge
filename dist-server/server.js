@@ -47673,7 +47673,7 @@ var require_performance_now = __commonJS({
 // server/node_modules/raf/index.js
 var require_raf = __commonJS({
   "server/node_modules/raf/index.js"(exports, module) {
-    var now = require_performance_now();
+    var now2 = require_performance_now();
     var root = typeof window === "undefined" ? global : window;
     var vendors = ["moz", "webkit"];
     var suffix = "AnimationFrame";
@@ -47688,7 +47688,7 @@ var require_raf = __commonJS({
       last = 0, id = 0, queue = [], frameDuration = 1e3 / 60;
       raf = function(callback) {
         if (queue.length === 0) {
-          var _now = now(), next = Math.max(0, frameDuration - (_now - last));
+          var _now = now2(), next = Math.max(0, frameDuration - (_now - last));
           last = next + _now;
           setTimeout(function() {
             var cp = queue.slice(0);
@@ -51296,14 +51296,14 @@ var require_lib4 = __commonJS({
           if (!enableRedraw) {
             return;
           }
-          var now = Date.now();
-          var then = now;
+          var now2 = Date.now();
+          var then = now2;
           var delta = 0;
           var tick = function tick2() {
-            now = Date.now();
-            delta = now - then;
+            now2 = Date.now();
+            delta = now2 - then;
             if (delta >= frameDuration) {
-              then = now - delta % frameDuration;
+              then = now2 - delta % frameDuration;
               if (_this.shouldUpdate(ignoreAnimation, forceRedraw)) {
                 _this.render(element, ignoreDimensions, ignoreClear, scaleWidth, scaleHeight, offsetX, offsetY);
                 mouse.runEvents();
@@ -65916,9 +65916,9 @@ var MemoryStore = class {
    */
   async increment(key) {
     const client = this.getClient(key);
-    const now = Date.now();
-    if (client.resetTime.getTime() <= now) {
-      this.resetClient(client, now);
+    const now2 = Date.now();
+    if (client.resetTime.getTime() <= now2) {
+      this.resetClient(client, now2);
     }
     client.totalHits++;
     return client;
@@ -65976,9 +65976,9 @@ var MemoryStore = class {
    *
    * @return {Client} - The modified client that was passed in, to allow for chaining.
    */
-  resetClient(client, now = Date.now()) {
+  resetClient(client, now2 = Date.now()) {
     client.totalHits = 0;
-    client.resetTime.setTime(now + this.windowMs);
+    client.resetTime.setTime(now2 + this.windowMs);
     return client;
   }
   /**
@@ -67031,8 +67031,8 @@ if (EMAIL_ENABLED) {
 async function logError(error, endpoint, method) {
   const db = getSqliteDb();
   const stmt = db.prepare(`INSERT INTO error_logs (message, stack, endpoint, method, created_at, sent) VALUES (?, ?, ?, ?, ?, ?)`);
-  const now = (/* @__PURE__ */ new Date()).toISOString();
-  stmt.run(error.message, error.stack || "", endpoint || "", method || "", now, 0);
+  const now2 = (/* @__PURE__ */ new Date()).toISOString();
+  stmt.run(error.message, error.stack || "", endpoint || "", method || "", now2, 0);
   const htmlBody = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h2 style="color: #dc2626;">\u{1F534} Erreur d\xE9tect\xE9e</h2>
@@ -67040,7 +67040,7 @@ async function logError(error, endpoint, method) {
         <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Endpoint</td><td style="padding: 8px; border: 1px solid #ddd;">${endpoint || "N/A"}</td></tr>
         <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">M\xE9thode</td><td style="padding: 8px; border: 1px solid #ddd;">${method || "N/A"}</td></tr>
         <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Message</td><td style="padding: 8px; border: 1px solid #ddd;">${error.message}</td></tr>
-        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Date</td><td style="padding: 8px; border: 1px solid #ddd;">${now}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Date</td><td style="padding: 8px; border: 1px solid #ddd;">${now2}</td></tr>
       </table>
       <h3 style="margin-top: 20px;">Stack Trace:</h3>
       <pre style="background: #f5f5f5; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 12px;">${error.stack || "N/A"}</pre>
@@ -67054,7 +67054,7 @@ async function logError(error, endpoint, method) {
         subject: `\u{1F534} Erreur Game Lounge - ${endpoint || "Inconnu"}`,
         html: htmlBody
       });
-      db.prepare(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`).run(error.message, now);
+      db.prepare(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`).run(error.message, now2);
       console.log(`\u{1F4E7} Erreur envoy\xE9e par email \xE0 ${EMAIL_TO}`);
     } catch (emailErr) {
       console.warn("\u26A0\uFE0F Envoi email \xE9chou\xE9:", emailErr.message);
@@ -67074,7 +67074,7 @@ async function logError(error, endpoint, method) {
         subject: `\u{1F534} Erreur Game Lounge - ${endpoint || "Inconnu"}`,
         html: htmlBody
       });
-      db.prepare(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`).run(error.message, now);
+      db.prepare(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`).run(error.message, now2);
       console.log(`\u{1F4E7} Erreur envoy\xE9e par email (fallback) \xE0 ${EMAIL_TO}`);
     } catch (fallbackErr) {
       console.warn("\u26A0\uFE0F Envoi email fallback \xE9chou\xE9:", fallbackErr.message);
@@ -67089,13 +67089,27 @@ if (DATABASE_URL) {
     const { neon } = await import("@neondatabase/serverless");
     neonSql = neon(DATABASE_URL);
     useNeon = true;
-    console.log("\u{1F310} Neon DB configur\xE9e - synchronisation secondaire activ\xE9e");
+    console.log("\u{1F310} Neon DB configur\xE9e - synchronisation bidirectionnelle activ\xE9e");
   } catch (e) {
     console.warn("\u26A0\uFE0F Neon init failed - mode hors ligne uniquement");
     useNeon = false;
   }
 } else {
   console.log("\u{1F4C1} Mode hors ligne - SQLite local uniquement");
+}
+function migrateTables() {
+  const db = getSqliteDb();
+  const tables = ["users", "consoles", "jeux", "joueurs", "tarifs", "sessions_jeu", "factures", "lignes_facture", "jetons_transactions", "parametres_fidelite", "messages", "error_logs"];
+  for (const t of tables) {
+    try {
+      db.exec(`ALTER TABLE ${t} ADD COLUMN updated_at TEXT`);
+    } catch {
+    }
+  }
+}
+try {
+  migrateTables();
+} catch {
 }
 async function syncToNeon(table, operation, data) {
   if (!useNeon || !neonSql) return;
@@ -67104,7 +67118,7 @@ async function syncToNeon(table, operation, data) {
       const cols = Object.keys(data).filter((k) => k !== "id");
       const vals = cols.map((c) => data[c]);
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
-      await neonSql(`INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`, vals.map(String));
+      await neonSql(`INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders}) ON CONFLICT (id) DO NOTHING`, vals.map(String));
     } else if (operation === "update" && data) {
       const { id, ...updates } = data;
       const cols = Object.keys(updates);
@@ -67116,25 +67130,26 @@ async function syncToNeon(table, operation, data) {
       await neonSql(`DELETE FROM ${table} WHERE id = $1`, [String(data.id)]);
     }
   } catch (e) {
-    console.warn(`Neon sync ${table} ${operation} failed`);
+    console.warn(`\u26A0\uFE0F Sync Neon ${table} ${operation}:`, e.message?.slice(0, 100));
   }
 }
 if (useNeon && neonSql) {
   (async () => {
     try {
-      await neonSql(`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL, nom TEXT NOT NULL, created_at TEXT NOT NULL)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS consoles (id SERIAL PRIMARY KEY, nom TEXT NOT NULL, type TEXT NOT NULL, poste_numero INTEGER NOT NULL, etat TEXT NOT NULL DEFAULT 'disponible', session_id INTEGER, created_at TEXT NOT NULL)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS jeux (id SERIAL PRIMARY KEY, titre TEXT NOT NULL, genre TEXT, console_id INTEGER, jaquette_url TEXT, actif INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS joueurs (id SERIAL PRIMARY KEY, nom TEXT NOT NULL, telephone TEXT, email TEXT, jetons_solde INTEGER NOT NULL DEFAULT 0, date_inscription TEXT NOT NULL, derniere_visite TEXT)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS tarifs (id SERIAL PRIMARY KEY, type TEXT NOT NULL, duree_minutes INTEGER NOT NULL, prix INTEGER NOT NULL, description TEXT, actif INTEGER NOT NULL DEFAULT 1, console_type TEXT, jeu TEXT)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS sessions_jeu (id SERIAL PRIMARY KEY, console_id INTEGER NOT NULL, joueur_id INTEGER NOT NULL, jeu_id INTEGER NOT NULL, employe_id INTEGER NOT NULL, debut TEXT NOT NULL, fin TEXT, duree_minutes INTEGER NOT NULL DEFAULT 0, montant INTEGER NOT NULL DEFAULT 0, tarif_prix INTEGER, jetons_gagnes INTEGER NOT NULL DEFAULT 0, statut TEXT NOT NULL, created_at TEXT NOT NULL)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS factures (id SERIAL PRIMARY KEY, numero_facture TEXT UNIQUE NOT NULL, session_id INTEGER NOT NULL, joueur_id INTEGER NOT NULL, montant_ht INTEGER NOT NULL, taux_tva INTEGER NOT NULL, montant_tva INTEGER NOT NULL, montant_ttc INTEGER NOT NULL, mode_paiement TEXT NOT NULL DEFAULT 'especes', statut TEXT NOT NULL DEFAULT 'payee', date_paiement TEXT NOT NULL, created_at TEXT NOT NULL)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS lignes_facture (id SERIAL PRIMARY KEY, facture_id INTEGER NOT NULL, description TEXT NOT NULL, quantite INTEGER NOT NULL, prix_unitaire INTEGER NOT NULL, total_ligne INTEGER NOT NULL)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS jetons_transactions (id SERIAL PRIMARY KEY, joueur_id INTEGER NOT NULL, type TEXT NOT NULL, quantite INTEGER NOT NULL, raison TEXT, session_id INTEGER, created_at TEXT NOT NULL)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS parametres_fidelite (id SERIAL PRIMARY KEY, regle_type TEXT NOT NULL, seuil INTEGER NOT NULL, jetons_attribues INTEGER NOT NULL, actif INTEGER NOT NULL DEFAULT 1)`);
-      console.log("\u2705 Neon tables synchronis\xE9es");
+      await neonSql(`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL, nom TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT)`);
+      await neonSql(`CREATE TABLE IF NOT EXISTS consoles (id SERIAL PRIMARY KEY, nom TEXT NOT NULL, type TEXT NOT NULL, poste_numero INTEGER NOT NULL, etat TEXT NOT NULL DEFAULT 'disponible', session_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT)`);
+      await neonSql(`CREATE TABLE IF NOT EXISTS jeux (id SERIAL PRIMARY KEY, titre TEXT NOT NULL, genre TEXT, console_id INTEGER, jaquette_url TEXT, actif INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT)`);
+      await neonSql(`CREATE TABLE IF NOT EXISTS joueurs (id SERIAL PRIMARY KEY, nom TEXT NOT NULL, telephone TEXT, email TEXT, jetons_solde INTEGER NOT NULL DEFAULT 0, date_inscription TEXT NOT NULL, derniere_visite TEXT, updated_at TEXT)`);
+      await neonSql(`CREATE TABLE IF NOT EXISTS tarifs (id SERIAL PRIMARY KEY, type TEXT NOT NULL, duree_minutes INTEGER NOT NULL, prix INTEGER NOT NULL, description TEXT, actif INTEGER NOT NULL DEFAULT 1, console_type TEXT, jeu TEXT, updated_at TEXT)`);
+      await neonSql(`CREATE TABLE IF NOT EXISTS sessions_jeu (id SERIAL PRIMARY KEY, console_id INTEGER NOT NULL, joueur_id INTEGER NOT NULL, jeu_id INTEGER NOT NULL, employe_id INTEGER NOT NULL, tarif_id INTEGER, debut TEXT NOT NULL, fin TEXT, duree_minutes INTEGER NOT NULL DEFAULT 0, montant INTEGER NOT NULL DEFAULT 0, tarif_prix INTEGER, jetons_gagnes INTEGER NOT NULL DEFAULT 0, statut TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT)`);
+      await neonSql(`CREATE TABLE IF NOT EXISTS factures (id SERIAL PRIMARY KEY, numero_facture TEXT UNIQUE NOT NULL, session_id INTEGER NOT NULL, joueur_id INTEGER NOT NULL, montant_ht INTEGER NOT NULL, taux_tva INTEGER NOT NULL, montant_tva INTEGER NOT NULL, montant_ttc INTEGER NOT NULL, mode_paiement TEXT NOT NULL DEFAULT 'especes', statut TEXT NOT NULL DEFAULT 'payee', date_paiement TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT)`);
+      await neonSql(`CREATE TABLE IF NOT EXISTS lignes_facture (id SERIAL PRIMARY KEY, facture_id INTEGER NOT NULL, description TEXT NOT NULL, quantite INTEGER NOT NULL, prix_unitaire INTEGER NOT NULL, total_ligne INTEGER NOT NULL, updated_at TEXT)`);
+      await neonSql(`CREATE TABLE IF NOT EXISTS jetons_transactions (id SERIAL PRIMARY KEY, joueur_id INTEGER NOT NULL, type TEXT NOT NULL, quantite INTEGER NOT NULL, raison TEXT, session_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT)`);
+      await neonSql(`CREATE TABLE IF NOT EXISTS parametres_fidelite (id SERIAL PRIMARY KEY, regle_type TEXT NOT NULL, seuil INTEGER NOT NULL, jetons_attribues INTEGER NOT NULL, actif INTEGER NOT NULL DEFAULT 1, updated_at TEXT)`);
+      await neonSql(`CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, titre TEXT, contenu TEXT NOT NULL, auteur TEXT, created_at TEXT NOT NULL, updated_at TEXT)`);
+      console.log("\u2705 Tables Neon pr\xEAtes");
     } catch (e) {
-      console.warn("\u26A0\uFE0F Neon init failed - mode hors ligne");
+      console.warn("\u26A0\uFE0F Neon table init failed:", e.message?.slice(0, 100));
       useNeon = false;
     }
   })();
@@ -67163,6 +67178,7 @@ function jsToRow(obj) {
   }
   return out;
 }
+var now = () => (/* @__PURE__ */ new Date()).toISOString();
 async function queryAll(table, filterFn) {
   const db = getSqliteDb();
   const stmt = db.prepare(`SELECT * FROM ${table}`);
@@ -67177,6 +67193,9 @@ async function queryOne(table, filterFn) {
 async function insert(table, record) {
   const clean = jsToRow({ ...record });
   delete clean.id;
+  const ts = now();
+  if (!clean.created_at) clean.created_at = ts;
+  clean.updated_at = ts;
   const cols = Object.keys(clean);
   if (cols.length === 0) throw new Error("Aucune colonne \xE0 ins\xE9rer");
   const values = cols.map((c) => clean[c]);
@@ -67193,6 +67212,7 @@ async function insert(table, record) {
 async function update(table, id, updates) {
   const clean = jsToRow({ ...updates });
   delete clean.id;
+  clean.updated_at = now();
   const cols = Object.keys(clean);
   const values = cols.map((c) => clean[c]);
   const db = getSqliteDb();
@@ -67219,16 +67239,22 @@ function isNeonEnabled() {
 var syncEnabled = false;
 var lastSyncAt = null;
 var syncInProgress = false;
-var SYNC_TABLES = ["users", "consoles", "jeux", "joueurs", "tarifs", "sessions_jeu", "factures", "lignes_facture", "jetons_transactions", "parametres_fidelite"];
+var lastPollAt = now();
+var SYNC_TABLES = ["users", "consoles", "jeux", "joueurs", "tarifs", "sessions_jeu", "factures", "lignes_facture", "jetons_transactions", "parametres_fidelite", "messages"];
 function setSyncEnabled(v) {
   syncEnabled = v;
 }
 function getSyncStatus() {
-  return { enabled: syncEnabled, neonConnected: useNeon, lastSync: lastSyncAt, syncing: syncInProgress };
+  return { enabled: syncEnabled, neonConnected: useNeon, lastSync: lastSyncAt, syncing: syncInProgress, lastPoll: lastPollAt };
 }
 async function pullTableFromNeon(table) {
   if (!neonSql) return 0;
-  const neonRows = await neonSql(`SELECT * FROM ${table}`);
+  let neonRows;
+  try {
+    neonRows = await neonSql(`SELECT * FROM ${table}`);
+  } catch {
+    return 0;
+  }
   if (!neonRows || neonRows.length === 0) return 0;
   const db = getSqliteDb();
   const sqliteRows = db.prepare(`SELECT * FROM ${table}`).all();
@@ -67236,6 +67262,8 @@ async function pullTableFromNeon(table) {
   let merged = 0;
   for (const nr of neonRows) {
     const local = sqliteMap.get(nr.id);
+    const neonUpdated = new Date(nr.updated_at || nr.created_at || 0).getTime();
+    const localUpdated = new Date(local?.updated_at || local?.created_at || 0).getTime();
     if (!local) {
       const cols = Object.keys(nr);
       const placeholders = cols.map(() => "?").join(", ");
@@ -67245,20 +67273,16 @@ async function pullTableFromNeon(table) {
         merged++;
       } catch {
       }
-    } else {
-      const neonDate = new Date(nr.created_at || 0).getTime();
-      const localDate = new Date(local.created_at || 0).getTime();
-      if (neonDate > localDate) {
-        const { id, ...updates } = nr;
-        const cols = Object.keys(updates);
-        if (cols.length > 0) {
-          const setClause = cols.map((c) => `${c} = ?`).join(", ");
-          const vals = cols.map((c) => updates[c] === true ? 1 : updates[c] === false ? 0 : updates[c]);
-          try {
-            db.prepare(`UPDATE ${table} SET ${setClause} WHERE id = ?`).run(...vals, id);
-            merged++;
-          } catch {
-          }
+    } else if (neonUpdated > localUpdated) {
+      const { id, ...updates } = nr;
+      const cols = Object.keys(updates);
+      if (cols.length > 0) {
+        const setClause = cols.map((c) => `${c} = ?`).join(", ");
+        const vals = cols.map((c) => updates[c] === true ? 1 : updates[c] === false ? 0 : updates[c]);
+        try {
+          db.prepare(`UPDATE ${table} SET ${setClause} WHERE id = ?`).run(...vals, id);
+          merged++;
+        } catch {
         }
       }
     }
@@ -67301,11 +67325,84 @@ async function runFullSync() {
       pushed[table] = await pushTableToNeon(table);
       pulled[table] = await pullTableFromNeon(table);
     }
-    lastSyncAt = (/* @__PURE__ */ new Date()).toISOString();
+    lastSyncAt = now();
+    lastPollAt = lastSyncAt;
   } finally {
     syncInProgress = false;
   }
   return { pushed, pulled, duration: Date.now() - start };
+}
+async function pollChanges() {
+  if (!useNeon || !neonSql) return { changes: {}, timestamp: now() };
+  if (syncInProgress) return { changes: {}, timestamp: lastPollAt };
+  const changes = {};
+  const since = lastPollAt;
+  for (const table of SYNC_TABLES) {
+    try {
+      const neonRows = await neonSql(`SELECT * FROM ${table} WHERE updated_at > $1 OR updated_at IS NULL`, [since]);
+      if (neonRows && neonRows.length > 0) {
+        changes[table] = neonRows.map(rowToJs);
+        const db = getSqliteDb();
+        for (const nr of neonRows) {
+          const local = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(nr.id);
+          const neonUpdated = new Date(nr.updated_at || nr.created_at || 0).getTime();
+          const localUpdated = new Date(local?.updated_at || local?.created_at || 0).getTime();
+          if (!local) {
+            const cols = Object.keys(nr);
+            const placeholders = cols.map(() => "?").join(", ");
+            const vals = cols.map((c) => nr[c] === true ? 1 : nr[c] === false ? 0 : nr[c]);
+            try {
+              db.prepare(`INSERT OR IGNORE INTO ${table} (${cols.join(", ")}) VALUES (${placeholders})`).run(...vals);
+            } catch {
+            }
+          } else if (neonUpdated > localUpdated) {
+            const { id, ...updates } = nr;
+            const cols = Object.keys(updates);
+            if (cols.length > 0) {
+              const setClause = cols.map((c) => `${c} = ?`).join(", ");
+              const vals = cols.map((c) => updates[c] === true ? 1 : updates[c] === false ? 0 : updates[c]);
+              try {
+                db.prepare(`UPDATE ${table} SET ${setClause} WHERE id = ?`).run(...vals, id);
+              } catch {
+              }
+            }
+          }
+        }
+      }
+    } catch {
+    }
+  }
+  lastPollAt = now();
+  return { changes, timestamp: lastPollAt };
+}
+function startAutoSync(intervalMs = 15e3) {
+  if (!useNeon) return;
+  syncEnabled = true;
+  setTimeout(async () => {
+    console.log("\u{1F504} Sync initiale depuis Neon...");
+    try {
+      await runFullSync();
+      console.log("\u2705 Sync initiale termin\xE9e");
+    } catch (e) {
+      console.warn("\u26A0\uFE0F Sync initiale \xE9chou\xE9e:", e.message);
+    }
+  }, 2e3);
+  setInterval(async () => {
+    if (!syncEnabled || syncInProgress) return;
+    try {
+      syncInProgress = true;
+      for (const table of SYNC_TABLES) {
+        await pushTableToNeon(table);
+        await pullTableFromNeon(table);
+      }
+      lastSyncAt = now();
+      lastPollAt = lastSyncAt;
+    } catch {
+    } finally {
+      syncInProgress = false;
+    }
+  }, intervalMs);
+  console.log(`\u{1F504} Auto-sync Neon activ\xE9 (interval: ${intervalMs / 1e3}s)`);
 }
 
 // server/server.ts
@@ -67829,8 +67926,8 @@ app.put("/api/sessions/:id/terminer", authMiddleware, async (req, res) => {
   const montant = Math.ceil(dureeMinutes / 60) * (s.tarif_prix || 2e3);
   await update("sessions_jeu", id, { statut: "terminee", fin: (/* @__PURE__ */ new Date()).toISOString(), duree_minutes: dureeMinutes, montant });
   await update("consoles", s.console_id, { etat: "disponible" });
-  const now = /* @__PURE__ */ new Date();
-  const dateStr = now.toISOString().slice(0, 10).replace(/-/g, "");
+  const now2 = /* @__PURE__ */ new Date();
+  const dateStr = now2.toISOString().slice(0, 10).replace(/-/g, "");
   const random = String(Math.floor(Math.random() * 9999)).padStart(4, "0");
   const numeroFacture = `FAC-${dateStr}-${random}`;
   const montantHT = Math.round(montant / 1.2);
@@ -67846,8 +67943,8 @@ app.put("/api/sessions/:id/terminer", authMiddleware, async (req, res) => {
     montant_ttc: montant,
     mode_paiement: "especes",
     statut: "payee",
-    date_paiement: now.toISOString(),
-    created_at: now.toISOString()
+    date_paiement: now2.toISOString(),
+    created_at: now2.toISOString()
   });
   const console_ = await queryOne("consoles", (c) => c.id === s.console_id);
   const jeu = await queryOne("jeux", (j) => j.id === s.jeu_id);
@@ -67872,7 +67969,7 @@ app.put("/api/sessions/:id/terminer", authMiddleware, async (req, res) => {
       quantite: jetonsGagnes,
       raison: sanitizeInput(`Session ${dureeMinutes}min - ${console_?.nom || ""}`, 500),
       session_id: id,
-      created_at: now.toISOString()
+      created_at: now2.toISOString()
     });
   }
   const joueur = await queryOne("joueurs", (j) => j.id === s.joueur_id);
@@ -68190,8 +68287,8 @@ app.post("/api/factures", authMiddleware, async (req, res) => {
   if (montant_ht !== void 0 && montant_ht !== null && montant_ht !== "" && !isValidPrix(montant_ht) && Number(montant_ht) !== 0) return res.status(400).json({ message: "Montant HT invalide" });
   if (statut && !isValidFactureStatut(statut)) return res.status(400).json({ message: "Statut invalide" });
   if (mode_paiement && !isValidModePaiement(mode_paiement)) return res.status(400).json({ message: "Mode paiement invalide" });
-  const now = /* @__PURE__ */ new Date();
-  const dateStr = now.toISOString().slice(0, 10).replace(/-/g, "");
+  const now2 = /* @__PURE__ */ new Date();
+  const dateStr = now2.toISOString().slice(0, 10).replace(/-/g, "");
   const random = String(Math.floor(Math.random() * 9999)).padStart(4, "0");
   const numero_facture = `FAC-${dateStr}-${random}`;
   const f = await insert("factures", {
@@ -68204,8 +68301,8 @@ app.post("/api/factures", authMiddleware, async (req, res) => {
     montant_ttc: Number(montant_ttc),
     mode_paiement: mode_paiement || "especes",
     statut: statut || "payee",
-    date_paiement: now.toISOString(),
-    created_at: now.toISOString()
+    date_paiement: now2.toISOString(),
+    created_at: now2.toISOString()
   });
   res.status(201).json(f);
 });
@@ -68390,6 +68487,14 @@ app.post("/api/sync/run", authMiddleware, adminOnly, async (req, res) => {
     res.status(400).json({ message: e.message });
   }
 });
+app.get("/api/sync/poll", authMiddleware, async (req, res) => {
+  try {
+    const result = await pollChanges();
+    res.json(result);
+  } catch (e) {
+    res.json({ changes: {}, timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+  }
+});
 var distPaths = [
   join2(__dirname2, "public"),
   join2(__dirname2, "../dist"),
@@ -68423,6 +68528,7 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`\u{1F3AE} Game Lounge API running on http://0.0.0.0:${PORT}`);
   autoSeed().catch(() => {
   });
+  startAutoSync(15e3);
 });
 async function autoSeed() {
   const users = await queryAll("users");

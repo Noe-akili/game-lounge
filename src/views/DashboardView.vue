@@ -115,9 +115,16 @@ function onSessionEnded() {
 onMounted(() => {
   fetchData()
   refreshInterval = setInterval(fetchData, 10000)
+  window.addEventListener('sync-poll', onSyncPoll)
 })
 
 onUnmounted(() => {
   if (refreshInterval) clearInterval(refreshInterval)
+  window.removeEventListener('sync-poll', onSyncPoll)
 })
+
+function onSyncPoll(e: Event) {
+  const d = (e as CustomEvent).detail?.changes
+  if (d?.sessions_jeu || d?.consoles || d?.factures) fetchData()
+}
 </script>

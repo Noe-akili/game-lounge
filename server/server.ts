@@ -6,7 +6,7 @@ import rateLimit from 'express-rate-limit'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { existsSync } from 'node:fs'
-import { queryAll, queryOne, insert, update, remove, logError, getSyncStatus, setSyncEnabled, runFullSync, isNeonEnabled } from './db.ts'
+import { queryAll, queryOne, insert, update, remove, logError, getSyncStatus, setSyncEnabled, runFullSync, isNeonEnabled, pollChanges, startAutoSync } from './db.ts'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import {
@@ -1093,6 +1093,16 @@ app.post('/api/sync/run', authMiddleware, adminOnly, async (req: any, res: any) 
   }
 })
 
+// Poll for real-time changes (any authenticated user can poll)
+app.get('/api/sync/poll', authMiddleware, async (req: any, res: any) => {
+  try {
+    const result = await pollChanges()
+    res.json(result)
+  } catch (e: any) {
+    res.json({ changes: {}, timestamp: new Date().toISOString() })
+  }
+})
+
 // ===== STATIC FILES =====
 // All SQL queries use parameterized queries via db.ts (using ? and $1 placeholders) to prevent SQL injection
 const distPaths = [
@@ -1130,6 +1140,7 @@ app.use((err: any, req: any, res: any, _next: any) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🎮 Game Lounge API running on http://0.0.0.0:${PORT}`)
   autoSeed().catch(() => {})
+  startAutoSync(15000)
 })
 
 async function autoSeed() {

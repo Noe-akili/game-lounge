@@ -48,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { api } from '@/utils/api'
 import { toast } from 'sonner'
 import { formatDate } from '@/utils/helpers'
@@ -122,5 +122,20 @@ async function deleteMessage(id: number) {
   toast.success('Message supprimé')
 }
 
-onMounted(fetchData)
+onMounted(() => {
+  fetchData()
+  // Auto-refresh when sync poll detects new messages
+  window.addEventListener('sync-poll', onSyncPoll)
+})
+onUnmounted(() => window.removeEventListener('sync-poll', onSyncPoll))
+
+function onSyncPoll(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (detail?.changes?.messages) {
+    // Refresh messages from server
+    api.get('/messages').then(data => {
+      if (Array.isArray(data)) messages.value = data
+    }).catch(() => {})
+  }
+}
 </script>

@@ -164,7 +164,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, computed, onUnmounted } from 'vue'
 import { api } from '@/utils/api'
 import { formatDuration, formatCurrency, formatDate } from '@/utils/helpers'
 import { toast } from 'sonner'
@@ -280,5 +280,10 @@ async function endSession(s) {
   } catch (e) { toast.error(e.message) }
 }
 
-onMounted(() => { fetchData(); fetchRefs() })
+onMounted(() => { fetchData(); fetchRefs(); window.addEventListener('sync-poll', onSyncPoll) })
+onUnmounted(() => window.removeEventListener('sync-poll', onSyncPoll))
+function onSyncPoll(e: Event) {
+  const d = (e as CustomEvent).detail?.changes
+  if (d?.sessions_jeu || d?.consoles || d?.jeux || d?.joueurs) { fetchData(); fetchRefs() }
+}
 </script>

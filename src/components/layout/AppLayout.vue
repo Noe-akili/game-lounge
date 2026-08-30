@@ -45,6 +45,7 @@ import AppHeader from '@/components/layout/AppHeader.vue'
 import BottomNav from '@/components/layout/BottomNav.vue'
 import StartSessionModal from '@/components/ui/StartSessionModal.vue'
 import { useSettingsStore } from '@/stores/settings'
+import { api } from '@/utils/api'
 
 const isSidebarOpen = ref(false)
 const showSessionModal = ref(false)
@@ -54,6 +55,7 @@ const settings = useSettingsStore()
 const isDesktop = ref(typeof window !== 'undefined' ? window.innerWidth >= 1024 : false)
 const isCapacitor = typeof window !== 'undefined' && !!(window as any).Capacitor
 const serverReady = ref(!isCapacitor)
+let pollInterval: ReturnType<typeof setInterval> | null = null
 
 function onSessionStarted() {
   showSessionModal.value = false
@@ -85,10 +87,29 @@ async function startEmbeddedServer() {
   }
 }
 
+// Real-time polling: fetch changes from Neon every 10s
+async function pollForChanges() {
+  try {
+    const result = await api.get('/sync/poll')
+    if (result && result.changes) {
+      // Dispatch custom event so views can refresh
+      window.dispatchEvent(new CustomEvent('sync-poll', { detail: result }))
+    }
+  } catch {}
+}
+
 onMounted(() => {
   settings.init()
   window.addEventListener('resize', onResize)
   startEmbeddedServer()
+  // Start polling every 10 seconds when logged in
+  pollInterval = setInterval(() => {
+    const token = localStorage.getItem('gl_token')
+    if (token) pollForChanges()
+  }, 10000)
 })
-onUnmounted(() => window.removeEventListener('resize', onResize))
+onUnmounted(() => {
+  window.removeEventListener('resize', onResize)
+  if (pollInterval) clearInterval(pollInterval)
+})
 </script>
