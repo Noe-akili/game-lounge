@@ -10,6 +10,8 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.*;
+import java.io.BufferedReader;
+import java.io.FileReader;
 import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -105,7 +107,10 @@ public class NodeJsPlugin extends Plugin {
                 pb.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile));
 
                 nodeProcess = pb.start();
-                Log.i(TAG, "Node.js process started");
+                Log.i(TAG, "Node.js process started, PID: " + getPid(nodeProcess));
+                Log.i(TAG, "Node binary: " + nodeBin.getAbsolutePath() + " (" + nodeBin.length() + " bytes)");
+                Log.i(TAG, "Server JS: " + serverJs.getAbsolutePath() + " (" + serverJs.length() + " bytes)");
+                Log.i(TAG, "DATA_DIR: " + dbDir.getAbsolutePath());
 
                 for (int i = 0; i < 30; i++) {
                     Thread.sleep(500);
@@ -141,6 +146,24 @@ public class NodeJsPlugin extends Plugin {
         result.put("running", nodeProcess != null && nodeProcess.isAlive());
         result.put("ready", serverReady.get());
         result.put("port", SERVER_PORT);
+
+        // Read last lines of server log for debugging
+        try {
+            File logFile = new File(getContext().getFilesDir(), "node_server.log");
+            if (logFile.exists()) {
+                BufferedReader reader = new BufferedReader(new FileReader(logFile));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                int lines = 0;
+                while ((line = reader.readLine()) != null && lines < 20) {
+                    sb.append(line).append("\n");
+                    lines++;
+                }
+                reader.close();
+                result.put("log", sb.toString());
+            }
+        } catch (Exception ignored) {}
+
         call.resolve(result);
     }
 

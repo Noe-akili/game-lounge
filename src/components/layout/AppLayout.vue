@@ -76,14 +76,16 @@ async function startEmbeddedServer() {
     const { Capacitor } = await import('@capacitor/core')
     const NodeJs = (Capacitor as any).Plugins?.NodeJs
     if (NodeJs) {
-      await NodeJs.start()
+      const result = await NodeJs.start()
       serverReady.value = true
+      console.log('Serveur démarré:', result)
     } else {
       serverReady.value = true
     }
   } catch (e) {
     console.error('Échec démarrage serveur:', e)
-    setTimeout(() => startEmbeddedServer(), 2000)
+    // Réessayer après 3 secondes
+    setTimeout(() => startEmbeddedServer(), 3000)
   }
 }
 

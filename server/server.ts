@@ -1104,14 +1104,15 @@ app.get('/api/sync/poll', authMiddleware, async (req: any, res: any) => {
 })
 
 // ===== STATIC FILES =====
-// All SQL queries use parameterized queries via db.ts (using ? and $1 placeholders) to prevent SQL injection
 const distPaths = [
   join(__dirname, 'public'),
   join(__dirname, '../dist'),
   join(process.env.DATA_DIR || __dirname, '../dist'),
   join(process.env.DATA_DIR || __dirname, 'public'),
+  join(process.env.DATA_DIR || __dirname, 'server/public'),
 ]
-const distDir = distPaths.find(p => existsSync(p)) || distPaths[0]
+const distDir = distPaths.find(p => { try { return existsSync(p) } catch { return false } }) || distPaths[0]
+console.log('📁 Static files:', distDir)
 
 app.use(express.static(distDir, {
   setHeaders: (res, path) => {

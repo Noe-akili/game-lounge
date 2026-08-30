@@ -17,7 +17,7 @@
       <router-view />
     </motion.div>
     <Toaster
-      position="bottom-right"
+      :position="isMobile ? 'top-center' : 'bottom-right'"
       :toast-options="{
         style: {
           background: '#12121a',
@@ -45,6 +45,7 @@ import { Toaster } from 'sonner'
 
 const router = useRouter()
 const routeLoading = ref(false)
+const isMobile = typeof window !== 'undefined' && window.innerWidth < 640
 
 let timeout: ReturnType<typeof setTimeout> | null = null
 router.beforeEach(() => {

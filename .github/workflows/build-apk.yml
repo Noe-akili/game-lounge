@@ -47,7 +47,13 @@ jobs:
         run: |
           mkdir -p android/app/src/main/assets/server
           cp dist-server/server.js android/app/src/main/assets/server/server.js
-          cp server/.env android/app/src/main/assets/server/.env 2>/dev/null || true
+          # Create .env for APK (no DATABASE_URL - neon not available in APK)
+          echo 'DATABASE_URL=' > android/app/src/main/assets/server/.env
+          echo 'SMTP_HOST=smtp.gmail.com' >> android/app/src/main/assets/server/.env
+          echo 'SMTP_PORT=587' >> android/app/src/main/assets/server/.env
+          echo 'SMTP_SECURE=false' >> android/app/src/main/assets/server/.env
+          echo 'SMTP_USER=noeakili502@gmail.com' >> android/app/src/main/assets/server/.env
+          echo 'SMTP_PASS=' >> android/app/src/main/assets/server/.env
 
       - name: Sync Capacitor
         run: npx cap sync android

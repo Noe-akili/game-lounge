@@ -1,5 +1,10 @@
 // @ts-nocheck
-const isCapacitor = typeof window !== 'undefined' && (window as any).Capacitor
+function detectCapacitor() {
+  if (typeof window === 'undefined') return false
+  const c = (window as any).Capacitor
+  return !!(c && c.isNativePlatform && c.isNativePlatform())
+}
+const isCapacitor = detectCapacitor()
 const API_BASE = isCapacitor ? 'http://127.0.0.1:3001/api' : '/api'
 
 async function request(path, options = {}) {
@@ -10,21 +15,28 @@ async function request(path, options = {}) {
     ...options.headers,
   }
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers })
+  try {
+    const res = await fetch(`${API_BASE}${path}`, { ...options, headers, signal: AbortSignal.timeout(15000) })
 
-  if (res.status === 401) {
-    localStorage.removeItem('gl_token')
-    localStorage.removeItem('gl_user')
-    window.location.href = '/login'
-    throw new Error('Non autorisé')
+    if (res.status === 401) {
+      localStorage.removeItem('gl_token')
+      localStorage.removeItem('gl_user')
+      window.location.href = '/login'
+      throw new Error('Non autorisé')
+    }
+
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ message: 'Erreur serveur' }))
+      throw new Error(error.message || `Erreur ${res.status}`)
+    }
+
+    return res.json()
+  } catch (e) {
+    if (e.name === 'TypeError' && e.message?.includes('Failed to fetch')) {
+      throw new Error('Serveur indisponible — vérifiez la connexion')
+    }
+    throw e
   }
-
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ message: 'Erreur serveur' }))
-    throw new Error(error.message || `Erreur ${res.status}`)
-  }
-
-  return res.json()
 }
 
 export const api = {

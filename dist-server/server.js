@@ -68550,9 +68550,17 @@ var distPaths = [
   join2(__dirname2, "public"),
   join2(__dirname2, "../dist"),
   join2(process.env.DATA_DIR || __dirname2, "../dist"),
-  join2(process.env.DATA_DIR || __dirname2, "public")
+  join2(process.env.DATA_DIR || __dirname2, "public"),
+  join2(process.env.DATA_DIR || __dirname2, "server/public")
 ];
-var distDir = distPaths.find((p) => existsSync2(p)) || distPaths[0];
+var distDir = distPaths.find((p) => {
+  try {
+    return existsSync2(p);
+  } catch {
+    return false;
+  }
+}) || distPaths[0];
+console.log("\u{1F4C1} Static files:", distDir);
 app.use(import_express.default.static(distDir, {
   setHeaders: (res, path) => {
     if (path.endsWith(".html")) {
