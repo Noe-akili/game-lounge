@@ -32,7 +32,6 @@
       <div class="w-48 h-1 bg-bg-surface rounded-full mx-auto overflow-hidden">
         <div class="h-full bg-gradient-to-r from-neon-violet to-neon-blue rounded-full animate-shimmer" style="background-size:200% 100%"></div>
       </div>
-      <p v-if="serverError" class="text-neon-red text-xs mt-2 max-w-xs mx-auto break-all">{{ serverError }}</p>
     </div>
   </div>
 </template>
@@ -46,7 +45,6 @@ import AppHeader from '@/components/layout/AppHeader.vue'
 import BottomNav from '@/components/layout/BottomNav.vue'
 import StartSessionModal from '@/components/ui/StartSessionModal.vue'
 import { useSettingsStore } from '@/stores/settings'
-import { api } from '@/utils/api'
 
 const isSidebarOpen = ref(false)
 const showSessionModal = ref(false)
@@ -56,7 +54,6 @@ const settings = useSettingsStore()
 const isDesktop = ref(typeof window !== 'undefined' ? window.innerWidth >= 1024 : false)
 const isCapacitor = typeof window !== 'undefined' && !!(window as any).Capacitor
 const serverReady = ref(!isCapacitor)
-const serverError = ref('')
 let pollInterval: ReturnType<typeof setInterval> | null = null
 
 function onSessionStarted() {
@@ -72,32 +69,28 @@ function onResize() {
   }
 }
 
-async function startEmbeddedServer() {
+async function waitForServer() {
   if (!isCapacitor) { serverReady.value = true; return }
-  try {
-    const { Capacitor } = await import('@capacitor/core')
-    const NodeJs = (Capacitor as any).Plugins?.NodeJs
-    if (NodeJs) {
-      const result = await NodeJs.start()
-      serverReady.value = true
-      serverError.value = ''
-      console.log('Serveur démarré:', result)
-    } else {
-      serverReady.value = true
-    }
-  } catch (e) {
-    console.error('Échec démarrage serveur:', e)
-    serverError.value = e.message || 'Erreur inconnue'
-    setTimeout(() => startEmbeddedServer(), 5000)
+  for (let i = 0; i < 60; i++) {
+    try {
+      const res = await fetch('http://127.0.0.1:3001/api/auth/login', { method: 'OPTIONS', signal: AbortSignal.timeout(1000) })
+      if (res.ok || res.status === 204 || res.status === 401 || res.status === 404) {
+        serverReady.value = true
+        console.log('Serveur prêt après', i + 1, 'tentatives')
+        return
+      }
+    } catch {}
+    await new Promise(r => setTimeout(r, 1000))
   }
+  serverReady.value = true
+  console.warn('Serveur pas disponible, mode offline')
 }
 
-// Real-time polling: fetch changes from Neon every 10s
 async function pollForChanges() {
   try {
+    const { api } = await import('@/utils/api')
     const result = await api.get('/sync/poll')
     if (result && result.changes) {
-      // Dispatch custom event so views can refresh
       window.dispatchEvent(new CustomEvent('sync-poll', { detail: result }))
     }
   } catch {}
@@ -106,8 +99,7 @@ async function pollForChanges() {
 onMounted(() => {
   settings.init()
   window.addEventListener('resize', onResize)
-  startEmbeddedServer()
-  // Start polling every 10 seconds when logged in
+  waitForServer()
   pollInterval = setInterval(() => {
     const token = localStorage.getItem('gl_token')
     if (token) pollForChanges()

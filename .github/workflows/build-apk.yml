@@ -23,37 +23,33 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Bundle server
-        run: npx esbuild server/server.ts --bundle --platform=node --format=esm --outfile=dist-server/server.js --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" --external:nodemailer --external:@neondatabase/serverless
-
-      - name: Download Node.js for Android ARM64
+      - name: Bundle server for CapacitorNodeJS plugin
         run: |
-          NODE_VERSION="22.23.2"
-          curl -sL "https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-arm64-musl.tar.xz" -o node-arm64.tar.xz
-          mkdir -p tmp-node
-          tar -xf node-arm64.tar.xz -C tmp-node
-          mkdir -p android/app/src/main/assets/nodejs/bin
-          cp tmp-node/node-v${NODE_VERSION}-linux-arm64-musl/bin/node android/app/src/main/assets/nodejs/bin/node
-          chmod +x android/app/src/main/assets/nodejs/bin/node
-          ls -lh android/app/src/main/assets/nodejs/bin/node
-          rm -rf tmp-node node-arm64.tar.xz
+          npx esbuild server/server.ts \
+            --bundle \
+            --platform=node \
+            --format=esm \
+            --outfile=public/nodejs/server.js \
+            --external:nodemailer \
+            --external:@neondatabase/serverless \
+            --external:sql.js
+          echo '{"name":"game-lounge-server","version":"1.0.0","type":"module","main":"server.js"}' > public/nodejs/package.json
 
-      - name: Copy frontend to Android assets
+      - name: Include sql.js (WASM) in bundle
         run: |
-          mkdir -p android/app/src/main/assets/server/public
-          cp -r dist/* android/app/src/main/assets/server/public/
+          mkdir -p public/nodejs/node_modules/sql.js/dist
+          cp node_modules/sql.js/dist/sql-wasm.js public/nodejs/node_modules/sql.js/dist/
+          cp node_modules/sql.js/dist/sql-wasm.wasm public/nodejs/node_modules/sql.js/dist/
+          cp node_modules/sql.js/package.json public/nodejs/node_modules/sql.js/
 
-      - name: Copy server bundle to Android assets
+      - name: Copy frontend into server/public for Express static serving
         run: |
-          mkdir -p android/app/src/main/assets/server
-          cp dist-server/server.js android/app/src/main/assets/server/server.js
-          # Create .env for APK (no DATABASE_URL - neon not available in APK)
-          echo 'DATABASE_URL=' > android/app/src/main/assets/server/.env
-          echo 'SMTP_HOST=smtp.gmail.com' >> android/app/src/main/assets/server/.env
-          echo 'SMTP_PORT=587' >> android/app/src/main/assets/server/.env
-          echo 'SMTP_SECURE=false' >> android/app/src/main/assets/server/.env
-          echo 'SMTP_USER=noeakili502@gmail.com' >> android/app/src/main/assets/server/.env
-          echo 'SMTP_PASS=' >> android/app/src/main/assets/server/.env
+          mkdir -p public/nodejs/public
+          cp -r dist/* public/nodejs/public/
+          echo "Server assets:"
+          ls public/nodejs/
+          echo "Frontend in server:"
+          ls public/nodejs/public/ | head -5
 
       - name: Sync Capacitor
         run: npx cap sync android

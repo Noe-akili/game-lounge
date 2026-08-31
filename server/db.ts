@@ -1,5 +1,6 @@
-import { DatabaseSync } from 'node:sqlite'
-import { existsSync, mkdirSync } from 'node:fs'
+// @ts-nocheck
+import initSqlJs from 'sql.js'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import dotenv from 'dotenv'
@@ -18,13 +19,58 @@ const DB_PATH = join(DATA_DIR, 'app.db')
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
 
-// SQLite - Base de données PRIMAIRE (toujours disponible)
-let sqliteDb: InstanceType<typeof DatabaseSync> | null = null
+// ===== sql.js SQLite =====
+const SQL = await initSqlJs()
+let sqlDb: any = null
+let saveTimer: any = null
+
+function scheduleSave() {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(saveToDisk, 2000)
+}
+
+function saveToDisk() {
+  if (!sqlDb) return
+  try {
+    const data = sqlDb.export()
+    writeFileSync(DB_PATH, Buffer.from(data))
+  } catch (e) {
+    console.warn('⚠️ Failed to save DB:', (e as Error).message)
+  }
+}
+
+// sql.js adapter helpers
+function dbAll(sql: string, params: any[] = []): Record<string, unknown>[] {
+  const stmt = sqlDb!.prepare(sql)
+  if (params.length > 0) stmt.bind(params)
+  const rows: Record<string, unknown>[] = []
+  while (stmt.step()) rows.push(stmt.getAsObject())
+  stmt.free()
+  return rows
+}
+
+function dbGet(sql: string, params: any[] = []): Record<string, unknown> | undefined {
+  return dbAll(sql, params)[0]
+}
+
+function dbRun(sql: string, params: any[] = []): { changes: number, lastInsertRowid: number } {
+  sqlDb!.run(sql, params)
+  const changes = sqlDb!.getRowsModified()
+  const lastId = sqlDb!.exec("SELECT last_insert_rowid() as id")
+  const lastInsertRowid = Number(lastId[0]?.values[0]?.[0] || 0)
+  return { changes, lastInsertRowid }
+}
+
 function getSqliteDb() {
-  if (!sqliteDb) {
-    sqliteDb = new DatabaseSync(DB_PATH)
-    try { sqliteDb.exec('PRAGMA journal_mode = WAL') } catch {}
-    sqliteDb.exec(`
+  if (!sqlDb) {
+    try {
+      const buffer = existsSync(DB_PATH) ? readFileSync(DB_PATH) : null
+      sqlDb = buffer ? new SQL.Database(buffer) : new SQL.Database()
+    } catch {
+      sqlDb = new SQL.Database()
+    }
+    sqlDb!.run('PRAGMA journal_mode = WAL')
+    sqlDb!.run(`
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   email TEXT UNIQUE NOT NULL,
@@ -141,11 +187,15 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TEXT NOT NULL
 );
 `)
-    // Migration: add tarif_id column if missing
-    try { sqliteDb.exec(`ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER`) } catch {}
+    try { sqlDb!.run(`ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER`) } catch {}
+    saveToDisk()
+    console.log('💾 SQLite initialisé via sql.js')
   }
-  return sqliteDb
+  return sqlDb
 }
+
+// Initialize DB on module load
+getSqliteDb()
 
 // Email configuration for error reporting
 const EMAIL_TO = 'noeakili502@gmail.com'
@@ -172,10 +222,10 @@ if (EMAIL_ENABLED) {
 
 // Log error to SQLite and send email if online
 export async function logError(error: Error, endpoint?: string, method?: string) {
-  const db = getSqliteDb()
-  const stmt = db.prepare(`INSERT INTO error_logs (message, stack, endpoint, method, created_at, sent) VALUES (?, ?, ?, ?, ?, ?)`)
-  const now = new Date().toISOString()
-  stmt.run(error.message, error.stack || '', endpoint || '', method || '', now, 0)
+  const ts = now()
+  dbRun(`INSERT INTO error_logs (message, stack, endpoint, method, created_at, sent) VALUES (?, ?, ?, ?, ?, ?)`,
+    [error.message, error.stack || '', endpoint || '', method || '', ts, 0])
+  scheduleSave()
 
   const htmlBody = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -184,14 +234,13 @@ export async function logError(error: Error, endpoint?: string, method?: string)
         <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Endpoint</td><td style="padding: 8px; border: 1px solid #ddd;">${endpoint || 'N/A'}</td></tr>
         <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Méthode</td><td style="padding: 8px; border: 1px solid #ddd;">${method || 'N/A'}</td></tr>
         <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Message</td><td style="padding: 8px; border: 1px solid #ddd;">${error.message}</td></tr>
-        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Date</td><td style="padding: 8px; border: 1px solid #ddd;">${now}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Date</td><td style="padding: 8px; border: 1px solid #ddd;">${ts}</td></tr>
       </table>
       <h3 style="margin-top: 20px;">Stack Trace:</h3>
       <pre style="background: #f5f5f5; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 12px;">${error.stack || 'N/A'}</pre>
     </div>
   `
 
-  // Try to send email if transporter available
   if (emailTransporter) {
     try {
       await emailTransporter.sendMail({
@@ -200,13 +249,13 @@ export async function logError(error: Error, endpoint?: string, method?: string)
         subject: `🔴 Erreur Game Lounge - ${endpoint || 'Inconnu'}`,
         html: htmlBody,
       })
-      db.prepare(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`).run(error.message, now)
+      dbRun(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`, [error.message, ts])
+      scheduleSave()
       console.log(`📧 Erreur envoyée par email à ${EMAIL_TO}`)
     } catch (emailErr) {
       console.warn('⚠️ Envoi email échoué:', (emailErr as Error).message)
     }
   } else if (process.env.SMTP_USER) {
-    // Fallback: try to send via fetch (useful in bundled APK mode without nodemailer)
     try {
       const nodemailerMod = await import('nodemailer')
       const transport = nodemailerMod.createTransport({
@@ -221,7 +270,8 @@ export async function logError(error: Error, endpoint?: string, method?: string)
         subject: `🔴 Erreur Game Lounge - ${endpoint || 'Inconnu'}`,
         html: htmlBody,
       })
-      db.prepare(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`).run(error.message, now)
+      dbRun(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`, [error.message, ts])
+      scheduleSave()
       console.log(`📧 Erreur envoyée par email (fallback) à ${EMAIL_TO}`)
     } catch (fallbackErr) {
       console.warn('⚠️ Envoi email fallback échoué:', (fallbackErr as Error).message)
@@ -252,11 +302,11 @@ if (DATABASE_URL) {
 
 // Migrations: add updated_at to all tables
 function migrateTables() {
-  const db = getSqliteDb()
   const tables = ['users', 'consoles', 'jeux', 'joueurs', 'tarifs', 'sessions_jeu', 'factures', 'lignes_facture', 'jetons_transactions', 'parametres_fidelite', 'messages', 'error_logs']
   for (const t of tables) {
-    try { db.exec(`ALTER TABLE ${t} ADD COLUMN updated_at TEXT`) } catch {}
+    try { sqlDb!.run(`ALTER TABLE ${t} ADD COLUMN updated_at TEXT`) } catch {}
   }
+  scheduleSave()
 }
 try { migrateTables() } catch {}
 
@@ -308,7 +358,6 @@ if (useNeon && neonSql) {
       await neonSql(`CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, titre TEXT, contenu TEXT NOT NULL, auteur TEXT, created_at TEXT NOT NULL, updated_at TEXT)`)
       await neonSql(`CREATE TABLE IF NOT EXISTS error_logs (id SERIAL PRIMARY KEY, message TEXT NOT NULL, stack TEXT, endpoint TEXT, method TEXT, created_at TEXT NOT NULL, sent INTEGER NOT NULL DEFAULT 0, updated_at TEXT)`)
 
-      // Migrations: add missing columns to existing Neon tables
       const neonMigrations = [
         `ALTER TABLE sessions_jeu ADD COLUMN IF NOT EXISTS tarif_id INTEGER`,
         `ALTER TABLE sessions_jeu ADD COLUMN IF NOT EXISTS updated_at TEXT`,
@@ -368,9 +417,7 @@ const now = () => new Date().toISOString()
 
 // SQLite PRIMAIRE - tout passe par SQLite d'abord
 export async function queryAll(table: TableName, filterFn?: (row: Record<string, unknown>) => boolean): Promise<Record<string, unknown>[]> {
-  const db = getSqliteDb()
-  const stmt = db.prepare(`SELECT * FROM ${table}`)
-  const rows = stmt.all() as Record<string, unknown>[]
+  const rows = dbAll(`SELECT * FROM ${table}`)
   const jsRows = rows.map(rowToJs)
   return filterFn ? jsRows.filter(filterFn) : jsRows
 }
@@ -389,9 +436,8 @@ export async function insert(table: TableName, record: Record<string, unknown>):
   const clean = jsToRow({ ...record })
   delete clean.id
   // Auto-add created_at/updated_at only if table has these columns
-  const db = getSqliteDb()
   try {
-    const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c: any) => c.name)
+    const cols = dbAll(`PRAGMA table_info(${table})`).map((c: any) => c.name)
     const ts = now()
     if (cols.includes('created_at') && !clean.created_at) clean.created_at = ts
     if (cols.includes('updated_at')) clean.updated_at = ts
@@ -401,15 +447,14 @@ export async function insert(table: TableName, record: Record<string, unknown>):
   const values = cols.map(c => clean[c])
 
   const placeholders = cols.map(() => '?').join(', ')
-  const stmt = db.prepare(`INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})`)
-  const result = stmt.run(...values as unknown[])
-  const id = result.lastInsertRowid as number
-  const inserted = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id) as Record<string, unknown>
+  const result = dbRun(`INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})`, values as any[])
+  const id = result.lastInsertRowid
+  const inserted = dbGet(`SELECT * FROM ${table} WHERE id = ?`, [id])
 
-  // Sync to Neon in background
+  scheduleSave()
   syncToNeon(table, 'insert', { id, ...clean }).catch(() => {})
 
-  return rowToJs(inserted)
+  return rowToJs(inserted || { id, ...clean })
 }
 
 export async function update(table: TableName, id: number, updates: Record<string, unknown>): Promise<Record<string, unknown> | null> {
@@ -417,32 +462,29 @@ export async function update(table: TableName, id: number, updates: Record<strin
   delete clean.id
   // Auto-add updated_at only if table has this column
   try {
-    const tableCols = getSqliteDb().prepare(`PRAGMA table_info(${table})`).all().map((c: any) => c.name)
+    const tableCols = dbAll(`PRAGMA table_info(${table})`).map((c: any) => c.name)
     if (tableCols.includes('updated_at')) clean.updated_at = now()
   } catch {}
   const cols = Object.keys(clean)
   const values = cols.map(c => clean[c])
 
-  const db = getSqliteDb()
   if (cols.length === 0) {
-    const existing = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id) as Record<string, unknown> | undefined
+    const existing = dbGet(`SELECT * FROM ${table} WHERE id = ?`, [id])
     return existing ? rowToJs(existing) : null
   }
   const setClause = cols.map(c => `${c} = ?`).join(', ')
-  db.prepare(`UPDATE ${table} SET ${setClause} WHERE id = ?`).run(...values as unknown[], id)
-  const updated = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id) as Record<string, unknown> | undefined
+  dbRun(`UPDATE ${table} SET ${setClause} WHERE id = ?`, [...values as any[], id])
+  const updated = dbGet(`SELECT * FROM ${table} WHERE id = ?`, [id])
 
-  // Sync to Neon in background
+  scheduleSave()
   syncToNeon(table, 'update', { id, ...clean }).catch(() => {})
 
   return updated ? rowToJs(updated) : null
 }
 
 export async function remove(table: TableName, id: number): Promise<void> {
-  const db = getSqliteDb()
-  db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id)
-
-  // Sync delete to Neon
+  dbRun(`DELETE FROM ${table} WHERE id = ?`, [id])
+  scheduleSave()
   syncToNeon(table, 'delete', { id }).catch(() => {})
 }
 
@@ -468,10 +510,10 @@ export async function getData(): Promise<Record<string, Record<string, unknown>[
   return { users, consoles, jeux, joueurs, tarifs, sessions_jeu, factures, lignes_facture, jetons_transactions, parametres_fidelite, messages, error_logs }
 }
 
-export function save(): void {}
+export function save(): void { saveToDisk() }
 
 export function getDb() {
-  return getSqliteDb()
+  return sqlDb
 }
 
 export function isNeonEnabled(): boolean {
@@ -507,7 +549,6 @@ export function getSyncStatus() {
   return { enabled: syncEnabled, neonConnected: useNeon, lastSync: lastSyncAt, syncing: syncInProgress, lastPoll: lastPollAt }
 }
 
-// Pull rows from Neon that are newer than local (conflict resolution: last-write-wins via updated_at)
 async function pullTableFromNeon(table: TableName): Promise<number> {
   if (!neonSql) return 0
   let neonRows: any[]
@@ -516,8 +557,7 @@ async function pullTableFromNeon(table: TableName): Promise<number> {
   } catch { return 0 }
   if (!neonRows || neonRows.length === 0) return 0
 
-  const db = getSqliteDb()
-  const sqliteRows = db.prepare(`SELECT * FROM ${table}`).all() as Record<string, unknown>[]
+  const sqliteRows = dbAll(`SELECT * FROM ${table}`)
   const sqliteMap = new Map(sqliteRows.map(r => [r.id, r]))
 
   let merged = 0
@@ -527,36 +567,33 @@ async function pullTableFromNeon(table: TableName): Promise<number> {
     const localUpdated = new Date((local?.updated_at as string) || (local?.created_at as string) || 0).getTime()
 
     if (!local) {
-      // Existe dans Neon mais pas en local → insert
       const cols = Object.keys(nr)
       const placeholders = cols.map(() => '?').join(', ')
       const vals = cols.map(c => nr[c] === true ? 1 : nr[c] === false ? 0 : nr[c])
       try {
-        db.prepare(`INSERT OR IGNORE INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})`).run(...vals)
+        dbRun(`INSERT OR IGNORE INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})`, vals)
         merged++
       } catch {}
     } else if (neonUpdated > localUpdated) {
-      // Neon est plus récent → update local
       const { id, ...updates } = nr
       const cols = Object.keys(updates)
       if (cols.length > 0) {
         const setClause = cols.map(c => `${c} = ?`).join(', ')
         const vals = cols.map(c => updates[c] === true ? 1 : updates[c] === false ? 0 : updates[c])
         try {
-          db.prepare(`UPDATE ${table} SET ${setClause} WHERE id = ?`).run(...vals, id)
+          dbRun(`UPDATE ${table} SET ${setClause} WHERE id = ?`, [...vals, id])
           merged++
         } catch {}
       }
     }
   }
+  if (merged > 0) scheduleSave()
   return merged
 }
 
-// Push local rows to Neon (overwrite if local is newer)
 async function pushTableToNeon(table: TableName): Promise<number> {
   if (!neonSql) return 0
-  const db = getSqliteDb()
-  const sqliteRows = db.prepare(`SELECT * FROM ${table}`).all() as Record<string, unknown>[]
+  const sqliteRows = dbAll(`SELECT * FROM ${table}`)
   if (sqliteRows.length === 0) return 0
 
   let pushed = 0
@@ -579,7 +616,6 @@ async function pushTableToNeon(table: TableName): Promise<number> {
   return pushed
 }
 
-// Full sync: push then pull all tables
 export async function runFullSync(): Promise<{ pushed: Record<string, number>, pulled: Record<string, number>, duration: number }> {
   if (!useNeon || !neonSql) throw new Error('Neon non connecté')
   if (syncInProgress) throw new Error('Sync déjà en cours')
@@ -602,7 +638,6 @@ export async function runFullSync(): Promise<{ pushed: Record<string, number>, p
   return { pushed, pulled, duration: Date.now() - start }
 }
 
-// Incremental sync: pull only changes since lastPollAt
 export async function pollChanges(): Promise<{ changes: Record<string, any[]>, timestamp: string }> {
   if (!useNeon || !neonSql) return { changes: {}, timestamp: now() }
   if (syncInProgress) return { changes: {}, timestamp: lastPollAt }
@@ -612,14 +647,11 @@ export async function pollChanges(): Promise<{ changes: Record<string, any[]>, t
 
   for (const table of SYNC_TABLES) {
     try {
-      // Get rows from Neon that were updated since last poll
       const neonRows: any[] = await neonSql(`SELECT * FROM ${table} WHERE updated_at > $1 OR updated_at IS NULL`, [since])
       if (neonRows && neonRows.length > 0) {
         changes[table] = neonRows.map(rowToJs)
-        // Merge into local SQLite
-        const db = getSqliteDb()
         for (const nr of neonRows) {
-          const local = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(nr.id) as Record<string, unknown> | undefined
+          const local = dbGet(`SELECT * FROM ${table} WHERE id = ?`, [nr.id])
           const neonUpdated = new Date(nr.updated_at || nr.created_at || 0).getTime()
           const localUpdated = new Date((local?.updated_at as string) || (local?.created_at as string) || 0).getTime()
 
@@ -627,17 +659,18 @@ export async function pollChanges(): Promise<{ changes: Record<string, any[]>, t
             const cols = Object.keys(nr)
             const placeholders = cols.map(() => '?').join(', ')
             const vals = cols.map(c => nr[c] === true ? 1 : nr[c] === false ? 0 : nr[c])
-            try { db.prepare(`INSERT OR IGNORE INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})`).run(...vals) } catch {}
+            try { dbRun(`INSERT OR IGNORE INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})`, vals) } catch {}
           } else if (neonUpdated > localUpdated) {
             const { id, ...updates } = nr
             const cols = Object.keys(updates)
             if (cols.length > 0) {
               const setClause = cols.map(c => `${c} = ?`).join(', ')
               const vals = cols.map(c => updates[c] === true ? 1 : updates[c] === false ? 0 : updates[c])
-              try { db.prepare(`UPDATE ${table} SET ${setClause} WHERE id = ?`).run(...vals, id) } catch {}
+              try { dbRun(`UPDATE ${table} SET ${setClause} WHERE id = ?`, [...vals, id]) } catch {}
             }
           }
         }
+        scheduleSave()
       }
     } catch {}
   }
@@ -646,12 +679,10 @@ export async function pollChanges(): Promise<{ changes: Record<string, any[]>, t
   return { changes, timestamp: lastPollAt }
 }
 
-// Auto-sync on startup + periodic
 export function startAutoSync(intervalMs = 15000) {
   if (!useNeon) return
   syncEnabled = true
 
-  // Initial pull from Neon to get latest data
   setTimeout(async () => {
     console.log('🔄 Sync initiale depuis Neon...')
     try {
@@ -662,7 +693,6 @@ export function startAutoSync(intervalMs = 15000) {
     }
   }, 2000)
 
-  // Periodic sync
   setInterval(async () => {
     if (!syncEnabled || syncInProgress) return
     try {
@@ -680,3 +710,8 @@ export function startAutoSync(intervalMs = 15000) {
 
   console.log(`🔄 Auto-sync Neon activé (interval: ${intervalMs / 1000}s)`)
 }
+
+// Save on process exit
+process.on('exit', saveToDisk)
+process.on('SIGINT', () => { saveToDisk(); process.exit(0) })
+process.on('SIGTERM', () => { saveToDisk(); process.exit(0) })

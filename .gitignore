@@ -9,3 +9,6 @@ android/app/build/
 android/capacitor-android/
 android/capacitor-cordova-android-plugins/
 data/
+public/nodejs/server.js
+public/nodejs/node_modules/
+public/nodejs/public/

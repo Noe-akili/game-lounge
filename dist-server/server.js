@@ -66860,8 +66860,8 @@ import { existsSync as existsSync2 } from "node:fs";
 
 // server/db.ts
 var import_dotenv = __toESM(require_main(), 1);
-import { DatabaseSync } from "node:sqlite";
-import { existsSync, mkdirSync } from "node:fs";
+import initSqlJs from "sql.js";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 var nodemailer = null;
 try {
@@ -66877,15 +66877,50 @@ import_dotenv.default.config();
 var DATA_DIR = process.env.DATA_DIR || join(".", "data");
 var DB_PATH = join(DATA_DIR, "app.db");
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-var sqliteDb = null;
+var SQL = await initSqlJs();
+var sqlDb = null;
+var saveTimer = null;
+function scheduleSave() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveToDisk, 2e3);
+}
+function saveToDisk() {
+  if (!sqlDb) return;
+  try {
+    const data = sqlDb.export();
+    writeFileSync(DB_PATH, Buffer.from(data));
+  } catch (e) {
+    console.warn("\u26A0\uFE0F Failed to save DB:", e.message);
+  }
+}
+function dbAll(sql, params = []) {
+  const stmt = sqlDb.prepare(sql);
+  if (params.length > 0) stmt.bind(params);
+  const rows = [];
+  while (stmt.step()) rows.push(stmt.getAsObject());
+  stmt.free();
+  return rows;
+}
+function dbGet(sql, params = []) {
+  return dbAll(sql, params)[0];
+}
+function dbRun(sql, params = []) {
+  sqlDb.run(sql, params);
+  const changes = sqlDb.getRowsModified();
+  const lastId = sqlDb.exec("SELECT last_insert_rowid() as id");
+  const lastInsertRowid = Number(lastId[0]?.values[0]?.[0] || 0);
+  return { changes, lastInsertRowid };
+}
 function getSqliteDb() {
-  if (!sqliteDb) {
-    sqliteDb = new DatabaseSync(DB_PATH);
+  if (!sqlDb) {
     try {
-      sqliteDb.exec("PRAGMA journal_mode = WAL");
+      const buffer = existsSync(DB_PATH) ? readFileSync(DB_PATH) : null;
+      sqlDb = buffer ? new SQL.Database(buffer) : new SQL.Database();
     } catch {
+      sqlDb = new SQL.Database();
     }
-    sqliteDb.exec(`
+    sqlDb.run("PRAGMA journal_mode = WAL");
+    sqlDb.run(`
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   email TEXT UNIQUE NOT NULL,
@@ -67003,12 +67038,15 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 `);
     try {
-      sqliteDb.exec(`ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER`);
+      sqlDb.run(`ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER`);
     } catch {
     }
+    saveToDisk();
+    console.log("\u{1F4BE} SQLite initialis\xE9 via sql.js");
   }
-  return sqliteDb;
+  return sqlDb;
 }
+getSqliteDb();
 var EMAIL_TO = "noeakili502@gmail.com";
 var EMAIL_ENABLED = process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS;
 var emailTransporter = null;
@@ -67029,10 +67067,12 @@ if (EMAIL_ENABLED) {
   }
 }
 async function logError(error, endpoint, method) {
-  const db = getSqliteDb();
-  const stmt = db.prepare(`INSERT INTO error_logs (message, stack, endpoint, method, created_at, sent) VALUES (?, ?, ?, ?, ?, ?)`);
-  const now2 = (/* @__PURE__ */ new Date()).toISOString();
-  stmt.run(error.message, error.stack || "", endpoint || "", method || "", now2, 0);
+  const ts = now();
+  dbRun(
+    `INSERT INTO error_logs (message, stack, endpoint, method, created_at, sent) VALUES (?, ?, ?, ?, ?, ?)`,
+    [error.message, error.stack || "", endpoint || "", method || "", ts, 0]
+  );
+  scheduleSave();
   const htmlBody = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h2 style="color: #dc2626;">\u{1F534} Erreur d\xE9tect\xE9e</h2>
@@ -67040,7 +67080,7 @@ async function logError(error, endpoint, method) {
         <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Endpoint</td><td style="padding: 8px; border: 1px solid #ddd;">${endpoint || "N/A"}</td></tr>
         <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">M\xE9thode</td><td style="padding: 8px; border: 1px solid #ddd;">${method || "N/A"}</td></tr>
         <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Message</td><td style="padding: 8px; border: 1px solid #ddd;">${error.message}</td></tr>
-        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Date</td><td style="padding: 8px; border: 1px solid #ddd;">${now2}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Date</td><td style="padding: 8px; border: 1px solid #ddd;">${ts}</td></tr>
       </table>
       <h3 style="margin-top: 20px;">Stack Trace:</h3>
       <pre style="background: #f5f5f5; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 12px;">${error.stack || "N/A"}</pre>
@@ -67054,7 +67094,8 @@ async function logError(error, endpoint, method) {
         subject: `\u{1F534} Erreur Game Lounge - ${endpoint || "Inconnu"}`,
         html: htmlBody
       });
-      db.prepare(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`).run(error.message, now2);
+      dbRun(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`, [error.message, ts]);
+      scheduleSave();
       console.log(`\u{1F4E7} Erreur envoy\xE9e par email \xE0 ${EMAIL_TO}`);
     } catch (emailErr) {
       console.warn("\u26A0\uFE0F Envoi email \xE9chou\xE9:", emailErr.message);
@@ -67074,7 +67115,8 @@ async function logError(error, endpoint, method) {
         subject: `\u{1F534} Erreur Game Lounge - ${endpoint || "Inconnu"}`,
         html: htmlBody
       });
-      db.prepare(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`).run(error.message, now2);
+      dbRun(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`, [error.message, ts]);
+      scheduleSave();
       console.log(`\u{1F4E7} Erreur envoy\xE9e par email (fallback) \xE0 ${EMAIL_TO}`);
     } catch (fallbackErr) {
       console.warn("\u26A0\uFE0F Envoi email fallback \xE9chou\xE9:", fallbackErr.message);
@@ -67099,14 +67141,14 @@ if (DATABASE_URL) {
   console.log("\u{1F4C1} Mode hors ligne - SQLite local uniquement");
 }
 function migrateTables() {
-  const db = getSqliteDb();
   const tables = ["users", "consoles", "jeux", "joueurs", "tarifs", "sessions_jeu", "factures", "lignes_facture", "jetons_transactions", "parametres_fidelite", "messages", "error_logs"];
   for (const t of tables) {
     try {
-      db.exec(`ALTER TABLE ${t} ADD COLUMN updated_at TEXT`);
+      sqlDb.run(`ALTER TABLE ${t} ADD COLUMN updated_at TEXT`);
     } catch {
     }
   }
+  scheduleSave();
 }
 try {
   migrateTables();
@@ -67209,9 +67251,7 @@ function jsToRow(obj) {
 }
 var now = () => (/* @__PURE__ */ new Date()).toISOString();
 async function queryAll(table, filterFn) {
-  const db = getSqliteDb();
-  const stmt = db.prepare(`SELECT * FROM ${table}`);
-  const rows = stmt.all();
+  const rows = dbAll(`SELECT * FROM ${table}`);
   const jsRows = rows.map(rowToJs);
   return filterFn ? jsRows.filter(filterFn) : jsRows;
 }
@@ -67222,9 +67262,8 @@ async function queryOne(table, filterFn) {
 async function insert(table, record) {
   const clean = jsToRow({ ...record });
   delete clean.id;
-  const db = getSqliteDb();
   try {
-    const cols2 = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+    const cols2 = dbAll(`PRAGMA table_info(${table})`).map((c) => c.name);
     const ts = now();
     if (cols2.includes("created_at") && !clean.created_at) clean.created_at = ts;
     if (cols2.includes("updated_at")) clean.updated_at = ts;
@@ -67234,39 +67273,39 @@ async function insert(table, record) {
   if (cols.length === 0) throw new Error("Aucune colonne \xE0 ins\xE9rer");
   const values = cols.map((c) => clean[c]);
   const placeholders = cols.map(() => "?").join(", ");
-  const stmt = db.prepare(`INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders})`);
-  const result = stmt.run(...values);
+  const result = dbRun(`INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders})`, values);
   const id = result.lastInsertRowid;
-  const inserted = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
+  const inserted = dbGet(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+  scheduleSave();
   syncToNeon(table, "insert", { id, ...clean }).catch(() => {
   });
-  return rowToJs(inserted);
+  return rowToJs(inserted || { id, ...clean });
 }
 async function update(table, id, updates) {
   const clean = jsToRow({ ...updates });
   delete clean.id;
   try {
-    const tableCols = getSqliteDb().prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+    const tableCols = dbAll(`PRAGMA table_info(${table})`).map((c) => c.name);
     if (tableCols.includes("updated_at")) clean.updated_at = now();
   } catch {
   }
   const cols = Object.keys(clean);
   const values = cols.map((c) => clean[c]);
-  const db = getSqliteDb();
   if (cols.length === 0) {
-    const existing = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
+    const existing = dbGet(`SELECT * FROM ${table} WHERE id = ?`, [id]);
     return existing ? rowToJs(existing) : null;
   }
   const setClause = cols.map((c) => `${c} = ?`).join(", ");
-  db.prepare(`UPDATE ${table} SET ${setClause} WHERE id = ?`).run(...values, id);
-  const updated = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
+  dbRun(`UPDATE ${table} SET ${setClause} WHERE id = ?`, [...values, id]);
+  const updated = dbGet(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+  scheduleSave();
   syncToNeon(table, "update", { id, ...clean }).catch(() => {
   });
   return updated ? rowToJs(updated) : null;
 }
 async function remove(table, id) {
-  const db = getSqliteDb();
-  db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
+  dbRun(`DELETE FROM ${table} WHERE id = ?`, [id]);
+  scheduleSave();
   syncToNeon(table, "delete", { id }).catch(() => {
   });
 }
@@ -67306,8 +67345,7 @@ async function pullTableFromNeon(table) {
     return 0;
   }
   if (!neonRows || neonRows.length === 0) return 0;
-  const db = getSqliteDb();
-  const sqliteRows = db.prepare(`SELECT * FROM ${table}`).all();
+  const sqliteRows = dbAll(`SELECT * FROM ${table}`);
   const sqliteMap = new Map(sqliteRows.map((r) => [r.id, r]));
   let merged = 0;
   for (const nr of neonRows) {
@@ -67319,7 +67357,7 @@ async function pullTableFromNeon(table) {
       const placeholders = cols.map(() => "?").join(", ");
       const vals = cols.map((c) => nr[c] === true ? 1 : nr[c] === false ? 0 : nr[c]);
       try {
-        db.prepare(`INSERT OR IGNORE INTO ${table} (${cols.join(", ")}) VALUES (${placeholders})`).run(...vals);
+        dbRun(`INSERT OR IGNORE INTO ${table} (${cols.join(", ")}) VALUES (${placeholders})`, vals);
         merged++;
       } catch {
       }
@@ -67330,19 +67368,19 @@ async function pullTableFromNeon(table) {
         const setClause = cols.map((c) => `${c} = ?`).join(", ");
         const vals = cols.map((c) => updates[c] === true ? 1 : updates[c] === false ? 0 : updates[c]);
         try {
-          db.prepare(`UPDATE ${table} SET ${setClause} WHERE id = ?`).run(...vals, id);
+          dbRun(`UPDATE ${table} SET ${setClause} WHERE id = ?`, [...vals, id]);
           merged++;
         } catch {
         }
       }
     }
   }
+  if (merged > 0) scheduleSave();
   return merged;
 }
 async function pushTableToNeon(table) {
   if (!neonSql) return 0;
-  const db = getSqliteDb();
-  const sqliteRows = db.prepare(`SELECT * FROM ${table}`).all();
+  const sqliteRows = dbAll(`SELECT * FROM ${table}`);
   if (sqliteRows.length === 0) return 0;
   let pushed = 0;
   for (const row of sqliteRows) {
@@ -67393,9 +67431,8 @@ async function pollChanges() {
       const neonRows = await neonSql(`SELECT * FROM ${table} WHERE updated_at > $1 OR updated_at IS NULL`, [since]);
       if (neonRows && neonRows.length > 0) {
         changes[table] = neonRows.map(rowToJs);
-        const db = getSqliteDb();
         for (const nr of neonRows) {
-          const local = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(nr.id);
+          const local = dbGet(`SELECT * FROM ${table} WHERE id = ?`, [nr.id]);
           const neonUpdated = new Date(nr.updated_at || nr.created_at || 0).getTime();
           const localUpdated = new Date(local?.updated_at || local?.created_at || 0).getTime();
           if (!local) {
@@ -67403,7 +67440,7 @@ async function pollChanges() {
             const placeholders = cols.map(() => "?").join(", ");
             const vals = cols.map((c) => nr[c] === true ? 1 : nr[c] === false ? 0 : nr[c]);
             try {
-              db.prepare(`INSERT OR IGNORE INTO ${table} (${cols.join(", ")}) VALUES (${placeholders})`).run(...vals);
+              dbRun(`INSERT OR IGNORE INTO ${table} (${cols.join(", ")}) VALUES (${placeholders})`, vals);
             } catch {
             }
           } else if (neonUpdated > localUpdated) {
@@ -67413,12 +67450,13 @@ async function pollChanges() {
               const setClause = cols.map((c) => `${c} = ?`).join(", ");
               const vals = cols.map((c) => updates[c] === true ? 1 : updates[c] === false ? 0 : updates[c]);
               try {
-                db.prepare(`UPDATE ${table} SET ${setClause} WHERE id = ?`).run(...vals, id);
+                dbRun(`UPDATE ${table} SET ${setClause} WHERE id = ?`, [...vals, id]);
               } catch {
               }
             }
           }
         }
+        scheduleSave();
       }
     } catch {
     }
@@ -67455,6 +67493,15 @@ function startAutoSync(intervalMs = 15e3) {
   }, intervalMs);
   console.log(`\u{1F504} Auto-sync Neon activ\xE9 (interval: ${intervalMs / 1e3}s)`);
 }
+process.on("exit", saveToDisk);
+process.on("SIGINT", () => {
+  saveToDisk();
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  saveToDisk();
+  process.exit(0);
+});
 
 // server/server.ts
 var import_bcryptjs = __toESM(require_bcryptjs(), 1);
