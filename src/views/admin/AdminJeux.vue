@@ -75,8 +75,10 @@ function consoleName(id) { return consolesList.value.find(c => c.id === id)?.nom
 
 async function fetchData() {
   loading.value = true
-  try { jeux.value = await api.get('/jeux') } catch {}
-  try { consolesList.value = await api.get('/consoles') } catch {}
+  try { jeux.value = await api.get('/jeux') }
+  catch (e: any) { toast.error('Jeux: ' + (e.message || 'erreur')) }
+  try { consolesList.value = await api.get('/consoles') }
+  catch (e: any) { toast.error('Consoles: ' + (e.message || 'erreur')) }
   finally { loading.value = false }
 }
 

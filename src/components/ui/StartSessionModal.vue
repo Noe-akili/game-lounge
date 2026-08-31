@@ -226,16 +226,18 @@ async function loadData() {
     joueurs.value = joueursData
     allConsoles.value = consolesData
     tarifs.value = tarifsData
-  } catch (e) {
-    console.error(e)
+  } catch (e: any) {
+    toast.error('Erreur chargement données: ' + (e.message || 'Serveur indisponible'))
   }
 }
 
 async function onSearch() {
   if (searchQuery.value.length >= 2) {
-    try { joueurs.value = await api.get(`/joueurs?search=${searchQuery.value}`) } catch {}
+    try { joueurs.value = await api.get(`/joueurs?search=${searchQuery.value}`) }
+    catch (e: any) { toast.error('Recherche: ' + (e.message || 'erreur')) }
   } else {
-    try { joueurs.value = await api.get('/joueurs') } catch {}
+    try { joueurs.value = await api.get('/joueurs') }
+    catch (e: any) { toast.error('Joueurs: ' + (e.message || 'erreur')) }
   }
 }
 
@@ -257,7 +259,7 @@ function prevStep() {
 
 async function loadJeux(consoleId) {
   try { jeux.value = await api.get(`/jeux?console_id=${consoleId}`) }
-  catch { jeux.value = [] }
+  catch (e: any) { toast.error('Jeux: ' + (e.message || 'erreur')) }
 }
 
 async function createPlayer() {

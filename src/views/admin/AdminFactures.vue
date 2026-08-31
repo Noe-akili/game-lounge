@@ -221,12 +221,15 @@ async function fetchData() {
   try {
     const params = filtreStatut.value ? `?statut=${filtreStatut.value}` : ''
     factures.value = await api.get(`/factures${params}`)
-  } catch {} finally { loading.value = false }
+  } catch (e: any) { toast.error('Factures: ' + (e.message || 'erreur')) }
+  finally { loading.value = false }
 }
 
 async function fetchJoueursSessions() {
-  try { joueursList.value = await api.get('/joueurs') } catch {}
-  try { sessionsList.value = await api.get('/sessions') } catch {}
+  try { joueursList.value = await api.get('/joueurs') }
+  catch (e: any) { toast.error('Joueurs: ' + (e.message || 'erreur')) }
+  try { sessionsList.value = await api.get('/sessions') }
+  catch (e: any) { toast.error('Sessions: ' + (e.message || 'erreur')) }
 }
 
 function openAdd() {

@@ -82,7 +82,8 @@ function statusLabel(e) { return { disponible: 'Libre', occupee: 'Occupé', paus
 
 async function fetchData() {
   loading.value = true
-  try { consoles.value = await api.get('/consoles') } catch {} finally { loading.value = false }
+  try { consoles.value = await api.get('/consoles') } catch (e: any) { toast.error('Erreur chargement: ' + (e.message || 'Serveur indisponible')) }
+  finally { loading.value = false }
 }
 
 function openAdd() { editingId.value = null; form.nom = ''; form.type = 'PS5'; form.poste_numero = 1; form.etat = 'disponible'; showForm.value = true }

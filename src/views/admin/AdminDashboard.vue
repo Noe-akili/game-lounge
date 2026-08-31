@@ -153,9 +153,12 @@ const chartOptions = {
 
 onMounted(async () => {
   loading.value = true
-  try { stats.value = await api.get('/rapports/ca') } catch {}
-  try { activeSessions.value = (await api.get('/sessions?statut=en_cours')).slice(0, 5) } catch {}
-  try { joueurs.value = (await api.get('/joueurs')).slice(0, 5) } catch {}
+  try { stats.value = await api.get('/rapports/ca') }
+  catch (e: any) { toast.error('Stats: ' + (e.message || 'erreur')) }
+  try { activeSessions.value = (await api.get('/sessions?statut=en_cours')).slice(0, 5) }
+  catch (e: any) { toast.error('Sessions: ' + (e.message || 'erreur')) }
+  try { joueurs.value = (await api.get('/joueurs')).slice(0, 5) }
+  catch (e: any) { toast.error('Joueurs: ' + (e.message || 'erreur')) }
   finally { loading.value = false }
 })
 </script>

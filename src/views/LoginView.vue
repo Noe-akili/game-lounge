@@ -102,9 +102,16 @@ async function handleLogin() {
     await auth.login(form.email, form.password)
     toast.success('Connexion réussie !')
     router.push(auth.user?.role === 'admin' ? '/admin' : '/dashboard')
-  } catch (e) {
-    error.value = e.message || 'Identifiants incorrects'
-    toast.error('Erreur de connexion')
+  } catch (e: any) {
+    const msg = e.message || 'Identifiants incorrects'
+    error.value = msg
+    if (msg.includes('internet') || msg.includes('indisponible') || msg.includes('Failed to fetch') || msg.includes('Connexion requise')) {
+      toast.error('Pas de connexion internet — connectez-vous pour la première fois')
+    } else if (msg.includes('incorrects')) {
+      toast.error('Email ou mot de passe incorrect')
+    } else {
+      toast.error(msg)
+    }
   } finally {
     loading.value = false
   }

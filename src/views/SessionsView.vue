@@ -205,9 +205,9 @@ async function fetchData() {
 }
 
 async function fetchRefs() {
-  try { consoles.value = await api.get('/consoles') } catch {}
-  try { joueurs.value = await api.get('/joueurs') } catch {}
-  try { jeux.value = await api.get('/jeux') } catch {}
+  try { consoles.value = await api.get('/consoles') } catch (e: any) { toast.error('Consoles: ' + (e.message || 'erreur')) }
+  try { joueurs.value = await api.get('/joueurs') } catch (e: any) { toast.error('Joueurs: ' + (e.message || 'erreur')) }
+  try { jeux.value = await api.get('/jeux') } catch (e: any) { toast.error('Jeux: ' + (e.message || 'erreur')) }
 }
 
 function openCreate() {

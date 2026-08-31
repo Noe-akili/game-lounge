@@ -170,16 +170,21 @@ function filterTransactions() { /* computed handles it */ }
 
 async function fetchParametres() {
   loading.value = true
-  try { const data = await api.get('/parametres/fidelite'); if (data) Object.assign(form, data) } catch {} finally { loading.value = false }
+  try { const data = await api.get('/parametres/fidelite'); if (data) Object.assign(form, data) }
+  catch (e: any) { toast.error('Paramètres: ' + (e.message || 'erreur')) }
+  finally { loading.value = false }
 }
 
 async function fetchTransactions() {
   loadingTx.value = true
-  try { transactions.value = await api.get('/jetons') } catch {} finally { loadingTx.value = false }
+  try { transactions.value = await api.get('/jetons') }
+  catch (e: any) { toast.error('Transactions: ' + (e.message || 'erreur')) }
+  finally { loadingTx.value = false }
 }
 
 async function fetchJoueurs() {
-  try { joueurs.value = await api.get('/joueurs') } catch {}
+  try { joueurs.value = await api.get('/joueurs') }
+  catch (e: any) { toast.error('Joueurs: ' + (e.message || 'erreur')) }
 }
 
 function openAddTransaction() {

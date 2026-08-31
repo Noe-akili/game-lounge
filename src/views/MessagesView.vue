@@ -90,14 +90,19 @@ async function saveMessage() {
   form.contenu = sanitizeInput(form.contenu, 1000)
   try {
     if (editingId.value) {
-      try { await api.put(`/messages/${editingId.value}`, form) } catch {}
+      try {
+        await api.put(`/messages/${editingId.value}`, form)
+      } catch (e: any) {
+        toast.error('Erreur modification: ' + (e.message || 'inconnue'))
+      }
       const idx = messages.value.findIndex((m: any) => m.id === editingId.value)
       if (idx !== -1) messages.value[idx] = { ...messages.value[idx], ...form }
     } else {
       try {
         const res = await api.post('/messages', form)
         messages.value.unshift(res)
-      } catch {
+      } catch (e: any) {
+        toast.error('Erreur envoi: ' + (e.message || 'Serveur indisponible'))
         const newMsg: any = { id: Date.now(), titre: form.titre || 'Message', contenu: form.contenu, auteur: 'Moi', created_at: new Date().toISOString() }
         messages.value.unshift(newMsg)
       }
@@ -116,10 +121,14 @@ function editMessage(m: any) {
 
 async function deleteMessage(id: number) {
   if (!confirm('Supprimer ce message ?')) return
-  try { await api.delete(`/messages/${id}`).catch(() => {}) } catch {}
-  messages.value = messages.value.filter((m: any) => m.id !== id)
-  saveLocal()
-  toast.success('Message supprimé')
+  try {
+    await api.delete(`/messages/${id}`)
+    messages.value = messages.value.filter((m: any) => m.id !== id)
+    saveLocal()
+    toast.success('Message supprimé')
+  } catch (e: any) {
+    toast.error('Erreur suppression: ' + (e.message || 'inconnue'))
+  }
 }
 
 onMounted(() => {

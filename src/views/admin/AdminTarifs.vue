@@ -115,7 +115,8 @@ async function fetchData() {
     ])
     tarifs.value = tarifsData
     jeux.value = jeuxData
-  } catch {} finally { loading.value = false }
+  } catch (e: any) { toast.error('Erreur chargement: ' + (e.message || 'Serveur indisponible')) }
+  finally { loading.value = false }
 }
 function editTarif(t) { editing.value = t.id; form.type = t.type; form.duree_minutes = t.duree_minutes; form.prix = t.prix; form.description = t.description || ''; form.console_type = t.console_type || 'PS5'; form.jeu = t.jeu || ''; showAdd.value = false }
 

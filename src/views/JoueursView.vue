@@ -122,20 +122,21 @@ const detailData = ref({})
 const editingId = ref(null)
 const form = reactive({ nom: '', telephone: '', email: '' })
 
-let timeout = null
-function onSearch() {
+async function onSearch() {
   clearTimeout(timeout)
   timeout = setTimeout(async () => {
     loading.value = true
     try { joueurs.value = await api.get(`/joueurs?search=${search.value}`) }
-    catch {} finally { loading.value = false }
+    catch (e: any) { toast.error('Erreur chargement: ' + (e.message || 'Serveur indisponible')) }
+    finally { loading.value = false }
   }, 300)
 }
 
 async function fetchJoueurs() {
   loading.value = true
   try { joueurs.value = await api.get('/joueurs') }
-  catch {} finally { loading.value = false }
+  catch (e: any) { toast.error('Erreur chargement: ' + (e.message || 'Serveur indisponible')) }
+  finally { loading.value = false }
 }
 
 function closeForm() { showNew.value = false; editingId.value = null }

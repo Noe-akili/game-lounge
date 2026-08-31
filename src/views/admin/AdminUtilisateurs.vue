@@ -101,7 +101,8 @@ const form = reactive({ nom: '', email: '', password: '', role: 'employe' })
 
 async function fetchUsers() {
   listLoading.value = true
-  try { users.value = await api.get('/users') } catch {} finally { listLoading.value = false }
+  try { users.value = await api.get('/users') } catch (e: any) { toast.error('Erreur chargement utilisateurs: ' + (e.message || 'Connectez-vous à internet')) }
+  finally { listLoading.value = false }
 }
 
 function openAdd() {

@@ -154,7 +154,9 @@ const loading = ref(true)
 
 async function refresh() {
   loading.value = true
-  try { stats.value = await api.get('/rapports/ca') } catch {} finally { loading.value = false }
+  try { stats.value = await api.get('/rapports/ca') }
+  catch (e: any) { toast.error('Rapports: ' + (e.message || 'erreur')) }
+  finally { loading.value = false }
 }
 
 const neonColors = [
