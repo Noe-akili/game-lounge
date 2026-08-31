@@ -11,8 +11,15 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
   if (typeof require !== "undefined") return require.apply(this, arguments);
   throw Error('Dynamic require of "' + x + '" is not supported');
 });
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
 var __commonJS = (cb, mod) => function __require2() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
@@ -1128,7 +1135,7 @@ var require_browser = __commonJS({
     exports = module.exports = require_debug();
     exports.log = log;
     exports.formatArgs = formatArgs;
-    exports.save = save;
+    exports.save = save2;
     exports.load = load;
     exports.useColors = useColors;
     exports.storage = "undefined" != typeof chrome && "undefined" != typeof chrome.storage ? chrome.storage.local : localstorage();
@@ -1177,7 +1184,7 @@ var require_browser = __commonJS({
     function log() {
       return "object" === typeof console && console.log && Function.prototype.apply.call(console.log, console, arguments);
     }
-    function save(namespaces) {
+    function save2(namespaces) {
       try {
         if (null == namespaces) {
           exports.storage.removeItem("debug");
@@ -1217,7 +1224,7 @@ var require_node = __commonJS({
     exports.init = init;
     exports.log = log;
     exports.formatArgs = formatArgs;
-    exports.save = save;
+    exports.save = save2;
     exports.load = load;
     exports.useColors = useColors;
     exports.colors = [6, 2, 3, 4, 5, 1];
@@ -1269,7 +1276,7 @@ var require_node = __commonJS({
     function log() {
       return stream.write(util.format.apply(util, arguments) + "\n");
     }
-    function save(namespaces) {
+    function save2(namespaces) {
       if (null == namespaces) {
         delete process.env.DEBUG;
       } else {
@@ -14361,8 +14368,8 @@ var require_raw = __commonJS({
     var debug = require_src()("body-parser:raw");
     var read = require_read();
     var typeis = require_type_is();
-    module.exports = raw;
-    function raw(options) {
+    module.exports = raw2;
+    function raw2(options) {
       var opts = options || {};
       var inflate = opts.inflate !== false;
       var limit = typeof opts.limit === "undefined" || opts.limit === null ? 102400 : bytes.parse(opts.limit);
@@ -17449,14 +17456,14 @@ var require_parseurl = __commonJS({
         return parse(str);
       }
       var pathname = str;
-      var query = null;
+      var query2 = null;
       var search = null;
       for (var i = 1; i < str.length; i++) {
         switch (str.charCodeAt(i)) {
           case 63:
             if (search === null) {
               pathname = str.substring(0, i);
-              query = str.substring(i + 1);
+              query2 = str.substring(i + 1);
               search = str.substring(i);
             }
             break;
@@ -17482,7 +17489,7 @@ var require_parseurl = __commonJS({
       url2.href = str;
       url2.pathname = pathname;
       if (search !== null) {
-        url2.query = query;
+        url2.query = query2;
         url2.search = search;
       }
       return url2;
@@ -18463,7 +18470,7 @@ var require_query = __commonJS({
     var merge = require_utils_merge();
     var parseUrl = require_parseurl();
     var qs = require_lib2();
-    module.exports = function query(options) {
+    module.exports = function query2(options) {
       var opts = merge({}, options);
       var queryparse = qs.parse;
       if (typeof options === "function") {
@@ -18473,7 +18480,7 @@ var require_query = __commonJS({
       if (opts !== void 0 && opts.allowPrototypes === void 0) {
         opts.allowPrototypes = true;
       }
-      return function query2(req, res, next) {
+      return function query3(req, res, next) {
         if (!req.query) {
           var val = parseUrl(req).query;
           req.query = queryparse(val, opts);
@@ -20677,7 +20684,7 @@ var require_application = __commonJS({
     var Router = require_router();
     var methods = require_methods();
     var middleware = require_init();
-    var query = require_query();
+    var query2 = require_query();
     var debug = require_src()("express:application");
     var View = require_view();
     var http = __require("http");
@@ -20743,7 +20750,7 @@ var require_application = __commonJS({
           caseSensitive: this.enabled("case sensitive routing"),
           strict: this.enabled("strict routing")
         });
-        this._router.use(query(this.get("query parser fn")));
+        this._router.use(query2(this.get("query parser fn")));
         this._router.use(middleware.init(this));
       }
     };
@@ -21590,12 +21597,12 @@ var require_request = __commonJS({
     req.param = function param(name, defaultValue) {
       var params = this.params || {};
       var body = this.body || {};
-      var query = this.query || {};
+      var query2 = this.query || {};
       var args = arguments.length === 1 ? "name" : "name, default";
       deprecate("req.param(" + args + "): Use req.params, req.body, or req.query instead");
       if (null != params[name] && params.hasOwnProperty(name)) return params[name];
       if (null != body[name]) return body[name];
-      if (null != query[name]) return query[name];
+      if (null != query2[name]) return query2[name];
       return defaultValue;
     };
     req.is = function is(types) {
@@ -25562,7 +25569,7 @@ var require_common2 = __commonJS({
 var require_browser2 = __commonJS({
   "server/node_modules/express-rate-limit/node_modules/debug/src/browser.js"(exports, module) {
     exports.formatArgs = formatArgs;
-    exports.save = save;
+    exports.save = save2;
     exports.load = load;
     exports.useColors = useColors;
     exports.storage = localstorage();
@@ -25689,7 +25696,7 @@ var require_browser2 = __commonJS({
     }
     exports.log = console.debug || console.log || (() => {
     });
-    function save(namespaces) {
+    function save2(namespaces) {
       try {
         if (namespaces) {
           exports.storage.setItem("debug", namespaces);
@@ -25736,7 +25743,7 @@ var require_node2 = __commonJS({
     exports.init = init;
     exports.log = log;
     exports.formatArgs = formatArgs;
-    exports.save = save;
+    exports.save = save2;
     exports.load = load;
     exports.useColors = useColors;
     exports.destroy = util.deprecate(
@@ -25872,7 +25879,7 @@ var require_node2 = __commonJS({
     function log(...args) {
       return process.stderr.write(util.formatWithOptions(exports.inspectOpts, ...args) + "\n");
     }
-    function save(namespaces) {
+    function save2(namespaces) {
       if (namespaces) {
         process.env.DEBUG = namespaces;
       } else {
@@ -26263,6 +26270,757 @@ var require_main = __commonJS({
     module.exports.parse = DotenvModule.parse;
     module.exports.populate = DotenvModule.populate;
     module.exports = DotenvModule;
+  }
+});
+
+// server/db.ts
+var db_exports = {};
+__export(db_exports, {
+  clearLocalData: () => clearLocalData,
+  getData: () => getData,
+  getDb: () => getDb,
+  getSyncStatus: () => getSyncStatus,
+  insert: () => insert,
+  isNeonAvailable: () => isNeonAvailable,
+  isNeonEnabled: () => isNeonEnabled,
+  isSyncEnabled: () => isSyncEnabled,
+  logError: () => logError,
+  neonSqlGetter: () => neonSqlGetter,
+  pollChanges: () => pollChanges,
+  query: () => query,
+  queryAll: () => queryAll,
+  queryNeonAll: () => queryNeonAll,
+  queryNeonUser: () => queryNeonUser,
+  queryOne: () => queryOne,
+  raw: () => raw,
+  remove: () => remove,
+  runFullSync: () => runFullSync,
+  save: () => save,
+  setSyncEnabled: () => setSyncEnabled,
+  startAutoSync: () => startAutoSync,
+  update: () => update
+});
+import initSqlJs from "sql.js";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+function scheduleSave() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveToDisk, 2e3);
+}
+function saveToDisk() {
+  if (!sqlDb) return;
+  try {
+    const data = sqlDb.export();
+    writeFileSync(DB_PATH, Buffer.from(data));
+  } catch (e) {
+    console.warn("\u26A0\uFE0F Failed to save DB:", e.message);
+  }
+}
+function dbAll(sql, params = []) {
+  const stmt = sqlDb.prepare(sql);
+  if (params.length > 0) stmt.bind(params);
+  const rows = [];
+  while (stmt.step()) rows.push(stmt.getAsObject());
+  stmt.free();
+  return rows;
+}
+function dbGet(sql, params = []) {
+  return dbAll(sql, params)[0];
+}
+function dbRun(sql, params = []) {
+  sqlDb.run(sql, params);
+  const changes = sqlDb.getRowsModified();
+  const lastId = sqlDb.exec("SELECT last_insert_rowid() as id");
+  const lastInsertRowid = Number(lastId[0]?.values[0]?.[0] || 0);
+  return { changes, lastInsertRowid };
+}
+function getSqliteDb() {
+  if (!sqlDb) {
+    try {
+      const buffer = existsSync(DB_PATH) ? readFileSync(DB_PATH) : null;
+      sqlDb = buffer ? new SQL.Database(buffer) : new SQL.Database();
+    } catch {
+      sqlDb = new SQL.Database();
+    }
+    sqlDb.run("PRAGMA journal_mode = WAL");
+    sqlDb.run(`
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL CHECK(role IN ('admin','employe')),
+  nom TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS consoles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  nom TEXT NOT NULL,
+  type TEXT NOT NULL,
+  poste_numero INTEGER NOT NULL,
+  etat TEXT NOT NULL DEFAULT 'disponible',
+  session_id INTEGER,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS jeux (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  titre TEXT NOT NULL,
+  genre TEXT,
+  console_id INTEGER,
+  jaquette_url TEXT,
+  actif INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS joueurs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  nom TEXT NOT NULL,
+  telephone TEXT,
+  email TEXT,
+  jetons_solde INTEGER NOT NULL DEFAULT 0,
+  date_inscription TEXT NOT NULL,
+  derniere_visite TEXT
+);
+CREATE TABLE IF NOT EXISTS tarifs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL,
+  duree_minutes INTEGER NOT NULL,
+  prix INTEGER NOT NULL,
+  description TEXT,
+  actif INTEGER NOT NULL DEFAULT 1,
+  console_type TEXT,
+  jeu TEXT
+);
+CREATE TABLE IF NOT EXISTS sessions_jeu (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  console_id INTEGER NOT NULL,
+  joueur_id INTEGER NOT NULL,
+  jeu_id INTEGER NOT NULL,
+  employe_id INTEGER NOT NULL,
+  tarif_id INTEGER,
+  debut TEXT NOT NULL,
+  fin TEXT,
+  duree_minutes INTEGER NOT NULL DEFAULT 0,
+  montant INTEGER NOT NULL DEFAULT 0,
+  tarif_prix INTEGER,
+  jetons_gagnes INTEGER NOT NULL DEFAULT 0,
+  statut TEXT NOT NULL CHECK(statut IN ('en_cours','pause','terminee','annulee')),
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS factures (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  numero_facture TEXT UNIQUE NOT NULL,
+  session_id INTEGER NOT NULL,
+  joueur_id INTEGER NOT NULL,
+  montant_ht INTEGER NOT NULL,
+  taux_tva INTEGER NOT NULL,
+  montant_tva INTEGER NOT NULL,
+  montant_ttc INTEGER NOT NULL,
+  mode_paiement TEXT NOT NULL DEFAULT 'especes',
+  statut TEXT NOT NULL DEFAULT 'payee',
+  date_paiement TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS lignes_facture (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  facture_id INTEGER NOT NULL,
+  description TEXT NOT NULL,
+  quantite INTEGER NOT NULL,
+  prix_unitaire INTEGER NOT NULL,
+  total_ligne INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS jetons_transactions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  joueur_id INTEGER NOT NULL,
+  type TEXT NOT NULL CHECK(type IN ('gain','depense','bonus')),
+  quantite INTEGER NOT NULL,
+  raison TEXT,
+  session_id INTEGER,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS parametres_fidelite (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  regle_type TEXT NOT NULL,
+  seuil INTEGER NOT NULL,
+  jetons_attribues INTEGER NOT NULL,
+  actif INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS error_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message TEXT NOT NULL,
+  stack TEXT,
+  endpoint TEXT,
+  method TEXT,
+  created_at TEXT NOT NULL,
+  sent INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  titre TEXT,
+  contenu TEXT NOT NULL,
+  auteur TEXT,
+  created_at TEXT NOT NULL
+);
+`);
+    try {
+      sqlDb.run(`ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER`);
+    } catch {
+    }
+    saveToDisk();
+    console.log("\u{1F4BE} SQLite initialis\xE9 via sql.js");
+  }
+  return sqlDb;
+}
+async function logError(error, endpoint, method) {
+  const ts = now();
+  dbRun(
+    `INSERT INTO error_logs (message, stack, endpoint, method, created_at, sent) VALUES (?, ?, ?, ?, ?, ?)`,
+    [error.message, error.stack || "", endpoint || "", method || "", ts, 0]
+  );
+  scheduleSave();
+  const htmlBody = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #dc2626;">\u{1F534} Erreur d\xE9tect\xE9e</h2>
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Endpoint</td><td style="padding: 8px; border: 1px solid #ddd;">${endpoint || "N/A"}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">M\xE9thode</td><td style="padding: 8px; border: 1px solid #ddd;">${method || "N/A"}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Message</td><td style="padding: 8px; border: 1px solid #ddd;">${error.message}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Date</td><td style="padding: 8px; border: 1px solid #ddd;">${ts}</td></tr>
+      </table>
+      <h3 style="margin-top: 20px;">Stack Trace:</h3>
+      <pre style="background: #f5f5f5; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 12px;">${error.stack || "N/A"}</pre>
+    </div>
+  `;
+  if (emailTransporter) {
+    try {
+      await emailTransporter.sendMail({
+        from: `"Game Lounge Erreur" <${process.env.SMTP_USER}>`,
+        to: EMAIL_TO,
+        subject: `\u{1F534} Erreur Game Lounge - ${endpoint || "Inconnu"}`,
+        html: htmlBody
+      });
+      dbRun(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`, [error.message, ts]);
+      scheduleSave();
+      console.log(`\u{1F4E7} Erreur envoy\xE9e par email \xE0 ${EMAIL_TO}`);
+    } catch (emailErr) {
+      console.warn("\u26A0\uFE0F Envoi email \xE9chou\xE9:", emailErr.message);
+    }
+  } else if (process.env.SMTP_USER) {
+    try {
+      const nodemailerMod = await import("nodemailer");
+      const transport = nodemailerMod.createTransport({
+        host: process.env.SMTP_HOST || "smtp.gmail.com",
+        port: Number(process.env.SMTP_PORT) || 587,
+        secure: process.env.SMTP_SECURE === "true",
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+      });
+      await transport.sendMail({
+        from: `"Game Lounge Erreur" <${process.env.SMTP_USER}>`,
+        to: EMAIL_TO,
+        subject: `\u{1F534} Erreur Game Lounge - ${endpoint || "Inconnu"}`,
+        html: htmlBody
+      });
+      dbRun(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`, [error.message, ts]);
+      scheduleSave();
+      console.log(`\u{1F4E7} Erreur envoy\xE9e par email (fallback) \xE0 ${EMAIL_TO}`);
+    } catch (fallbackErr) {
+      console.warn("\u26A0\uFE0F Envoi email fallback \xE9chou\xE9:", fallbackErr.message);
+    }
+  }
+}
+function migrateTables() {
+  const tables = ["users", "consoles", "jeux", "joueurs", "tarifs", "sessions_jeu", "factures", "lignes_facture", "jetons_transactions", "parametres_fidelite", "messages", "error_logs"];
+  for (const t of tables) {
+    try {
+      sqlDb.run(`ALTER TABLE ${t} ADD COLUMN updated_at TEXT`);
+    } catch {
+    }
+  }
+  scheduleSave();
+}
+async function syncToNeon(table, operation, data) {
+  if (!useNeon || !neonSql) return;
+  try {
+    if (operation === "insert" && data) {
+      const cols = Object.keys(data).filter((k) => k !== "id");
+      const vals = cols.map((c) => data[c] == null ? null : String(data[c]));
+      const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
+      const updateCols = cols.filter((c) => c !== "id");
+      const updateClause = updateCols.map((c, i) => `${c} = $${i + 1}`).join(", ");
+      await neonSql(
+        updateCols.length > 0 ? `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders}) ON CONFLICT (id) DO UPDATE SET ${updateClause}` : `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders}) ON CONFLICT (id) DO NOTHING`,
+        vals
+      );
+    } else if (operation === "update" && data) {
+      const { id, ...updates } = data;
+      const cols = Object.keys(updates);
+      if (cols.length > 0) {
+        const setClause = cols.map((c, i) => `${c} = $${i + 1}`).join(", ");
+        const vals = cols.map((c) => updates[c] == null ? null : String(updates[c]));
+        await neonSql(`UPDATE ${table} SET ${setClause} WHERE id = $${cols.length + 1}`, [...vals, String(id)]);
+      }
+    } else if (operation === "delete" && data) {
+      await neonSql(`DELETE FROM ${table} WHERE id = $1`, [String(data.id)]);
+    }
+  } catch (e) {
+    console.warn(`\u26A0\uFE0F Sync Neon ${table} ${operation}:`, e.message?.slice(0, 100));
+  }
+}
+function rowToJs(row) {
+  const out = {};
+  for (const [k, v] of Object.entries(row)) {
+    if (k === "actif" && typeof v === "number") {
+      out[k] = v === 1 ? true : v === 0 ? false : v;
+    } else if (k === "actif" && typeof v === "boolean") {
+      out[k] = v;
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+function jsToRow(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === "actif" && typeof v === "boolean") {
+      out[k] = v ? 1 : 0;
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+async function queryAll(table, filterFn) {
+  const rows = dbAll(`SELECT * FROM ${table}`);
+  const jsRows = rows.map(rowToJs);
+  return filterFn ? jsRows.filter(filterFn) : jsRows;
+}
+async function queryOne(table, filterFn) {
+  const all = await queryAll(table);
+  return all.find(filterFn) ?? null;
+}
+async function query(table, conditions = {}) {
+  const all = await queryAll(table);
+  return all.filter((row) => Object.entries(conditions).every(([key, val]) => row[key] === val));
+}
+async function insert(table, record) {
+  const clean = jsToRow({ ...record });
+  delete clean.id;
+  try {
+    const cols2 = dbAll(`PRAGMA table_info(${table})`).map((c) => c.name);
+    const ts = now();
+    if (cols2.includes("created_at") && !clean.created_at) clean.created_at = ts;
+    if (cols2.includes("updated_at")) clean.updated_at = ts;
+  } catch {
+  }
+  const cols = Object.keys(clean);
+  if (cols.length === 0) throw new Error("Aucune colonne \xE0 ins\xE9rer");
+  const values = cols.map((c) => clean[c]);
+  const placeholders = cols.map(() => "?").join(", ");
+  const result = dbRun(`INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders})`, values);
+  const id = result.lastInsertRowid;
+  const inserted = dbGet(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+  scheduleSave();
+  syncToNeon(table, "insert", { id, ...clean }).catch(() => {
+  });
+  return rowToJs(inserted || { id, ...clean });
+}
+async function update(table, id, updates) {
+  const clean = jsToRow({ ...updates });
+  delete clean.id;
+  try {
+    const tableCols = dbAll(`PRAGMA table_info(${table})`).map((c) => c.name);
+    if (tableCols.includes("updated_at")) clean.updated_at = now();
+  } catch {
+  }
+  const cols = Object.keys(clean);
+  const values = cols.map((c) => clean[c]);
+  if (cols.length === 0) {
+    const existing = dbGet(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+    return existing ? rowToJs(existing) : null;
+  }
+  const setClause = cols.map((c) => `${c} = ?`).join(", ");
+  dbRun(`UPDATE ${table} SET ${setClause} WHERE id = ?`, [...values, id]);
+  const updated = dbGet(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+  scheduleSave();
+  syncToNeon(table, "update", { id, ...clean }).catch(() => {
+  });
+  return updated ? rowToJs(updated) : null;
+}
+async function remove(table, id) {
+  dbRun(`DELETE FROM ${table} WHERE id = ?`, [id]);
+  scheduleSave();
+  syncToNeon(table, "delete", { id }).catch(() => {
+  });
+}
+async function raw(table) {
+  return queryAll(table);
+}
+async function getData() {
+  const [users, consoles, jeux, joueurs, tarifs, sessions_jeu, factures, lignes_facture, jetons_transactions, parametres_fidelite, messages, error_logs] = await Promise.all([
+    queryAll("users"),
+    queryAll("consoles"),
+    queryAll("jeux"),
+    queryAll("joueurs"),
+    queryAll("tarifs"),
+    queryAll("sessions_jeu"),
+    queryAll("factures"),
+    queryAll("lignes_facture"),
+    queryAll("jetons_transactions"),
+    queryAll("parametres_fidelite"),
+    queryAll("messages"),
+    queryAll("error_logs")
+  ]);
+  return { users, consoles, jeux, joueurs, tarifs, sessions_jeu, factures, lignes_facture, jetons_transactions, parametres_fidelite, messages, error_logs };
+}
+function save() {
+  saveToDisk();
+}
+function getDb() {
+  return sqlDb;
+}
+function isNeonEnabled() {
+  return useNeon;
+}
+function isNeonAvailable() {
+  return useNeon && !!neonSql;
+}
+async function queryNeonUser(email) {
+  if (!neonSql) return null;
+  try {
+    const rows = await neonSql(`SELECT * FROM users WHERE email = $1`, [email]);
+    return rows && rows.length > 0 ? rows[0] : null;
+  } catch {
+    return null;
+  }
+}
+async function queryNeonAll(table) {
+  if (!neonSql) return [];
+  try {
+    return await neonSql(`SELECT * FROM ${table}`);
+  } catch {
+    return [];
+  }
+}
+function neonSqlGetter() {
+  return neonSql;
+}
+async function clearLocalData() {
+  const tables = ["users", "sessions_jeu", "factures", "lignes_facture", "jetons_transactions", "messages"];
+  for (const t of tables) {
+    try {
+      dbRun(`DELETE FROM ${t}`);
+    } catch {
+    }
+  }
+  scheduleSave();
+  console.log("\u{1F5D1}\uFE0F Donn\xE9es locales supprim\xE9es (sauf consoles, jeux, tarifs, parametres)");
+}
+function isSyncEnabled() {
+  return syncEnabled && useNeon;
+}
+function setSyncEnabled(v) {
+  syncEnabled = v;
+  if (!v) {
+    useNeon = false;
+    neonSql = null;
+    console.log("\u{1F534} Synchronisation Neon d\xE9sactiv\xE9e");
+  } else if (DATABASE_URL && neonModule) {
+    try {
+      neonSql = neonModule.neon(DATABASE_URL);
+      useNeon = true;
+      console.log("\u{1F7E2} Synchronisation Neon r\xE9activ\xE9e");
+    } catch {
+      console.warn("\u26A0\uFE0F Impossible de r\xE9activer Neon");
+    }
+  }
+}
+function getSyncStatus() {
+  return { enabled: syncEnabled, neonConnected: useNeon, lastSync: lastSyncAt, syncing: syncInProgress, lastPoll: lastPollAt };
+}
+async function pullTableFromNeon(table) {
+  if (!neonSql) return 0;
+  let neonRows;
+  try {
+    neonRows = await neonSql(`SELECT * FROM ${table}`);
+  } catch {
+    return 0;
+  }
+  if (!neonRows || neonRows.length === 0) return 0;
+  const sqliteRows = dbAll(`SELECT * FROM ${table}`);
+  const sqliteMap = new Map(sqliteRows.map((r) => [r.id, r]));
+  let merged = 0;
+  for (const nr of neonRows) {
+    const local = sqliteMap.get(nr.id);
+    const neonUpdated = new Date(nr.updated_at || nr.created_at || 0).getTime();
+    const localUpdated = new Date(local?.updated_at || local?.created_at || 0).getTime();
+    if (!local) {
+      const cols = Object.keys(nr);
+      const placeholders = cols.map(() => "?").join(", ");
+      const vals = cols.map((c) => nr[c] === true ? 1 : nr[c] === false ? 0 : nr[c]);
+      try {
+        dbRun(`INSERT OR IGNORE INTO ${table} (${cols.join(", ")}) VALUES (${placeholders})`, vals);
+        merged++;
+      } catch {
+      }
+    } else if (neonUpdated > localUpdated) {
+      const { id, ...updates } = nr;
+      const cols = Object.keys(updates);
+      if (cols.length > 0) {
+        const setClause = cols.map((c) => `${c} = ?`).join(", ");
+        const vals = cols.map((c) => updates[c] === true ? 1 : updates[c] === false ? 0 : updates[c]);
+        try {
+          dbRun(`UPDATE ${table} SET ${setClause} WHERE id = ?`, [...vals, id]);
+          merged++;
+        } catch {
+        }
+      }
+    }
+  }
+  if (merged > 0) scheduleSave();
+  return merged;
+}
+async function pushTableToNeon(table) {
+  if (!neonSql) return 0;
+  const sqliteRows = dbAll(`SELECT * FROM ${table}`);
+  if (sqliteRows.length === 0) return 0;
+  let pushed = 0;
+  for (const row of sqliteRows) {
+    try {
+      const cols = Object.keys(row);
+      const vals = cols.map((c) => {
+        const v = row[c];
+        if (v === null || v === void 0) return null;
+        return v === true ? "1" : v === false ? "0" : String(v);
+      });
+      const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
+      await neonSql(
+        `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders}) ON CONFLICT (id) DO UPDATE SET ${cols.filter((c) => c !== "id").map((c, i) => `${c} = $${i + 1}`).join(", ")}`,
+        vals
+      );
+      pushed++;
+    } catch {
+    }
+  }
+  return pushed;
+}
+async function runFullSync() {
+  if (!useNeon || !neonSql) throw new Error("Neon non connect\xE9");
+  if (syncInProgress) throw new Error("Sync d\xE9j\xE0 en cours");
+  syncInProgress = true;
+  const start = Date.now();
+  const pushed = {};
+  const pulled = {};
+  try {
+    for (const table of SYNC_TABLES) {
+      pushed[table] = await pushTableToNeon(table);
+      pulled[table] = await pullTableFromNeon(table);
+    }
+    lastSyncAt = now();
+    lastPollAt = lastSyncAt;
+  } finally {
+    syncInProgress = false;
+  }
+  return { pushed, pulled, duration: Date.now() - start };
+}
+async function pollChanges() {
+  if (!useNeon || !neonSql) return { changes: {}, timestamp: now() };
+  if (syncInProgress) return { changes: {}, timestamp: lastPollAt };
+  const changes = {};
+  const since = lastPollAt;
+  for (const table of SYNC_TABLES) {
+    try {
+      const neonRows = await neonSql(`SELECT * FROM ${table} WHERE updated_at > $1 OR updated_at IS NULL`, [since]);
+      if (neonRows && neonRows.length > 0) {
+        changes[table] = neonRows.map(rowToJs);
+        for (const nr of neonRows) {
+          const local = dbGet(`SELECT * FROM ${table} WHERE id = ?`, [nr.id]);
+          const neonUpdated = new Date(nr.updated_at || nr.created_at || 0).getTime();
+          const localUpdated = new Date(local?.updated_at || local?.created_at || 0).getTime();
+          if (!local) {
+            const cols = Object.keys(nr);
+            const placeholders = cols.map(() => "?").join(", ");
+            const vals = cols.map((c) => nr[c] === true ? 1 : nr[c] === false ? 0 : nr[c]);
+            try {
+              dbRun(`INSERT OR IGNORE INTO ${table} (${cols.join(", ")}) VALUES (${placeholders})`, vals);
+            } catch {
+            }
+          } else if (neonUpdated > localUpdated) {
+            const { id, ...updates } = nr;
+            const cols = Object.keys(updates);
+            if (cols.length > 0) {
+              const setClause = cols.map((c) => `${c} = ?`).join(", ");
+              const vals = cols.map((c) => updates[c] === true ? 1 : updates[c] === false ? 0 : updates[c]);
+              try {
+                dbRun(`UPDATE ${table} SET ${setClause} WHERE id = ?`, [...vals, id]);
+              } catch {
+              }
+            }
+          }
+        }
+        scheduleSave();
+      }
+    } catch {
+    }
+  }
+  lastPollAt = now();
+  return { changes, timestamp: lastPollAt };
+}
+function startAutoSync(intervalMs = 15e3) {
+  if (!useNeon) return;
+  syncEnabled = true;
+  setTimeout(async () => {
+    console.log("\u{1F504} Sync initiale depuis Neon...");
+    try {
+      await runFullSync();
+      console.log("\u2705 Sync initiale termin\xE9e");
+    } catch (e) {
+      console.warn("\u26A0\uFE0F Sync initiale \xE9chou\xE9e:", e.message);
+    }
+  }, 2e3);
+  setInterval(async () => {
+    if (!syncEnabled || syncInProgress) return;
+    try {
+      syncInProgress = true;
+      for (const table of SYNC_TABLES) {
+        await pushTableToNeon(table);
+        await pullTableFromNeon(table);
+      }
+      lastSyncAt = now();
+      lastPollAt = lastSyncAt;
+    } catch {
+    } finally {
+      syncInProgress = false;
+    }
+  }, intervalMs);
+  console.log(`\u{1F504} Auto-sync Neon activ\xE9 (interval: ${intervalMs / 1e3}s)`);
+}
+var import_dotenv, nodemailer, DATA_DIR, DB_PATH, __dbDir, SQL, sqlDb, saveTimer, EMAIL_TO, EMAIL_ENABLED, emailTransporter, neonSql, useNeon, neonModule, DATABASE_URL, now, syncEnabled, lastSyncAt, syncInProgress, lastPollAt, SYNC_TABLES;
+var init_db = __esm({
+  async "server/db.ts"() {
+    import_dotenv = __toESM(require_main(), 1);
+    nodemailer = null;
+    try {
+      nodemailer = await import("nodemailer");
+    } catch {
+    }
+    try {
+      const envDir = process.env.DATA_DIR || (typeof __dirname !== "undefined" ? __dirname : ".");
+      import_dotenv.default.config({ path: join(envDir, ".env") });
+    } catch {
+    }
+    import_dotenv.default.config();
+    DATA_DIR = process.env.DATA_DIR || join(".", "data");
+    DB_PATH = join(DATA_DIR, "app.db");
+    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+    __dbDir = typeof __dirname !== "undefined" ? __dirname : typeof process !== "undefined" ? process.cwd() : ".";
+    try {
+      SQL = await initSqlJs({
+        locateFile: (file) => join(__dbDir, "node_modules", "sql.js", "dist", file)
+      });
+    } catch (e) {
+      console.warn("\u26A0\uFE0F locateFile failed, trying default:", e.message);
+      SQL = await initSqlJs();
+    }
+    sqlDb = null;
+    saveTimer = null;
+    getSqliteDb();
+    EMAIL_TO = "noeakili502@gmail.com";
+    EMAIL_ENABLED = process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS;
+    emailTransporter = null;
+    if (EMAIL_ENABLED) {
+      try {
+        emailTransporter = nodemailer.createTransport({
+          host: process.env.SMTP_HOST,
+          port: Number(process.env.SMTP_PORT) || 587,
+          secure: process.env.SMTP_SECURE === "true",
+          auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS
+          }
+        });
+        console.log("\u{1F4E7} Email configur\xE9 pour envoi d'erreurs");
+      } catch (e) {
+        console.warn("\u26A0\uFE0F Email non configur\xE9, erreurs en local uniquement");
+      }
+    }
+    neonSql = null;
+    useNeon = false;
+    neonModule = null;
+    DATABASE_URL = process.env.DATABASE_URL || "";
+    if (DATABASE_URL) {
+      try {
+        neonModule = await import("@neondatabase/serverless");
+        neonSql = neonModule.neon(DATABASE_URL);
+        useNeon = true;
+        console.log("\u{1F310} Neon DB configur\xE9e - synchronisation bidirectionnelle activ\xE9e");
+      } catch (e) {
+        console.warn("\u26A0\uFE0F Neon init failed - mode hors ligne uniquement");
+        useNeon = false;
+      }
+    } else {
+      console.log("\u{1F4C1} Mode hors ligne - SQLite local uniquement");
+    }
+    try {
+      migrateTables();
+    } catch {
+    }
+    if (useNeon && neonSql) {
+      (async () => {
+        try {
+          await neonSql(`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL, nom TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT)`);
+          await neonSql(`CREATE TABLE IF NOT EXISTS consoles (id SERIAL PRIMARY KEY, nom TEXT NOT NULL, type TEXT NOT NULL, poste_numero INTEGER NOT NULL, etat TEXT NOT NULL DEFAULT 'disponible', session_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT)`);
+          await neonSql(`CREATE TABLE IF NOT EXISTS jeux (id SERIAL PRIMARY KEY, titre TEXT NOT NULL, genre TEXT, console_id INTEGER, jaquette_url TEXT, actif INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT)`);
+          await neonSql(`CREATE TABLE IF NOT EXISTS joueurs (id SERIAL PRIMARY KEY, nom TEXT NOT NULL, telephone TEXT, email TEXT, jetons_solde INTEGER NOT NULL DEFAULT 0, date_inscription TEXT NOT NULL, derniere_visite TEXT, updated_at TEXT)`);
+          await neonSql(`CREATE TABLE IF NOT EXISTS tarifs (id SERIAL PRIMARY KEY, type TEXT NOT NULL, duree_minutes INTEGER NOT NULL, prix INTEGER NOT NULL, description TEXT, actif INTEGER NOT NULL DEFAULT 1, console_type TEXT, jeu TEXT, updated_at TEXT)`);
+          await neonSql(`CREATE TABLE IF NOT EXISTS sessions_jeu (id SERIAL PRIMARY KEY, console_id INTEGER NOT NULL, joueur_id INTEGER NOT NULL, jeu_id INTEGER NOT NULL, employe_id INTEGER NOT NULL, tarif_id INTEGER, debut TEXT NOT NULL, fin TEXT, duree_minutes INTEGER NOT NULL DEFAULT 0, montant INTEGER NOT NULL DEFAULT 0, tarif_prix INTEGER, jetons_gagnes INTEGER NOT NULL DEFAULT 0, statut TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT)`);
+          await neonSql(`CREATE TABLE IF NOT EXISTS factures (id SERIAL PRIMARY KEY, numero_facture TEXT UNIQUE NOT NULL, session_id INTEGER NOT NULL, joueur_id INTEGER NOT NULL, montant_ht INTEGER NOT NULL, taux_tva INTEGER NOT NULL, montant_tva INTEGER NOT NULL, montant_ttc INTEGER NOT NULL, mode_paiement TEXT NOT NULL DEFAULT 'especes', statut TEXT NOT NULL DEFAULT 'payee', date_paiement TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT)`);
+          await neonSql(`CREATE TABLE IF NOT EXISTS lignes_facture (id SERIAL PRIMARY KEY, facture_id INTEGER NOT NULL, description TEXT NOT NULL, quantite INTEGER NOT NULL, prix_unitaire INTEGER NOT NULL, total_ligne INTEGER NOT NULL, updated_at TEXT)`);
+          await neonSql(`CREATE TABLE IF NOT EXISTS jetons_transactions (id SERIAL PRIMARY KEY, joueur_id INTEGER NOT NULL, type TEXT NOT NULL, quantite INTEGER NOT NULL, raison TEXT, session_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT)`);
+          await neonSql(`CREATE TABLE IF NOT EXISTS parametres_fidelite (id SERIAL PRIMARY KEY, regle_type TEXT NOT NULL, seuil INTEGER NOT NULL, jetons_attribues INTEGER NOT NULL, actif INTEGER NOT NULL DEFAULT 1, updated_at TEXT)`);
+          await neonSql(`CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, titre TEXT, contenu TEXT NOT NULL, auteur TEXT, created_at TEXT NOT NULL, updated_at TEXT)`);
+          await neonSql(`CREATE TABLE IF NOT EXISTS error_logs (id SERIAL PRIMARY KEY, message TEXT NOT NULL, stack TEXT, endpoint TEXT, method TEXT, created_at TEXT NOT NULL, sent INTEGER NOT NULL DEFAULT 0, updated_at TEXT)`);
+          const neonMigrations = [
+            `ALTER TABLE sessions_jeu ADD COLUMN IF NOT EXISTS tarif_id INTEGER`,
+            `ALTER TABLE sessions_jeu ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+            `ALTER TABLE consoles ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+            `ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+            `ALTER TABLE jeux ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+            `ALTER TABLE joueurs ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+            `ALTER TABLE tarifs ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+            `ALTER TABLE factures ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+            `ALTER TABLE lignes_facture ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+            `ALTER TABLE jetons_transactions ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+            `ALTER TABLE parametres_fidelite ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+            `ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TEXT`,
+            `ALTER TABLE error_logs ADD COLUMN IF NOT EXISTS updated_at TEXT`
+          ];
+          for (const sql of neonMigrations) {
+            try {
+              await neonSql(sql);
+            } catch {
+            }
+          }
+          console.log("\u2705 Tables Neon pr\xEAtes");
+        } catch (e) {
+          console.warn("\u26A0\uFE0F Neon table init failed:", e.message?.slice(0, 100));
+          useNeon = false;
+        }
+      })();
+    }
+    now = () => (/* @__PURE__ */ new Date()).toISOString();
+    syncEnabled = false;
+    lastSyncAt = null;
+    syncInProgress = false;
+    lastPollAt = now();
+    SYNC_TABLES = ["users", "consoles", "jeux", "joueurs", "tarifs", "sessions_jeu", "factures", "lignes_facture", "jetons_transactions", "parametres_fidelite", "messages", "error_logs"];
+    process.on("exit", saveToDisk);
+    process.on("SIGINT", () => {
+      saveToDisk();
+      process.exit(0);
+    });
+    process.on("SIGTERM", () => {
+      saveToDisk();
+      process.exit(0);
+    });
   }
 });
 
@@ -33135,12 +33893,12 @@ var require_node3 = __commonJS({
         Deflate.prototype.push.call(this, chunk, final);
       };
       Gzip2.prototype.p = function(c, f) {
-        var raw = dopt(c, this.o, this.v && gzhl(this.o), f && 8, this.s);
+        var raw2 = dopt(c, this.o, this.v && gzhl(this.o), f && 8, this.s);
         if (this.v)
-          gzh(raw, this.o), this.v = 0;
+          gzh(raw2, this.o), this.v = 0;
         if (f)
-          wbytes(raw, raw.length - 8, this.c.d()), wbytes(raw, raw.length - 4, this.l);
-        this.ondata(raw, f);
+          wbytes(raw2, raw2.length - 8, this.c.d()), wbytes(raw2, raw2.length - 4, this.l);
+        this.ondata(raw2, f);
       };
       Gzip2.prototype.flush = function(sync) {
         Deflate.prototype.flush.call(this, sync);
@@ -33276,12 +34034,12 @@ var require_node3 = __commonJS({
         Deflate.prototype.push.call(this, chunk, final);
       };
       Zlib2.prototype.p = function(c, f) {
-        var raw = dopt(c, this.o, this.v && (this.o.dictionary ? 6 : 2), f && 4, this.s);
+        var raw2 = dopt(c, this.o, this.v && (this.o.dictionary ? 6 : 2), f && 4, this.s);
         if (this.v)
-          zlh(raw, this.o), this.v = 0;
+          zlh(raw2, this.o), this.v = 0;
         if (f)
-          wbytes(raw, raw.length - 4, this.c.d());
-        this.ondata(raw, f);
+          wbytes(raw2, raw2.length - 4, this.c.d());
+        this.ondata(raw2, f);
       };
       Zlib2.prototype.flush = function(sync) {
         Deflate.prototype.flush.call(this, sync);
@@ -46561,12 +47319,12 @@ var require_regexp_exec = __commonJS({
         var re = this;
         var state = getInternalState(re);
         var str = toString(string);
-        var raw = state.raw;
+        var raw2 = state.raw;
         var result, reCopy, lastIndex;
-        if (raw) {
-          raw.lastIndex = re.lastIndex;
-          result = call(patchedExec, raw, str);
-          re.lastIndex = raw.lastIndex;
+        if (raw2) {
+          raw2.lastIndex = re.lastIndex;
+          result = call(patchedExec, raw2, str);
+          re.lastIndex = raw2.lastIndex;
           if (result && state.groups) setGroups(result, state.groups);
           return result;
         }
@@ -66854,658 +67612,12 @@ var HOUR = 60 * MINUTE;
 var DAY = 24 * HOUR;
 
 // server/server.ts
+await init_db();
+var import_bcryptjs = __toESM(require_bcryptjs(), 1);
+var import_jsonwebtoken = __toESM(require_jsonwebtoken(), 1);
 import { fileURLToPath } from "node:url";
 import { dirname as dirname2, join as join2 } from "node:path";
 import { existsSync as existsSync2 } from "node:fs";
-
-// server/db.ts
-var import_dotenv = __toESM(require_main(), 1);
-import initSqlJs from "sql.js";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-var nodemailer = null;
-try {
-  nodemailer = await import("nodemailer");
-} catch {
-}
-try {
-  const envDir = process.env.DATA_DIR || (typeof __dirname !== "undefined" ? __dirname : ".");
-  import_dotenv.default.config({ path: join(envDir, ".env") });
-} catch {
-}
-import_dotenv.default.config();
-var DATA_DIR = process.env.DATA_DIR || join(".", "data");
-var DB_PATH = join(DATA_DIR, "app.db");
-if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-var SQL = await initSqlJs();
-var sqlDb = null;
-var saveTimer = null;
-function scheduleSave() {
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveToDisk, 2e3);
-}
-function saveToDisk() {
-  if (!sqlDb) return;
-  try {
-    const data = sqlDb.export();
-    writeFileSync(DB_PATH, Buffer.from(data));
-  } catch (e) {
-    console.warn("\u26A0\uFE0F Failed to save DB:", e.message);
-  }
-}
-function dbAll(sql, params = []) {
-  const stmt = sqlDb.prepare(sql);
-  if (params.length > 0) stmt.bind(params);
-  const rows = [];
-  while (stmt.step()) rows.push(stmt.getAsObject());
-  stmt.free();
-  return rows;
-}
-function dbGet(sql, params = []) {
-  return dbAll(sql, params)[0];
-}
-function dbRun(sql, params = []) {
-  sqlDb.run(sql, params);
-  const changes = sqlDb.getRowsModified();
-  const lastId = sqlDb.exec("SELECT last_insert_rowid() as id");
-  const lastInsertRowid = Number(lastId[0]?.values[0]?.[0] || 0);
-  return { changes, lastInsertRowid };
-}
-function getSqliteDb() {
-  if (!sqlDb) {
-    try {
-      const buffer = existsSync(DB_PATH) ? readFileSync(DB_PATH) : null;
-      sqlDb = buffer ? new SQL.Database(buffer) : new SQL.Database();
-    } catch {
-      sqlDb = new SQL.Database();
-    }
-    sqlDb.run("PRAGMA journal_mode = WAL");
-    sqlDb.run(`
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  email TEXT UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,
-  role TEXT NOT NULL CHECK(role IN ('admin','employe')),
-  nom TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS consoles (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  nom TEXT NOT NULL,
-  type TEXT NOT NULL,
-  poste_numero INTEGER NOT NULL,
-  etat TEXT NOT NULL DEFAULT 'disponible',
-  session_id INTEGER,
-  created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS jeux (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  titre TEXT NOT NULL,
-  genre TEXT,
-  console_id INTEGER,
-  jaquette_url TEXT,
-  actif INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS joueurs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  nom TEXT NOT NULL,
-  telephone TEXT,
-  email TEXT,
-  jetons_solde INTEGER NOT NULL DEFAULT 0,
-  date_inscription TEXT NOT NULL,
-  derniere_visite TEXT
-);
-CREATE TABLE IF NOT EXISTS tarifs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  type TEXT NOT NULL,
-  duree_minutes INTEGER NOT NULL,
-  prix INTEGER NOT NULL,
-  description TEXT,
-  actif INTEGER NOT NULL DEFAULT 1,
-  console_type TEXT,
-  jeu TEXT
-);
-CREATE TABLE IF NOT EXISTS sessions_jeu (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  console_id INTEGER NOT NULL,
-  joueur_id INTEGER NOT NULL,
-  jeu_id INTEGER NOT NULL,
-  employe_id INTEGER NOT NULL,
-  tarif_id INTEGER,
-  debut TEXT NOT NULL,
-  fin TEXT,
-  duree_minutes INTEGER NOT NULL DEFAULT 0,
-  montant INTEGER NOT NULL DEFAULT 0,
-  tarif_prix INTEGER,
-  jetons_gagnes INTEGER NOT NULL DEFAULT 0,
-  statut TEXT NOT NULL CHECK(statut IN ('en_cours','pause','terminee','annulee')),
-  created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS factures (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  numero_facture TEXT UNIQUE NOT NULL,
-  session_id INTEGER NOT NULL,
-  joueur_id INTEGER NOT NULL,
-  montant_ht INTEGER NOT NULL,
-  taux_tva INTEGER NOT NULL,
-  montant_tva INTEGER NOT NULL,
-  montant_ttc INTEGER NOT NULL,
-  mode_paiement TEXT NOT NULL DEFAULT 'especes',
-  statut TEXT NOT NULL DEFAULT 'payee',
-  date_paiement TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS lignes_facture (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  facture_id INTEGER NOT NULL,
-  description TEXT NOT NULL,
-  quantite INTEGER NOT NULL,
-  prix_unitaire INTEGER NOT NULL,
-  total_ligne INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS jetons_transactions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  joueur_id INTEGER NOT NULL,
-  type TEXT NOT NULL CHECK(type IN ('gain','depense','bonus')),
-  quantite INTEGER NOT NULL,
-  raison TEXT,
-  session_id INTEGER,
-  created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS parametres_fidelite (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  regle_type TEXT NOT NULL,
-  seuil INTEGER NOT NULL,
-  jetons_attribues INTEGER NOT NULL,
-  actif INTEGER NOT NULL DEFAULT 1
-);
-CREATE TABLE IF NOT EXISTS error_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  message TEXT NOT NULL,
-  stack TEXT,
-  endpoint TEXT,
-  method TEXT,
-  created_at TEXT NOT NULL,
-  sent INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  titre TEXT,
-  contenu TEXT NOT NULL,
-  auteur TEXT,
-  created_at TEXT NOT NULL
-);
-`);
-    try {
-      sqlDb.run(`ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER`);
-    } catch {
-    }
-    saveToDisk();
-    console.log("\u{1F4BE} SQLite initialis\xE9 via sql.js");
-  }
-  return sqlDb;
-}
-getSqliteDb();
-var EMAIL_TO = "noeakili502@gmail.com";
-var EMAIL_ENABLED = process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS;
-var emailTransporter = null;
-if (EMAIL_ENABLED) {
-  try {
-    emailTransporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT) || 587,
-      secure: process.env.SMTP_SECURE === "true",
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS
-      }
-    });
-    console.log("\u{1F4E7} Email configur\xE9 pour envoi d'erreurs");
-  } catch (e) {
-    console.warn("\u26A0\uFE0F Email non configur\xE9, erreurs en local uniquement");
-  }
-}
-async function logError(error, endpoint, method) {
-  const ts = now();
-  dbRun(
-    `INSERT INTO error_logs (message, stack, endpoint, method, created_at, sent) VALUES (?, ?, ?, ?, ?, ?)`,
-    [error.message, error.stack || "", endpoint || "", method || "", ts, 0]
-  );
-  scheduleSave();
-  const htmlBody = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #dc2626;">\u{1F534} Erreur d\xE9tect\xE9e</h2>
-      <table style="width: 100%; border-collapse: collapse;">
-        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Endpoint</td><td style="padding: 8px; border: 1px solid #ddd;">${endpoint || "N/A"}</td></tr>
-        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">M\xE9thode</td><td style="padding: 8px; border: 1px solid #ddd;">${method || "N/A"}</td></tr>
-        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Message</td><td style="padding: 8px; border: 1px solid #ddd;">${error.message}</td></tr>
-        <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Date</td><td style="padding: 8px; border: 1px solid #ddd;">${ts}</td></tr>
-      </table>
-      <h3 style="margin-top: 20px;">Stack Trace:</h3>
-      <pre style="background: #f5f5f5; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 12px;">${error.stack || "N/A"}</pre>
-    </div>
-  `;
-  if (emailTransporter) {
-    try {
-      await emailTransporter.sendMail({
-        from: `"Game Lounge Erreur" <${process.env.SMTP_USER}>`,
-        to: EMAIL_TO,
-        subject: `\u{1F534} Erreur Game Lounge - ${endpoint || "Inconnu"}`,
-        html: htmlBody
-      });
-      dbRun(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`, [error.message, ts]);
-      scheduleSave();
-      console.log(`\u{1F4E7} Erreur envoy\xE9e par email \xE0 ${EMAIL_TO}`);
-    } catch (emailErr) {
-      console.warn("\u26A0\uFE0F Envoi email \xE9chou\xE9:", emailErr.message);
-    }
-  } else if (process.env.SMTP_USER) {
-    try {
-      const nodemailerMod = await import("nodemailer");
-      const transport = nodemailerMod.createTransport({
-        host: process.env.SMTP_HOST || "smtp.gmail.com",
-        port: Number(process.env.SMTP_PORT) || 587,
-        secure: process.env.SMTP_SECURE === "true",
-        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
-      });
-      await transport.sendMail({
-        from: `"Game Lounge Erreur" <${process.env.SMTP_USER}>`,
-        to: EMAIL_TO,
-        subject: `\u{1F534} Erreur Game Lounge - ${endpoint || "Inconnu"}`,
-        html: htmlBody
-      });
-      dbRun(`UPDATE error_logs SET sent = 1 WHERE message = ? AND created_at = ?`, [error.message, ts]);
-      scheduleSave();
-      console.log(`\u{1F4E7} Erreur envoy\xE9e par email (fallback) \xE0 ${EMAIL_TO}`);
-    } catch (fallbackErr) {
-      console.warn("\u26A0\uFE0F Envoi email fallback \xE9chou\xE9:", fallbackErr.message);
-    }
-  }
-}
-var neonSql = null;
-var useNeon = false;
-var neonModule = null;
-var DATABASE_URL = process.env.DATABASE_URL || "";
-if (DATABASE_URL) {
-  try {
-    neonModule = await import("@neondatabase/serverless");
-    neonSql = neonModule.neon(DATABASE_URL);
-    useNeon = true;
-    console.log("\u{1F310} Neon DB configur\xE9e - synchronisation bidirectionnelle activ\xE9e");
-  } catch (e) {
-    console.warn("\u26A0\uFE0F Neon init failed - mode hors ligne uniquement");
-    useNeon = false;
-  }
-} else {
-  console.log("\u{1F4C1} Mode hors ligne - SQLite local uniquement");
-}
-function migrateTables() {
-  const tables = ["users", "consoles", "jeux", "joueurs", "tarifs", "sessions_jeu", "factures", "lignes_facture", "jetons_transactions", "parametres_fidelite", "messages", "error_logs"];
-  for (const t of tables) {
-    try {
-      sqlDb.run(`ALTER TABLE ${t} ADD COLUMN updated_at TEXT`);
-    } catch {
-    }
-  }
-  scheduleSave();
-}
-try {
-  migrateTables();
-} catch {
-}
-async function syncToNeon(table, operation, data) {
-  if (!useNeon || !neonSql) return;
-  try {
-    if (operation === "insert" && data) {
-      const cols = Object.keys(data).filter((k) => k !== "id");
-      const vals = cols.map((c) => data[c] == null ? null : String(data[c]));
-      const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
-      const updateCols = cols.filter((c) => c !== "id");
-      const updateClause = updateCols.map((c, i) => `${c} = $${i + 1}`).join(", ");
-      await neonSql(
-        updateCols.length > 0 ? `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders}) ON CONFLICT (id) DO UPDATE SET ${updateClause}` : `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders}) ON CONFLICT (id) DO NOTHING`,
-        vals
-      );
-    } else if (operation === "update" && data) {
-      const { id, ...updates } = data;
-      const cols = Object.keys(updates);
-      if (cols.length > 0) {
-        const setClause = cols.map((c, i) => `${c} = $${i + 1}`).join(", ");
-        const vals = cols.map((c) => updates[c] == null ? null : String(updates[c]));
-        await neonSql(`UPDATE ${table} SET ${setClause} WHERE id = $${cols.length + 1}`, [...vals, String(id)]);
-      }
-    } else if (operation === "delete" && data) {
-      await neonSql(`DELETE FROM ${table} WHERE id = $1`, [String(data.id)]);
-    }
-  } catch (e) {
-    console.warn(`\u26A0\uFE0F Sync Neon ${table} ${operation}:`, e.message?.slice(0, 100));
-  }
-}
-if (useNeon && neonSql) {
-  (async () => {
-    try {
-      await neonSql(`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL, nom TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS consoles (id SERIAL PRIMARY KEY, nom TEXT NOT NULL, type TEXT NOT NULL, poste_numero INTEGER NOT NULL, etat TEXT NOT NULL DEFAULT 'disponible', session_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS jeux (id SERIAL PRIMARY KEY, titre TEXT NOT NULL, genre TEXT, console_id INTEGER, jaquette_url TEXT, actif INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS joueurs (id SERIAL PRIMARY KEY, nom TEXT NOT NULL, telephone TEXT, email TEXT, jetons_solde INTEGER NOT NULL DEFAULT 0, date_inscription TEXT NOT NULL, derniere_visite TEXT, updated_at TEXT)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS tarifs (id SERIAL PRIMARY KEY, type TEXT NOT NULL, duree_minutes INTEGER NOT NULL, prix INTEGER NOT NULL, description TEXT, actif INTEGER NOT NULL DEFAULT 1, console_type TEXT, jeu TEXT, updated_at TEXT)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS sessions_jeu (id SERIAL PRIMARY KEY, console_id INTEGER NOT NULL, joueur_id INTEGER NOT NULL, jeu_id INTEGER NOT NULL, employe_id INTEGER NOT NULL, tarif_id INTEGER, debut TEXT NOT NULL, fin TEXT, duree_minutes INTEGER NOT NULL DEFAULT 0, montant INTEGER NOT NULL DEFAULT 0, tarif_prix INTEGER, jetons_gagnes INTEGER NOT NULL DEFAULT 0, statut TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS factures (id SERIAL PRIMARY KEY, numero_facture TEXT UNIQUE NOT NULL, session_id INTEGER NOT NULL, joueur_id INTEGER NOT NULL, montant_ht INTEGER NOT NULL, taux_tva INTEGER NOT NULL, montant_tva INTEGER NOT NULL, montant_ttc INTEGER NOT NULL, mode_paiement TEXT NOT NULL DEFAULT 'especes', statut TEXT NOT NULL DEFAULT 'payee', date_paiement TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS lignes_facture (id SERIAL PRIMARY KEY, facture_id INTEGER NOT NULL, description TEXT NOT NULL, quantite INTEGER NOT NULL, prix_unitaire INTEGER NOT NULL, total_ligne INTEGER NOT NULL, updated_at TEXT)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS jetons_transactions (id SERIAL PRIMARY KEY, joueur_id INTEGER NOT NULL, type TEXT NOT NULL, quantite INTEGER NOT NULL, raison TEXT, session_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS parametres_fidelite (id SERIAL PRIMARY KEY, regle_type TEXT NOT NULL, seuil INTEGER NOT NULL, jetons_attribues INTEGER NOT NULL, actif INTEGER NOT NULL DEFAULT 1, updated_at TEXT)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, titre TEXT, contenu TEXT NOT NULL, auteur TEXT, created_at TEXT NOT NULL, updated_at TEXT)`);
-      await neonSql(`CREATE TABLE IF NOT EXISTS error_logs (id SERIAL PRIMARY KEY, message TEXT NOT NULL, stack TEXT, endpoint TEXT, method TEXT, created_at TEXT NOT NULL, sent INTEGER NOT NULL DEFAULT 0, updated_at TEXT)`);
-      const neonMigrations = [
-        `ALTER TABLE sessions_jeu ADD COLUMN IF NOT EXISTS tarif_id INTEGER`,
-        `ALTER TABLE sessions_jeu ADD COLUMN IF NOT EXISTS updated_at TEXT`,
-        `ALTER TABLE consoles ADD COLUMN IF NOT EXISTS updated_at TEXT`,
-        `ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TEXT`,
-        `ALTER TABLE jeux ADD COLUMN IF NOT EXISTS updated_at TEXT`,
-        `ALTER TABLE joueurs ADD COLUMN IF NOT EXISTS updated_at TEXT`,
-        `ALTER TABLE tarifs ADD COLUMN IF NOT EXISTS updated_at TEXT`,
-        `ALTER TABLE factures ADD COLUMN IF NOT EXISTS updated_at TEXT`,
-        `ALTER TABLE lignes_facture ADD COLUMN IF NOT EXISTS updated_at TEXT`,
-        `ALTER TABLE jetons_transactions ADD COLUMN IF NOT EXISTS updated_at TEXT`,
-        `ALTER TABLE parametres_fidelite ADD COLUMN IF NOT EXISTS updated_at TEXT`,
-        `ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TEXT`,
-        `ALTER TABLE error_logs ADD COLUMN IF NOT EXISTS updated_at TEXT`
-      ];
-      for (const sql of neonMigrations) {
-        try {
-          await neonSql(sql);
-        } catch {
-        }
-      }
-      console.log("\u2705 Tables Neon pr\xEAtes");
-    } catch (e) {
-      console.warn("\u26A0\uFE0F Neon table init failed:", e.message?.slice(0, 100));
-      useNeon = false;
-    }
-  })();
-}
-function rowToJs(row) {
-  const out = {};
-  for (const [k, v] of Object.entries(row)) {
-    if (k === "actif" && typeof v === "number") {
-      out[k] = v === 1 ? true : v === 0 ? false : v;
-    } else if (k === "actif" && typeof v === "boolean") {
-      out[k] = v;
-    } else {
-      out[k] = v;
-    }
-  }
-  return out;
-}
-function jsToRow(obj) {
-  const out = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (k === "actif" && typeof v === "boolean") {
-      out[k] = v ? 1 : 0;
-    } else {
-      out[k] = v;
-    }
-  }
-  return out;
-}
-var now = () => (/* @__PURE__ */ new Date()).toISOString();
-async function queryAll(table, filterFn) {
-  const rows = dbAll(`SELECT * FROM ${table}`);
-  const jsRows = rows.map(rowToJs);
-  return filterFn ? jsRows.filter(filterFn) : jsRows;
-}
-async function queryOne(table, filterFn) {
-  const all = await queryAll(table);
-  return all.find(filterFn) ?? null;
-}
-async function insert(table, record) {
-  const clean = jsToRow({ ...record });
-  delete clean.id;
-  try {
-    const cols2 = dbAll(`PRAGMA table_info(${table})`).map((c) => c.name);
-    const ts = now();
-    if (cols2.includes("created_at") && !clean.created_at) clean.created_at = ts;
-    if (cols2.includes("updated_at")) clean.updated_at = ts;
-  } catch {
-  }
-  const cols = Object.keys(clean);
-  if (cols.length === 0) throw new Error("Aucune colonne \xE0 ins\xE9rer");
-  const values = cols.map((c) => clean[c]);
-  const placeholders = cols.map(() => "?").join(", ");
-  const result = dbRun(`INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders})`, values);
-  const id = result.lastInsertRowid;
-  const inserted = dbGet(`SELECT * FROM ${table} WHERE id = ?`, [id]);
-  scheduleSave();
-  syncToNeon(table, "insert", { id, ...clean }).catch(() => {
-  });
-  return rowToJs(inserted || { id, ...clean });
-}
-async function update(table, id, updates) {
-  const clean = jsToRow({ ...updates });
-  delete clean.id;
-  try {
-    const tableCols = dbAll(`PRAGMA table_info(${table})`).map((c) => c.name);
-    if (tableCols.includes("updated_at")) clean.updated_at = now();
-  } catch {
-  }
-  const cols = Object.keys(clean);
-  const values = cols.map((c) => clean[c]);
-  if (cols.length === 0) {
-    const existing = dbGet(`SELECT * FROM ${table} WHERE id = ?`, [id]);
-    return existing ? rowToJs(existing) : null;
-  }
-  const setClause = cols.map((c) => `${c} = ?`).join(", ");
-  dbRun(`UPDATE ${table} SET ${setClause} WHERE id = ?`, [...values, id]);
-  const updated = dbGet(`SELECT * FROM ${table} WHERE id = ?`, [id]);
-  scheduleSave();
-  syncToNeon(table, "update", { id, ...clean }).catch(() => {
-  });
-  return updated ? rowToJs(updated) : null;
-}
-async function remove(table, id) {
-  dbRun(`DELETE FROM ${table} WHERE id = ?`, [id]);
-  scheduleSave();
-  syncToNeon(table, "delete", { id }).catch(() => {
-  });
-}
-function isNeonEnabled() {
-  return useNeon;
-}
-var syncEnabled = false;
-var lastSyncAt = null;
-var syncInProgress = false;
-var lastPollAt = now();
-var SYNC_TABLES = ["users", "consoles", "jeux", "joueurs", "tarifs", "sessions_jeu", "factures", "lignes_facture", "jetons_transactions", "parametres_fidelite", "messages", "error_logs"];
-function setSyncEnabled(v) {
-  syncEnabled = v;
-  if (!v) {
-    useNeon = false;
-    neonSql = null;
-    console.log("\u{1F534} Synchronisation Neon d\xE9sactiv\xE9e");
-  } else if (DATABASE_URL && neonModule) {
-    try {
-      neonSql = neonModule.neon(DATABASE_URL);
-      useNeon = true;
-      console.log("\u{1F7E2} Synchronisation Neon r\xE9activ\xE9e");
-    } catch {
-      console.warn("\u26A0\uFE0F Impossible de r\xE9activer Neon");
-    }
-  }
-}
-function getSyncStatus() {
-  return { enabled: syncEnabled, neonConnected: useNeon, lastSync: lastSyncAt, syncing: syncInProgress, lastPoll: lastPollAt };
-}
-async function pullTableFromNeon(table) {
-  if (!neonSql) return 0;
-  let neonRows;
-  try {
-    neonRows = await neonSql(`SELECT * FROM ${table}`);
-  } catch {
-    return 0;
-  }
-  if (!neonRows || neonRows.length === 0) return 0;
-  const sqliteRows = dbAll(`SELECT * FROM ${table}`);
-  const sqliteMap = new Map(sqliteRows.map((r) => [r.id, r]));
-  let merged = 0;
-  for (const nr of neonRows) {
-    const local = sqliteMap.get(nr.id);
-    const neonUpdated = new Date(nr.updated_at || nr.created_at || 0).getTime();
-    const localUpdated = new Date(local?.updated_at || local?.created_at || 0).getTime();
-    if (!local) {
-      const cols = Object.keys(nr);
-      const placeholders = cols.map(() => "?").join(", ");
-      const vals = cols.map((c) => nr[c] === true ? 1 : nr[c] === false ? 0 : nr[c]);
-      try {
-        dbRun(`INSERT OR IGNORE INTO ${table} (${cols.join(", ")}) VALUES (${placeholders})`, vals);
-        merged++;
-      } catch {
-      }
-    } else if (neonUpdated > localUpdated) {
-      const { id, ...updates } = nr;
-      const cols = Object.keys(updates);
-      if (cols.length > 0) {
-        const setClause = cols.map((c) => `${c} = ?`).join(", ");
-        const vals = cols.map((c) => updates[c] === true ? 1 : updates[c] === false ? 0 : updates[c]);
-        try {
-          dbRun(`UPDATE ${table} SET ${setClause} WHERE id = ?`, [...vals, id]);
-          merged++;
-        } catch {
-        }
-      }
-    }
-  }
-  if (merged > 0) scheduleSave();
-  return merged;
-}
-async function pushTableToNeon(table) {
-  if (!neonSql) return 0;
-  const sqliteRows = dbAll(`SELECT * FROM ${table}`);
-  if (sqliteRows.length === 0) return 0;
-  let pushed = 0;
-  for (const row of sqliteRows) {
-    try {
-      const cols = Object.keys(row);
-      const vals = cols.map((c) => {
-        const v = row[c];
-        if (v === null || v === void 0) return null;
-        return v === true ? "1" : v === false ? "0" : String(v);
-      });
-      const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
-      await neonSql(
-        `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders}) ON CONFLICT (id) DO UPDATE SET ${cols.filter((c) => c !== "id").map((c, i) => `${c} = $${i + 1}`).join(", ")}`,
-        vals
-      );
-      pushed++;
-    } catch {
-    }
-  }
-  return pushed;
-}
-async function runFullSync() {
-  if (!useNeon || !neonSql) throw new Error("Neon non connect\xE9");
-  if (syncInProgress) throw new Error("Sync d\xE9j\xE0 en cours");
-  syncInProgress = true;
-  const start = Date.now();
-  const pushed = {};
-  const pulled = {};
-  try {
-    for (const table of SYNC_TABLES) {
-      pushed[table] = await pushTableToNeon(table);
-      pulled[table] = await pullTableFromNeon(table);
-    }
-    lastSyncAt = now();
-    lastPollAt = lastSyncAt;
-  } finally {
-    syncInProgress = false;
-  }
-  return { pushed, pulled, duration: Date.now() - start };
-}
-async function pollChanges() {
-  if (!useNeon || !neonSql) return { changes: {}, timestamp: now() };
-  if (syncInProgress) return { changes: {}, timestamp: lastPollAt };
-  const changes = {};
-  const since = lastPollAt;
-  for (const table of SYNC_TABLES) {
-    try {
-      const neonRows = await neonSql(`SELECT * FROM ${table} WHERE updated_at > $1 OR updated_at IS NULL`, [since]);
-      if (neonRows && neonRows.length > 0) {
-        changes[table] = neonRows.map(rowToJs);
-        for (const nr of neonRows) {
-          const local = dbGet(`SELECT * FROM ${table} WHERE id = ?`, [nr.id]);
-          const neonUpdated = new Date(nr.updated_at || nr.created_at || 0).getTime();
-          const localUpdated = new Date(local?.updated_at || local?.created_at || 0).getTime();
-          if (!local) {
-            const cols = Object.keys(nr);
-            const placeholders = cols.map(() => "?").join(", ");
-            const vals = cols.map((c) => nr[c] === true ? 1 : nr[c] === false ? 0 : nr[c]);
-            try {
-              dbRun(`INSERT OR IGNORE INTO ${table} (${cols.join(", ")}) VALUES (${placeholders})`, vals);
-            } catch {
-            }
-          } else if (neonUpdated > localUpdated) {
-            const { id, ...updates } = nr;
-            const cols = Object.keys(updates);
-            if (cols.length > 0) {
-              const setClause = cols.map((c) => `${c} = ?`).join(", ");
-              const vals = cols.map((c) => updates[c] === true ? 1 : updates[c] === false ? 0 : updates[c]);
-              try {
-                dbRun(`UPDATE ${table} SET ${setClause} WHERE id = ?`, [...vals, id]);
-              } catch {
-              }
-            }
-          }
-        }
-        scheduleSave();
-      }
-    } catch {
-    }
-  }
-  lastPollAt = now();
-  return { changes, timestamp: lastPollAt };
-}
-function startAutoSync(intervalMs = 15e3) {
-  if (!useNeon) return;
-  syncEnabled = true;
-  setTimeout(async () => {
-    console.log("\u{1F504} Sync initiale depuis Neon...");
-    try {
-      await runFullSync();
-      console.log("\u2705 Sync initiale termin\xE9e");
-    } catch (e) {
-      console.warn("\u26A0\uFE0F Sync initiale \xE9chou\xE9e:", e.message);
-    }
-  }, 2e3);
-  setInterval(async () => {
-    if (!syncEnabled || syncInProgress) return;
-    try {
-      syncInProgress = true;
-      for (const table of SYNC_TABLES) {
-        await pushTableToNeon(table);
-        await pullTableFromNeon(table);
-      }
-      lastSyncAt = now();
-      lastPollAt = lastSyncAt;
-    } catch {
-    } finally {
-      syncInProgress = false;
-    }
-  }, intervalMs);
-  console.log(`\u{1F504} Auto-sync Neon activ\xE9 (interval: ${intervalMs / 1e3}s)`);
-}
-process.on("exit", saveToDisk);
-process.on("SIGINT", () => {
-  saveToDisk();
-  process.exit(0);
-});
-process.on("SIGTERM", () => {
-  saveToDisk();
-  process.exit(0);
-});
-
-// server/server.ts
-var import_bcryptjs = __toESM(require_bcryptjs(), 1);
-var import_jsonwebtoken = __toESM(require_jsonwebtoken(), 1);
 
 // server/utils/validators.ts
 var EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -67642,10 +67754,37 @@ app.post("/api/auth/login", loginLimiter, async (req, res) => {
   if (!email || !password) return res.status(400).json({ message: "Email et mot de passe requis" });
   if (!isValidEmail(email)) return res.status(400).json({ message: "Email invalide" });
   if (!isValidPassword(password)) return res.status(400).json({ message: "Mot de passe invalide (min 6 caract\xE8res, au moins une lettre)" });
+  const hasLocalUsers = (await queryAll("users")).length > 0;
+  if (isNeonAvailable()) {
+    try {
+      const neonUser = await (await init_db().then(() => db_exports)).queryNeonUser(email);
+      if (neonUser && import_bcryptjs.default.compareSync(password, neonUser.password_hash)) {
+        const existing = await queryOne("users", (u) => u.email === email);
+        if (!existing) {
+          await insert("users", { email: neonUser.email, password_hash: neonUser.password_hash, role: neonUser.role, nom: neonUser.nom });
+        }
+        const token2 = import_jsonwebtoken.default.sign({ id: neonUser.id, email: neonUser.email, role: neonUser.role, nom: neonUser.nom }, JWT_SECRET, { expiresIn: "24h" });
+        return res.json({ token: token2, user: { id: neonUser.id, email: neonUser.email, role: neonUser.role, nom: neonUser.nom } });
+      }
+      return res.status(401).json({ message: "Identifiants incorrects" });
+    } catch (e) {
+      console.warn("\u26A0\uFE0F Neon login failed, falling back to local:", e.message?.slice(0, 100));
+    }
+  }
+  if (!hasLocalUsers) {
+    return res.status(401).json({ message: "Connexion internet requise pour la premi\xE8re connexion" });
+  }
   const user = await queryOne("users", (u) => u.email === email);
   if (!user || !import_bcryptjs.default.compareSync(password, user.password_hash)) return res.status(401).json({ message: "Identifiants incorrects" });
   const token = import_jsonwebtoken.default.sign({ id: user.id, email: user.email, role: user.role, nom: user.nom }, JWT_SECRET, { expiresIn: "24h" });
   res.json({ token, user: { id: user.id, email: user.email, role: user.role, nom: user.nom } });
+});
+app.post("/api/auth/logout", authMiddleware, async (req, res) => {
+  try {
+    await clearLocalData();
+  } catch {
+  }
+  res.json({ success: true });
 });
 app.get("/api/auth/me", authMiddleware, async (req, res) => {
   const user = await queryOne("users", (u) => u.id === req.user.id);
@@ -67823,6 +67962,23 @@ app.get("/api/messages", authMiddleware, async (req, res) => {
 app.post("/api/messages", authMiddleware, async (req, res) => {
   const { titre, contenu } = req.body;
   if (!contenu || !contenu.trim()) return res.status(400).json({ message: "Contenu requis" });
+  if (isNeonAvailable()) {
+    try {
+      const neonSql2 = (await init_db().then(() => db_exports)).neonSqlGetter();
+      if (neonSql2) {
+        const rows = await neonSql2(
+          `INSERT INTO messages (titre, contenu, auteur, created_at) VALUES ($1, $2, $3, $4) RETURNING *`,
+          [titre || null, contenu.trim().slice(0, 1e3), req.user?.nom || "Syst\xE8me", (/* @__PURE__ */ new Date()).toISOString()]
+        );
+        if (rows?.[0]) {
+          await insert("messages", rows[0]);
+          return res.status(201).json(rows[0]);
+        }
+      }
+    } catch (e) {
+      console.warn("\u26A0\uFE0F Message save to Neon failed:", e.message?.slice(0, 100));
+    }
+  }
   const msg = await insert("messages", {
     titre: titre || null,
     contenu: contenu.trim().slice(0, 1e3),
@@ -68239,24 +68395,35 @@ app.get("/api/rapports/ca", authMiddleware, async (req, res) => {
   });
 });
 app.get("/api/users", authMiddleware, adminOnly, async (req, res) => {
-  const users = (await queryAll("users")).map((u) => ({ id: u.id, email: u.email, role: u.role, nom: u.nom, created_at: u.created_at }));
-  res.json(users);
+  if (!isNeonAvailable()) return res.status(503).json({ message: "Connexion internet requise pour g\xE9rer les utilisateurs" });
+  try {
+    const neonUsers = await (await init_db().then(() => db_exports)).queryNeonAll("users");
+    res.json(neonUsers.map((u) => ({ id: u.id, email: u.email, role: u.role, nom: u.nom, created_at: u.created_at })));
+  } catch {
+    const users = (await queryAll("users")).map((u) => ({ id: u.id, email: u.email, role: u.role, nom: u.nom, created_at: u.created_at }));
+    res.json(users);
+  }
 });
 app.post("/api/users", authMiddleware, adminOnly, async (req, res) => {
+  if (!isNeonAvailable()) return res.status(503).json({ message: "Connexion internet requise pour cr\xE9er un utilisateur" });
   const { email, password, role, nom } = req.body;
   if (!email || !password || !role || !nom) return res.status(400).json({ message: "Nom, email, mot de passe et r\xF4le requis" });
   if (!isValidNom(nom)) return res.status(400).json({ message: "Nom invalide (2-50 caract\xE8res)" });
   if (!isValidEmail(email)) return res.status(400).json({ message: "Email invalide" });
   if (!isValidPassword(password)) return res.status(400).json({ message: "Mot de passe invalide (min 6 caract\xE8res, au moins une lettre)" });
   if (!isValidRole(role)) return res.status(400).json({ message: "R\xF4le invalide" });
-  if (await queryOne("users", (u) => u.email === email)) return res.status(400).json({ message: "Email d\xE9j\xE0 utilis\xE9" });
   const sanitizedNom = sanitizeInput(nom, 50);
   const sanitizedEmail = sanitizeInput(email, 100);
   const password_hash = import_bcryptjs.default.hashSync(password, 10);
-  const user = await insert("users", { email: sanitizedEmail, password_hash, role, nom: sanitizedNom, created_at: (/* @__PURE__ */ new Date()).toISOString() });
+  try {
+    const neonSql2 = (await init_db().then(() => db_exports)).default;
+  } catch {
+  }
+  const user = await insert("users", { email: sanitizedEmail, password_hash, role, nom: sanitizedNom });
   res.status(201).json({ id: user.id, email: user.email, role: user.role, nom: user.nom, created_at: user.created_at });
 });
 app.delete("/api/users/:id", authMiddleware, adminOnly, async (req, res) => {
+  if (!isNeonAvailable()) return res.status(503).json({ message: "Connexion internet requise pour supprimer un utilisateur" });
   const id = Number(req.params.id);
   if (!isValidId(id)) return res.status(400).json({ message: "ID invalide" });
   const user = await queryOne("users", (u) => u.id === id);
@@ -68273,6 +68440,7 @@ app.get("/api/users/:id", authMiddleware, adminOnly, async (req, res) => {
   res.json({ id: user.id, email: user.email, role: user.role, nom: user.nom, created_at: user.created_at });
 });
 app.put("/api/users/:id", authMiddleware, adminOnly, async (req, res) => {
+  if (!isNeonAvailable()) return res.status(503).json({ message: "Connexion internet requise pour modifier un utilisateur" });
   const id = Number(req.params.id);
   if (!isValidId(id)) return res.status(400).json({ message: "ID invalide" });
   const { email, role, nom, password } = req.body;
@@ -68637,13 +68805,9 @@ app.listen(PORT, "0.0.0.0", () => {
   startAutoSync(15e3);
 });
 async function autoSeed() {
-  const users = await queryAll("users");
-  if (users.length > 0) return;
-  console.log("\u{1F331} Initialisation de la base de donn\xE9es...");
-  const adminHash = import_bcryptjs.default.hashSync("admin123", 10);
-  const empHash = import_bcryptjs.default.hashSync("employe123", 10);
-  await insert("users", { email: "admin@gamelounge.com", password_hash: adminHash, role: "admin", nom: "Admin", created_at: (/* @__PURE__ */ new Date()).toISOString() });
-  await insert("users", { email: "john@gamelounge.com", password_hash: empHash, role: "employe", nom: "John Doe", created_at: (/* @__PURE__ */ new Date()).toISOString() });
+  const consoles = await queryAll("consoles");
+  if (consoles.length > 0) return;
+  console.log("\u{1F331} Initialisation des donn\xE9es de jeu...");
   const consolesData = [
     { nom: "PS5 - Poste 1", type: "PS5", poste_numero: 1 },
     { nom: "PS5 - Poste 2", type: "PS5", poste_numero: 2 },
@@ -68704,9 +68868,7 @@ async function autoSeed() {
   ];
   for (const t of tarifs) await insert("tarifs", { ...t, actif: true });
   await insert("parametres_fidelite", { regle_type: "temps", seuil: 60, jetons_attribues: 1, actif: true });
-  console.log("\u2705 Base initialis\xE9e avec succ\xE8s");
-  console.log("   admin@gamelounge.com / admin123");
-  console.log("   john@gamelounge.com / employe123");
+  console.log("\u2705 Donn\xE9es de jeu initialis\xE9es (consoles, jeux, tarifs)");
 }
 /*! Bundled license information:
 

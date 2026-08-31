@@ -20,7 +20,8 @@ export const useAuthStore = defineStore('auth', () => {
     return data.user
   }
 
-  function logout() {
+  async function logout() {
+    try { await api.post('/auth/logout') } catch {}
     token.value = null
     user.value = null
     localStorage.removeItem('gl_token')

@@ -6,7 +6,7 @@ import rateLimit from 'express-rate-limit'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { existsSync } from 'node:fs'
-import { queryAll, queryOne, insert, update, remove, logError, getSyncStatus, setSyncEnabled, runFullSync, isNeonEnabled, pollChanges, startAutoSync } from './db.ts'
+import { queryAll, queryOne, insert, update, remove, logError, getSyncStatus, setSyncEnabled, runFullSync, isNeonEnabled, isNeonAvailable, pollChanges, startAutoSync, clearLocalData } from './db.ts'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import {
@@ -75,15 +75,48 @@ function adminOnly(req: any, res: any, next: any) {
 }
 
 // ===== AUTH =====
+// Login: requires internet for first connection. Validates against Neon, caches locally.
 app.post('/api/auth/login', loginLimiter, async (req: any, res: any) => {
   const { email, password } = req.body as { email: string; password: string }
   if (!email || !password) return res.status(400).json({ message: 'Email et mot de passe requis' })
   if (!isValidEmail(email)) return res.status(400).json({ message: 'Email invalide' })
   if (!isValidPassword(password)) return res.status(400).json({ message: 'Mot de passe invalide (min 6 caractères, au moins une lettre)' })
+
+  const hasLocalUsers = (await queryAll('users')).length > 0
+
+  // If Neon available, validate against Neon (online first)
+  if (isNeonAvailable()) {
+    try {
+      const neonUser: any = await (await import('./db.ts')).queryNeonUser(email)
+      if (neonUser && bcrypt.compareSync(password, neonUser.password_hash)) {
+        // Upsert user locally for offline cache
+        const existing = await queryOne('users', u => u.email === email)
+        if (!existing) {
+          await insert('users', { email: neonUser.email, password_hash: neonUser.password_hash, role: neonUser.role, nom: neonUser.nom })
+        }
+        const token = jwt.sign({ id: neonUser.id, email: neonUser.email, role: neonUser.role, nom: neonUser.nom }, JWT_SECRET, { expiresIn: '24h' })
+        return res.json({ token, user: { id: neonUser.id, email: neonUser.email, role: neonUser.role, nom: neonUser.nom } })
+      }
+      return res.status(401).json({ message: 'Identifiants incorrects' })
+    } catch (e) {
+      console.warn('⚠️ Neon login failed, falling back to local:', (e as Error).message?.slice(0, 100))
+    }
+  }
+
+  // Fallback to local (only if users were cached from a previous online login)
+  if (!hasLocalUsers) {
+    return res.status(401).json({ message: 'Connexion internet requise pour la première connexion' })
+  }
   const user: any = await queryOne('users', u => u.email === email)
   if (!user || !bcrypt.compareSync(password, user.password_hash)) return res.status(401).json({ message: 'Identifiants incorrects' })
   const token = jwt.sign({ id: user.id, email: user.email, role: user.role, nom: user.nom }, JWT_SECRET, { expiresIn: '24h' })
   res.json({ token, user: { id: user.id, email: user.email, role: user.role, nom: user.nom } })
+})
+
+// Logout: clear local cached user data
+app.post('/api/auth/logout', authMiddleware, async (req: any, res: any) => {
+  try { await clearLocalData() } catch {}
+  res.json({ success: true })
 })
 
 app.get('/api/auth/me', authMiddleware, async (req: any, res: any) => {
@@ -285,6 +318,20 @@ app.get('/api/messages', authMiddleware, async (req: any, res: any) => {
 app.post('/api/messages', authMiddleware, async (req: any, res: any) => {
   const { titre, contenu } = req.body
   if (!contenu || !contenu.trim()) return res.status(400).json({ message: 'Contenu requis' })
+  // Save to Neon directly if available (for online persistence)
+  if (isNeonAvailable()) {
+    try {
+      const neonSql = (await import('./db.ts')).neonSqlGetter()
+      if (neonSql) {
+        const rows: any[] = await neonSql(`INSERT INTO messages (titre, contenu, auteur, created_at) VALUES ($1, $2, $3, $4) RETURNING *`,
+          [titre || null, contenu.trim().slice(0, 1000), req.user?.nom || 'Système', new Date().toISOString()])
+        if (rows?.[0]) {
+          await insert('messages', rows[0])
+          return res.status(201).json(rows[0])
+        }
+      }
+    } catch (e) { console.warn('⚠️ Message save to Neon failed:', (e as Error).message?.slice(0, 100)) }
+  }
   const msg = await insert('messages', {
     titre: titre || null,
     contenu: contenu.trim().slice(0, 1000),
@@ -713,28 +760,40 @@ app.get('/api/rapports/ca', authMiddleware, async (req: any, res: any) => {
   })
 })
 
-// ===== USERS (admin) =====
+// ===== USERS (admin) — requires Neon (internet) =====
 app.get('/api/users', authMiddleware, adminOnly, async (req: any, res: any) => {
-  const users: any[] = (await queryAll('users')).map(u => ({ id: u.id, email: u.email, role: u.role, nom: u.nom, created_at: u.created_at }))
-  res.json(users)
+  if (!isNeonAvailable()) return res.status(503).json({ message: 'Connexion internet requise pour gérer les utilisateurs' })
+  try {
+    const neonUsers = await (await import('./db.ts')).queryNeonAll('users')
+    res.json(neonUsers.map((u: any) => ({ id: u.id, email: u.email, role: u.role, nom: u.nom, created_at: u.created_at })))
+  } catch {
+    const users: any[] = (await queryAll('users')).map(u => ({ id: u.id, email: u.email, role: u.role, nom: u.nom, created_at: u.created_at }))
+    res.json(users)
+  }
 })
 
 app.post('/api/users', authMiddleware, adminOnly, async (req: any, res: any) => {
+  if (!isNeonAvailable()) return res.status(503).json({ message: 'Connexion internet requise pour créer un utilisateur' })
   const { email, password, role, nom } = req.body
   if (!email || !password || !role || !nom) return res.status(400).json({ message: 'Nom, email, mot de passe et rôle requis' })
   if (!isValidNom(nom)) return res.status(400).json({ message: 'Nom invalide (2-50 caractères)' })
   if (!isValidEmail(email)) return res.status(400).json({ message: 'Email invalide' })
   if (!isValidPassword(password)) return res.status(400).json({ message: 'Mot de passe invalide (min 6 caractères, au moins une lettre)' })
   if (!isValidRole(role)) return res.status(400).json({ message: 'Rôle invalide' })
-  if (await queryOne('users', u => u.email === email)) return res.status(400).json({ message: 'Email déjà utilisé' })
   const sanitizedNom = sanitizeInput(nom, 50)
   const sanitizedEmail = sanitizeInput(email, 100)
   const password_hash = bcrypt.hashSync(password, 10)
-  const user: any = await insert('users', { email: sanitizedEmail, password_hash, role, nom: sanitizedNom, created_at: new Date().toISOString() })
+  // Create in Neon
+  try {
+    const neonSql = (await import('./db.ts')).default
+    // Insert via syncToNeon (already called by insert)
+  } catch {}
+  const user: any = await insert('users', { email: sanitizedEmail, password_hash, role, nom: sanitizedNom })
   res.status(201).json({ id: user.id, email: user.email, role: user.role, nom: user.nom, created_at: user.created_at })
 })
 
 app.delete('/api/users/:id', authMiddleware, adminOnly, async (req: any, res: any) => {
+  if (!isNeonAvailable()) return res.status(503).json({ message: 'Connexion internet requise pour supprimer un utilisateur' })
   const id = Number(req.params.id)
   if (!isValidId(id)) return res.status(400).json({ message: 'ID invalide' })
   const user: any = await queryOne('users', u => u.id === id)
@@ -753,6 +812,7 @@ app.get('/api/users/:id', authMiddleware, adminOnly, async (req: any, res: any) 
 })
 
 app.put('/api/users/:id', authMiddleware, adminOnly, async (req: any, res: any) => {
+  if (!isNeonAvailable()) return res.status(503).json({ message: 'Connexion internet requise pour modifier un utilisateur' })
   const id = Number(req.params.id)
   if (!isValidId(id)) return res.status(400).json({ message: 'ID invalide' })
   const { email, role, nom, password } = req.body
@@ -1145,14 +1205,11 @@ app.listen(PORT, '0.0.0.0', () => {
 })
 
 async function autoSeed() {
-  const users = await queryAll('users')
-  if (users.length > 0) return
-  console.log('🌱 Initialisation de la base de données...')
-
-  const adminHash = bcrypt.hashSync('admin123', 10)
-  const empHash = bcrypt.hashSync('employe123', 10)
-  await insert('users', { email: 'admin@gamelounge.com', password_hash: adminHash, role: 'admin', nom: 'Admin', created_at: new Date().toISOString() })
-  await insert('users', { email: 'john@gamelounge.com', password_hash: empHash, role: 'employe', nom: 'John Doe', created_at: new Date().toISOString() })
+  // Users are managed in Neon (online). Do NOT seed them locally.
+  // Only seed game data (consoles, jeux, tarifs) if DB is empty.
+  const consoles = await queryAll('consoles')
+  if (consoles.length > 0) return
+  console.log('🌱 Initialisation des données de jeu...')
 
   const consolesData = [
     { nom: 'PS5 - Poste 1', type: 'PS5', poste_numero: 1 },
@@ -1219,7 +1276,5 @@ async function autoSeed() {
 
   await insert('parametres_fidelite', { regle_type: 'temps', seuil: 60, jetons_attribues: 1, actif: true })
 
-  console.log('✅ Base initialisée avec succès')
-  console.log('   admin@gamelounge.com / admin123')
-  console.log('   john@gamelounge.com / employe123')
+  console.log('✅ Données de jeu initialisées (consoles, jeux, tarifs)')
 }

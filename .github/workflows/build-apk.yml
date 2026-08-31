@@ -41,6 +41,17 @@ jobs:
           cp node_modules/sql.js/dist/sql-wasm.js public/nodejs/node_modules/sql.js/dist/
           cp node_modules/sql.js/dist/sql-wasm.wasm public/nodejs/node_modules/sql.js/dist/
           cp node_modules/sql.js/package.json public/nodejs/node_modules/sql.js/
+          # Create .env with DATABASE_URL for Neon sync in APK
+          cat > public/nodejs/.env << 'EOF'
+          DATABASE_URL='postgresql://neondb_owner:npg_AEay0ug9NHYj@ep-wild-cloud-axxw1ufj-pooler.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require'
+          SMTP_HOST=smtp.gmail.com
+          SMTP_PORT=587
+          SMTP_SECURE=false
+          SMTP_USER=noeakili502@gmail.com
+          SMTP_PASS=
+          EOF
+          echo "Contents:"
+          ls -la public/nodejs/node_modules/sql.js/dist/
 
       - name: Copy frontend into server/public for Express static serving
         run: |

@@ -20,7 +20,16 @@ const DB_PATH = join(DATA_DIR, 'app.db')
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
 
 // ===== sql.js SQLite =====
-const SQL = await initSqlJs()
+const __dbDir = typeof __dirname !== 'undefined' ? __dirname : (typeof process !== 'undefined' ? process.cwd() : '.')
+let SQL: any
+try {
+  SQL = await initSqlJs({
+    locateFile: (file: string) => join(__dbDir, 'node_modules', 'sql.js', 'dist', file)
+  })
+} catch (e) {
+  console.warn('⚠️ locateFile failed, trying default:', (e as Error).message)
+  SQL = await initSqlJs()
+}
 let sqlDb: any = null
 let saveTimer: any = null
 
@@ -518,6 +527,36 @@ export function getDb() {
 
 export function isNeonEnabled(): boolean {
   return useNeon
+}
+
+export function isNeonAvailable(): boolean {
+  return useNeon && !!neonSql
+}
+
+export async function queryNeonUser(email: string): Promise<Record<string, unknown> | null> {
+  if (!neonSql) return null
+  try {
+    const rows: any[] = await neonSql(`SELECT * FROM users WHERE email = $1`, [email])
+    return rows && rows.length > 0 ? rows[0] : null
+  } catch { return null }
+}
+
+export async function queryNeonAll(table: string): Promise<any[]> {
+  if (!neonSql) return []
+  try { return await neonSql(`SELECT * FROM ${table}`) } catch { return [] }
+}
+
+export function neonSqlGetter(): any {
+  return neonSql
+}
+
+export async function clearLocalData(): Promise<void> {
+  const tables = ['users', 'sessions_jeu', 'factures', 'lignes_facture', 'jetons_transactions', 'messages']
+  for (const t of tables) {
+    try { dbRun(`DELETE FROM ${t}`) } catch {}
+  }
+  scheduleSave()
+  console.log('🗑️ Données locales supprimées (sauf consoles, jeux, tarifs, parametres)')
 }
 
 // ===== BIDIRECTIONAL SYNC =====
