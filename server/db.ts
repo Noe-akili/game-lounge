@@ -2,33 +2,75 @@
 import initSqlJs from 'sql.js'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import dotenv from 'dotenv'
 let nodemailer: any = null
 try { nodemailer = await import('nodemailer') } catch {}
 
-// Load env
-try {
-  const envDir = process.env.DATA_DIR || (typeof __dirname !== 'undefined' ? __dirname : '.')
-  dotenv.config({ path: join(envDir, '.env') })
-} catch {}
+// Fix __dirname for ESM
+const __filename = typeof __filename !== 'undefined' ? __filename : fileURLToPath(import.meta.url)
+const __dirname = typeof __dirname !== 'undefined' ? __dirname : dirname(__filename)
+
+// CapacitorNodeJS plugin sets DATADIR env var
+const PLUGIN_DATADIR = process.env.DATADIR || ''
+const PROJECT_DIR = __dirname
+
+// Load .env from multiple locations
+const envPaths = [
+  join(PROJECT_DIR, '.env'),
+  join(process.cwd(), '.env'),
+  join(PLUGIN_DATADIR, '.env'),
+]
+for (const p of envPaths) {
+  try { if (existsSync(p)) { dotenv.config({ path: p }); break } } catch {}
+}
 dotenv.config()
 
-const DATA_DIR = process.env.DATA_DIR || join('.', 'data')
+const DATA_DIR = process.env.DATA_DIR || (PLUGIN_DATADIR ? PLUGIN_DATADIR : join(PROJECT_DIR, 'data'))
 const DB_PATH = join(DATA_DIR, 'app.db')
+
+console.log('🔧 Config:', { PROJECT_DIR, PLUGIN_DATADIR, DATA_DIR, DB_PATH, CWD: process.cwd() })
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
 
 // ===== sql.js SQLite =====
-const __dbDir = typeof __dirname !== 'undefined' ? __dirname : (typeof process !== 'undefined' ? process.cwd() : '.')
 let SQL: any
+const wasmCandidates = [
+  join(PROJECT_DIR, 'node_modules', 'sql.js', 'dist'),
+  join(PROJECT_DIR, '..', 'node_modules', 'sql.js', 'dist'),
+  join(process.cwd(), 'node_modules', 'sql.js', 'dist'),
+  join(PLUGIN_DATADIR, 'node_modules', 'sql.js', 'dist'),
+]
+let wasmDir = ''
+for (const d of wasmCandidates) {
+  try { if (existsSync(join(d, 'sql-wasm.wasm'))) { wasmDir = d; break } } catch {}
+}
+if (!wasmDir) {
+  for (const d of wasmCandidates) {
+    try { if (existsSync(join(d, 'sql-wasm.js'))) { wasmDir = d; break } } catch {}
+  }
+}
+console.log('🔧 sql.js WASM dir:', wasmDir || '(using default)')
+
 try {
   SQL = await initSqlJs({
-    locateFile: (file: string) => join(__dbDir, 'node_modules', 'sql.js', 'dist', file)
+    locateFile: (file: string) => {
+      if (wasmDir) {
+        const p = join(wasmDir, file)
+        try { if (existsSync(p)) return p } catch {}
+      }
+      // Fallback: try relative to CWD
+      return join(process.cwd(), 'node_modules', 'sql.js', 'dist', file)
+    }
   })
 } catch (e) {
   console.warn('⚠️ locateFile failed, trying default:', (e as Error).message)
-  SQL = await initSqlJs()
+  try {
+    SQL = await initSqlJs()
+  } catch (e2) {
+    console.error('❌ sql.js init failed completely:', (e2 as Error).message)
+    process.exit(1)
+  }
 }
 let sqlDb: any = null
 let saveTimer: any = null

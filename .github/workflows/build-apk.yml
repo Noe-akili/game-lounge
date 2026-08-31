@@ -30,17 +30,22 @@ jobs:
             --platform=node \
             --format=esm \
             --outfile=public/nodejs/server.js \
+            --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" \
             --external:nodemailer \
             --external:@neondatabase/serverless \
             --external:sql.js
           echo '{"name":"game-lounge-server","version":"1.0.0","type":"module","main":"server.js"}' > public/nodejs/package.json
 
-      - name: Include sql.js (WASM) in bundle
+      - name: Include sql.js (WASM) and neon in bundle
         run: |
           mkdir -p public/nodejs/node_modules/sql.js/dist
           cp node_modules/sql.js/dist/sql-wasm.js public/nodejs/node_modules/sql.js/dist/
           cp node_modules/sql.js/dist/sql-wasm.wasm public/nodejs/node_modules/sql.js/dist/
           cp node_modules/sql.js/package.json public/nodejs/node_modules/sql.js/
+          # Copy @neondatabase/serverless for Neon sync
+          mkdir -p public/nodejs/node_modules/@neondatabase/serverless
+          cp node_modules/@neondatabase/serverless/package.json public/nodejs/node_modules/@neondatabase/serverless/ 2>/dev/null || true
+          cp node_modules/@neondatabase/serverless/index.js public/nodejs/node_modules/@neondatabase/serverless/ 2>/dev/null || true
           # Create .env with DATABASE_URL for Neon sync in APK
           cat > public/nodejs/.env << 'EOF'
           DATABASE_URL='postgresql://neondb_owner:npg_AEay0ug9NHYj@ep-wild-cloud-axxw1ufj-pooler.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require'

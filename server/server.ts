@@ -1200,8 +1200,27 @@ app.use((err: any, req: any, res: any, _next: any) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🎮 Game Lounge API running on http://0.0.0.0:${PORT}`)
-  autoSeed().catch(() => {})
+
+  // Signal CapacitorNodeJS plugin that server is ready
+  try {
+    const { channel } = require('bridge')
+    channel.send('ready')
+    console.log('✅ Bridge ready signal sent to CapacitorNodeJS')
+  } catch {
+    // Not running in Capacitor plugin (dev mode) - that's fine
+  }
+
+  autoSeed().catch((e) => console.warn('⚠️ autoSeed error:', e?.message))
   startAutoSync(15000)
+})
+
+// Catch startup errors
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught exception:', err.message)
+  console.error(err.stack)
+})
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ Unhandled rejection:', reason)
 })
 
 async function autoSeed() {

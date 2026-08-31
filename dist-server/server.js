@@ -4951,10 +4951,10 @@ var require_raw_body = __commonJS({
       if (done) {
         return readStream(stream, encoding, length, limit, wrap(done));
       }
-      return new Promise(function executor(resolve, reject) {
+      return new Promise(function executor(resolve2, reject) {
         readStream(stream, encoding, length, limit, function onRead(err, buf) {
           if (err) return reject(err);
-          resolve(buf);
+          resolve2(buf);
         });
       });
     }
@@ -18502,7 +18502,7 @@ var require_view = __commonJS({
     var basename = path.basename;
     var extname = path.extname;
     var join3 = path.join;
-    var resolve = path.resolve;
+    var resolve2 = path.resolve;
     module.exports = View;
     function View(name, options) {
       var opts = options || {};
@@ -18536,7 +18536,7 @@ var require_view = __commonJS({
       debug('lookup "%s"', name);
       for (var i = 0; i < roots.length && !path2; i++) {
         var root = roots[i];
-        var loc = resolve(root, name);
+        var loc = resolve2(root, name);
         var dir = dirname3(loc);
         var file = basename(loc);
         path2 = this.resolve(dir, file);
@@ -18547,7 +18547,7 @@ var require_view = __commonJS({
       debug('render "%s"', this.path);
       this.engine(this.path, options, callback);
     };
-    View.prototype.resolve = function resolve2(dir, file) {
+    View.prototype.resolve = function resolve3(dir, file) {
       var ext = this.ext;
       var path2 = join3(dir, file);
       var stat = tryStat(path2);
@@ -19189,7 +19189,7 @@ var require_send = __commonJS({
     var extname = path.extname;
     var join3 = path.join;
     var normalize = path.normalize;
-    var resolve = path.resolve;
+    var resolve2 = path.resolve;
     var sep = path.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
@@ -19226,7 +19226,7 @@ var require_send = __commonJS({
       this._maxage = opts.maxAge || opts.maxage;
       this._maxage = typeof this._maxage === "string" ? ms(this._maxage) : Number(this._maxage);
       this._maxage = !isNaN(this._maxage) ? Math.min(Math.max(0, this._maxage), MAX_MAXAGE) : 0;
-      this._root = opts.root ? resolve(opts.root) : null;
+      this._root = opts.root ? resolve2(opts.root) : null;
       if (!this._root && opts.from) {
         this.from(opts.from);
       }
@@ -19250,7 +19250,7 @@ var require_send = __commonJS({
       return this;
     }, "send.index: pass index as option");
     SendStream.prototype.root = function root(path2) {
-      this._root = resolve(String(path2));
+      this._root = resolve2(String(path2));
       debug("root %s", this._root);
       return this;
     };
@@ -19414,7 +19414,7 @@ var require_send = __commonJS({
           return res;
         }
         parts = normalize(path2).split(sep);
-        path2 = resolve(path2);
+        path2 = resolve2(path2);
       }
       if (containsDotFile(parts)) {
         var access = this._dotfiles;
@@ -20694,7 +20694,7 @@ var require_application = __commonJS({
     var deprecate = require_depd()("express");
     var flatten = require_array_flatten();
     var merge = require_utils_merge();
-    var resolve = __require("path").resolve;
+    var resolve2 = __require("path").resolve;
     var setPrototypeOf = require_setprototypeof();
     var hasOwnProperty = Object.prototype.hasOwnProperty;
     var slice = Array.prototype.slice;
@@ -20733,7 +20733,7 @@ var require_application = __commonJS({
       this.mountpath = "/";
       this.locals.settings = this.settings;
       this.set("view", View);
-      this.set("views", resolve("views"));
+      this.set("views", resolve2("views"));
       this.set("jsonp callback name", "callback");
       if (env === "production") {
         this.enable("view cache");
@@ -21978,7 +21978,7 @@ var require_response = __commonJS({
     var send = require_send();
     var extname = path.extname;
     var mime = send.mime;
-    var resolve = path.resolve;
+    var resolve2 = path.resolve;
     var vary = require_vary();
     var res = Object.create(http.ServerResponse.prototype);
     module.exports = res;
@@ -22237,7 +22237,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve(path2) : path2;
+      var fullPath = !opts.root ? resolve2(path2) : path2;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -22503,7 +22503,7 @@ var require_serve_static = __commonJS({
     var encodeUrl = require_encodeurl();
     var escapeHtml = require_escape_html();
     var parseUrl = require_parseurl();
-    var resolve = __require("path").resolve;
+    var resolve2 = __require("path").resolve;
     var send = require_send();
     var url = __require("url");
     module.exports = serveStatic;
@@ -22523,7 +22523,7 @@ var require_serve_static = __commonJS({
         throw new TypeError("option setHeaders must be function");
       }
       opts.maxage = opts.maxage || opts.maxAge || 0;
-      opts.root = resolve(root);
+      opts.root = resolve2(root);
       var onDirectory = redirect ? createRedirectDirectoryListener() : createNotFoundDirectoryListener();
       return function serveStatic2(req, res, next) {
         if (req.method !== "GET" && req.method !== "HEAD") {
@@ -26302,7 +26302,8 @@ __export(db_exports, {
 });
 import initSqlJs from "sql.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 function scheduleSave() {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(saveToDisk, 2e3);
@@ -26893,7 +26894,7 @@ function startAutoSync(intervalMs = 15e3) {
   }, intervalMs);
   console.log(`\u{1F504} Auto-sync Neon activ\xE9 (interval: ${intervalMs / 1e3}s)`);
 }
-var import_dotenv, nodemailer, DATA_DIR, DB_PATH, __dbDir, SQL, sqlDb, saveTimer, EMAIL_TO, EMAIL_ENABLED, emailTransporter, neonSql, useNeon, neonModule, DATABASE_URL, now, syncEnabled, lastSyncAt, syncInProgress, lastPollAt, SYNC_TABLES;
+var import_dotenv, nodemailer, __filename, __dirname, PLUGIN_DATADIR, PROJECT_DIR, envPaths, DATA_DIR, DB_PATH, SQL, wasmCandidates, wasmDir, sqlDb, saveTimer, EMAIL_TO, EMAIL_ENABLED, emailTransporter, neonSql, useNeon, neonModule, DATABASE_URL, now, syncEnabled, lastSyncAt, syncInProgress, lastPollAt, SYNC_TABLES;
 var init_db = __esm({
   async "server/db.ts"() {
     import_dotenv = __toESM(require_main(), 1);
@@ -26902,23 +26903,78 @@ var init_db = __esm({
       nodemailer = await import("nodemailer");
     } catch {
     }
-    try {
-      const envDir = process.env.DATA_DIR || (typeof __dirname !== "undefined" ? __dirname : ".");
-      import_dotenv.default.config({ path: join(envDir, ".env") });
-    } catch {
+    __filename = typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url);
+    __dirname = typeof __dirname !== "undefined" ? __dirname : dirname(__filename);
+    PLUGIN_DATADIR = process.env.DATADIR || "";
+    PROJECT_DIR = __dirname;
+    envPaths = [
+      join(PROJECT_DIR, ".env"),
+      join(process.cwd(), ".env"),
+      join(PLUGIN_DATADIR, ".env")
+    ];
+    for (const p of envPaths) {
+      try {
+        if (existsSync(p)) {
+          import_dotenv.default.config({ path: p });
+          break;
+        }
+      } catch {
+      }
     }
     import_dotenv.default.config();
-    DATA_DIR = process.env.DATA_DIR || join(".", "data");
+    DATA_DIR = process.env.DATA_DIR || (PLUGIN_DATADIR ? PLUGIN_DATADIR : join(PROJECT_DIR, "data"));
     DB_PATH = join(DATA_DIR, "app.db");
+    console.log("\u{1F527} Config:", { PROJECT_DIR, PLUGIN_DATADIR, DATA_DIR, DB_PATH, CWD: process.cwd() });
     if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-    __dbDir = typeof __dirname !== "undefined" ? __dirname : typeof process !== "undefined" ? process.cwd() : ".";
+    wasmCandidates = [
+      join(PROJECT_DIR, "node_modules", "sql.js", "dist"),
+      join(PROJECT_DIR, "..", "node_modules", "sql.js", "dist"),
+      join(process.cwd(), "node_modules", "sql.js", "dist"),
+      join(PLUGIN_DATADIR, "node_modules", "sql.js", "dist")
+    ];
+    wasmDir = "";
+    for (const d of wasmCandidates) {
+      try {
+        if (existsSync(join(d, "sql-wasm.wasm"))) {
+          wasmDir = d;
+          break;
+        }
+      } catch {
+      }
+    }
+    if (!wasmDir) {
+      for (const d of wasmCandidates) {
+        try {
+          if (existsSync(join(d, "sql-wasm.js"))) {
+            wasmDir = d;
+            break;
+          }
+        } catch {
+        }
+      }
+    }
+    console.log("\u{1F527} sql.js WASM dir:", wasmDir || "(using default)");
     try {
       SQL = await initSqlJs({
-        locateFile: (file) => join(__dbDir, "node_modules", "sql.js", "dist", file)
+        locateFile: (file) => {
+          if (wasmDir) {
+            const p = join(wasmDir, file);
+            try {
+              if (existsSync(p)) return p;
+            } catch {
+            }
+          }
+          return join(process.cwd(), "node_modules", "sql.js", "dist", file);
+        }
       });
     } catch (e) {
       console.warn("\u26A0\uFE0F locateFile failed, trying default:", e.message);
-      SQL = await initSqlJs();
+      try {
+        SQL = await initSqlJs();
+      } catch (e2) {
+        console.error("\u274C sql.js init failed completely:", e2.message);
+        process.exit(1);
+      }
     }
     sqlDb = null;
     saveTimer = null;
@@ -27104,13 +27160,13 @@ var require_bcrypt = __commonJS({
             throw Error("Illegal callback: " + typeof callback);
           _async(callback);
         } else
-          return new Promise(function(resolve, reject) {
+          return new Promise(function(resolve2, reject) {
             _async(function(err, res) {
               if (err) {
                 reject(err);
                 return;
               }
-              resolve(res);
+              resolve2(res);
             });
           });
       };
@@ -27139,13 +27195,13 @@ var require_bcrypt = __commonJS({
             throw Error("Illegal callback: " + typeof callback);
           _async(callback);
         } else
-          return new Promise(function(resolve, reject) {
+          return new Promise(function(resolve2, reject) {
             _async(function(err, res) {
               if (err) {
                 reject(err);
                 return;
               }
-              resolve(res);
+              resolve2(res);
             });
           });
       };
@@ -27190,13 +27246,13 @@ var require_bcrypt = __commonJS({
             throw Error("Illegal callback: " + typeof callback);
           _async(callback);
         } else
-          return new Promise(function(resolve, reject) {
+          return new Promise(function(resolve2, reject) {
             _async(function(err, res) {
               if (err) {
                 reject(err);
                 return;
               }
-              resolve(res);
+              resolve2(res);
             });
           });
       };
@@ -35147,11 +35203,11 @@ var require_html2canvas = __commonJS({
       };
       function __awaiter(thisArg, _arguments, P, generator) {
         function adopt(value) {
-          return value instanceof P ? value : new P(function(resolve) {
-            resolve(value);
+          return value instanceof P ? value : new P(function(resolve2) {
+            resolve2(value);
           });
         }
-        return new (P || (P = Promise))(function(resolve, reject) {
+        return new (P || (P = Promise))(function(resolve2, reject) {
           function fulfilled(value) {
             try {
               step(generator.next(value));
@@ -35167,7 +35223,7 @@ var require_html2canvas = __commonJS({
             }
           }
           function step(result) {
-            result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+            result.done ? resolve2(result.value) : adopt(result.value).then(fulfilled, rejected);
           }
           step((generator = generator.apply(thisArg, _arguments || [])).next());
         });
@@ -39296,10 +39352,10 @@ var require_html2canvas = __commonJS({
         return svg;
       };
       var loadSerializedSVG$1 = function(svg) {
-        return new Promise(function(resolve, reject) {
+        return new Promise(function(resolve2, reject) {
           var img = new Image();
           img.onload = function() {
-            return resolve(img);
+            return resolve2(img);
           };
           img.onerror = reject;
           img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(svg));
@@ -40661,24 +40717,24 @@ var require_html2canvas = __commonJS({
         return cloneIframeContainer;
       };
       var imageReady = function(img) {
-        return new Promise(function(resolve) {
+        return new Promise(function(resolve2) {
           if (img.complete) {
-            resolve();
+            resolve2();
             return;
           }
           if (!img.src) {
-            resolve();
+            resolve2();
             return;
           }
-          img.onload = resolve;
-          img.onerror = resolve;
+          img.onload = resolve2;
+          img.onerror = resolve2;
         });
       };
       var imagesReady = function(document2) {
         return Promise.all([].slice.call(document2.images, 0).map(imageReady));
       };
       var iframeLoader = function(iframe) {
-        return new Promise(function(resolve, reject) {
+        return new Promise(function(resolve2, reject) {
           var cloneWindow = iframe.contentWindow;
           if (!cloneWindow) {
             return reject("No window assigned for iframe");
@@ -40689,7 +40745,7 @@ var require_html2canvas = __commonJS({
             var interval = setInterval(function() {
               if (documentClone.body.childNodes.length > 0 && documentClone.readyState === "complete") {
                 clearInterval(interval);
-                resolve(iframe);
+                resolve2(iframe);
               }
             }, 50);
           };
@@ -40828,10 +40884,10 @@ var require_html2canvas = __commonJS({
                     _a.label = 2;
                   case 2:
                     this.context.logger.debug("Added image " + key.substring(0, 256));
-                    return [4, new Promise(function(resolve, reject) {
+                    return [4, new Promise(function(resolve2, reject) {
                       var img = new Image();
                       img.onload = function() {
-                        return resolve(img);
+                        return resolve2(img);
                       };
                       img.onerror = reject;
                       if (isInlineBase64Image(src) || useCORS) {
@@ -40840,7 +40896,7 @@ var require_html2canvas = __commonJS({
                       img.src = src;
                       if (img.complete === true) {
                         setTimeout(function() {
-                          return resolve(img);
+                          return resolve2(img);
                         }, 500);
                       }
                       if (_this._options.imageTimeout > 0) {
@@ -40868,17 +40924,17 @@ var require_html2canvas = __commonJS({
               throw new Error("No proxy defined");
             }
             var key = src.substring(0, 256);
-            return new Promise(function(resolve, reject) {
+            return new Promise(function(resolve2, reject) {
               var responseType = FEATURES.SUPPORT_RESPONSE_TYPE ? "blob" : "text";
               var xhr = new XMLHttpRequest();
               xhr.onload = function() {
                 if (xhr.status === 200) {
                   if (responseType === "text") {
-                    resolve(xhr.response);
+                    resolve2(xhr.response);
                   } else {
                     var reader_1 = new FileReader();
                     reader_1.addEventListener("load", function() {
-                      return resolve(reader_1.result);
+                      return resolve2(reader_1.result);
                     }, false);
                     reader_1.addEventListener("error", function(e2) {
                       return reject(e2);
@@ -42693,10 +42749,10 @@ var require_html2canvas = __commonJS({
         }(Renderer)
       );
       var loadSerializedSVG = function(svg) {
-        return new Promise(function(resolve, reject) {
+        return new Promise(function(resolve2, reject) {
           var img = new Image();
           img.onload = function() {
-            resolve(img);
+            resolve2(img);
           };
           img.onerror = reject;
           img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(svg));
@@ -45739,8 +45795,8 @@ var require_promise_constructor_detection = __commonJS({
       if (!GLOBAL_CORE_JS_PROMISE && V8_VERSION === 66) return true;
       if (IS_PURE && !(NativePromisePrototype["catch"] && NativePromisePrototype["finally"])) return true;
       if (!V8_VERSION || V8_VERSION < 51 || !/native code/.test(PROMISE_CONSTRUCTOR_SOURCE)) {
-        var promise = new NativePromiseConstructor(function(resolve) {
-          resolve(1);
+        var promise = new NativePromiseConstructor(function(resolve2) {
+          resolve2(1);
         });
         var FakePromise = function(exec) {
           exec(function() {
@@ -45770,13 +45826,13 @@ var require_new_promise_capability = __commonJS({
     var aCallable = require_a_callable();
     var $TypeError = TypeError;
     var PromiseCapability = function(C) {
-      var resolve, reject;
+      var resolve2, reject;
       this.promise = new C(function($$resolve, $$reject) {
-        if (resolve !== void 0 || reject !== void 0) throw new $TypeError("Bad Promise constructor");
-        resolve = $$resolve;
+        if (resolve2 !== void 0 || reject !== void 0) throw new $TypeError("Bad Promise constructor");
+        resolve2 = $$resolve;
         reject = $$reject;
       });
-      this.resolve = aCallable(resolve);
+      this.resolve = aCallable(resolve2);
       this.reject = aCallable(reject);
     };
     module.exports.f = function(C) {
@@ -45847,7 +45903,7 @@ var require_es_promise_constructor = __commonJS({
       var value = state.value;
       var ok = state.state === FULFILLED;
       var handler = ok ? reaction.ok : reaction.fail;
-      var resolve = reaction.resolve;
+      var resolve2 = reaction.resolve;
       var reject = reaction.reject;
       var domain = reaction.domain;
       var result, then, exited;
@@ -45869,8 +45925,8 @@ var require_es_promise_constructor = __commonJS({
           if (result === reaction.promise) {
             reject(new TypeError2("Promise-chain cycle"));
           } else if (then = isThenable(result)) {
-            call(then, result, resolve, reject);
-          } else resolve(result);
+            call(then, result, resolve2, reject);
+          } else resolve2(result);
         } else reject(value);
       } catch (error) {
         if (domain && !exited) domain.exit();
@@ -46026,8 +46082,8 @@ var require_es_promise_constructor = __commonJS({
         if (!NATIVE_PROMISE_SUBCLASSING) {
           defineBuiltIn(NativePromisePrototype, "then", function then(onFulfilled, onRejected) {
             var that = this;
-            return new PromiseConstructor(function(resolve, reject) {
-              call(nativeThen, that, resolve, reject);
+            return new PromiseConstructor(function(resolve2, reject) {
+              call(nativeThen, that, resolve2, reject);
             }).then(onFulfilled, onRejected);
           }, { unsafe: true });
         }
@@ -46287,7 +46343,7 @@ var require_es_promise_all = __commonJS({
       all: function all(iterable) {
         var C = this;
         var capability = newPromiseCapabilityModule.f(C);
-        var resolve = capability.resolve;
+        var resolve2 = capability.resolve;
         var reject = capability.reject;
         var result = perform(function() {
           var $promiseResolve = aCallable(C.resolve);
@@ -46302,10 +46358,10 @@ var require_es_promise_all = __commonJS({
               if (alreadyCalled) return;
               alreadyCalled = true;
               values[index] = value;
-              --remaining || resolve(values);
+              --remaining || resolve2(values);
             }, reject);
           });
-          --remaining || resolve(values);
+          --remaining || resolve2(values);
         });
         if (result.error) reject(result.value);
         return capability.promise;
@@ -46399,8 +46455,8 @@ var require_promise_resolve = __commonJS({
       anObject(C);
       if (isObject(x) && x.constructor === C) return x;
       var promiseCapability = newPromiseCapability.f(C);
-      var resolve = promiseCapability.resolve;
-      resolve(x);
+      var resolve2 = promiseCapability.resolve;
+      resolve2(x);
       return promiseCapability.promise;
     };
   }
@@ -46419,7 +46475,7 @@ var require_es_promise_resolve = __commonJS({
     var PromiseConstructorWrapper = getBuiltIn("Promise");
     var CHECK_WRAPPER = IS_PURE && !FORCED_PROMISE_CONSTRUCTOR;
     $({ target: "Promise", stat: true, forced: IS_PURE || FORCED_PROMISE_CONSTRUCTOR }, {
-      resolve: function resolve(x) {
+      resolve: function resolve2(x) {
         return promiseResolve(CHECK_WRAPPER && this === PromiseConstructorWrapper ? NativePromiseConstructor : this, x);
       }
     });
@@ -52045,8 +52101,8 @@ var require_lib4 = __commonJS({
           var FRAMERATE = this.FRAMERATE, mouse = this.mouse;
           var frameDuration = 1e3 / FRAMERATE;
           this.frameDuration = frameDuration;
-          this.readyPromise = new Promise(function(resolve) {
-            _this.resolveReady = resolve;
+          this.readyPromise = new Promise(function(resolve2) {
+            _this.resolveReady = resolve2;
           });
           if (this.isReady()) {
             this.render(element, ignoreDimensions, ignoreClear, scaleWidth, scaleHeight, offsetX, offsetY);
@@ -58084,9 +58140,9 @@ var require_lib4 = __commonJS({
                 if (anonymousCrossOrigin) {
                   image.crossOrigin = "Anonymous";
                 }
-                return _context.abrupt("return", new Promise(function(resolve, reject) {
+                return _context.abrupt("return", new Promise(function(resolve2, reject) {
                   image.onload = function() {
-                    resolve(image);
+                    resolve2(image);
                   };
                   image.onerror = function(_event, _source, _lineno, _colno, error) {
                     reject(error);
@@ -67289,12 +67345,12 @@ var promisifyStore = (passedStore) => {
   const legacyStore = passedStore;
   class PromisifiedStore {
     async increment(key) {
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve2, reject) => {
         legacyStore.incr(
           key,
           (error, totalHits, resetTime) => {
             if (error) reject(error);
-            resolve({ totalHits, resetTime });
+            resolve2({ totalHits, resetTime });
           }
         );
       });
@@ -67448,9 +67504,9 @@ var rateLimit = (passedOptions) => {
   }
   const middleware = handleAsyncErrors(
     async (request, response, next) => {
-      const closePromise = config.skipFailedRequests && new Promise((resolve) => response.once("close", resolve));
-      const finishPromise = (config.skipFailedRequests || config.skipSuccessfulRequests) && new Promise((resolve) => response.once("finish", resolve));
-      const errorPromise = config.skipFailedRequests && new Promise((resolve) => response.once("error", resolve));
+      const closePromise = config.skipFailedRequests && new Promise((resolve2) => response.once("close", resolve2));
+      const finishPromise = (config.skipFailedRequests || config.skipSuccessfulRequests) && new Promise((resolve2) => response.once("finish", resolve2));
+      const errorPromise = config.skipFailedRequests && new Promise((resolve2) => response.once("error", resolve2));
       debug("requested %o", request.originalUrl);
       debug("request from ip %o", request.ip);
       const skip = await config.skip(request, response);
@@ -67615,7 +67671,7 @@ var DAY = 24 * HOUR;
 await init_db();
 var import_bcryptjs = __toESM(require_bcryptjs(), 1);
 var import_jsonwebtoken = __toESM(require_jsonwebtoken(), 1);
-import { fileURLToPath } from "node:url";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { dirname as dirname2, join as join2 } from "node:path";
 import { existsSync as existsSync2 } from "node:fs";
 
@@ -67721,7 +67777,7 @@ function isValidId(id) {
 }
 
 // server/server.ts
-var __dirname2 = dirname2(fileURLToPath(import.meta.url));
+var __dirname2 = dirname2(fileURLToPath2(import.meta.url));
 var JWT_SECRET = process.env.JWT_SECRET || "game-lounge-secret-2024";
 var app = (0, import_express.default)();
 var PORT = Number(process.env.PORT) || 3001;
@@ -68800,9 +68856,21 @@ app.use((err, req, res, _next) => {
 });
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`\u{1F3AE} Game Lounge API running on http://0.0.0.0:${PORT}`);
-  autoSeed().catch(() => {
-  });
+  try {
+    const { channel } = __require("bridge");
+    channel.send("ready");
+    console.log("\u2705 Bridge ready signal sent to CapacitorNodeJS");
+  } catch {
+  }
+  autoSeed().catch((e) => console.warn("\u26A0\uFE0F autoSeed error:", e?.message));
   startAutoSync(15e3);
+});
+process.on("uncaughtException", (err) => {
+  console.error("\u274C Uncaught exception:", err.message);
+  console.error(err.stack);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("\u274C Unhandled rejection:", reason);
 });
 async function autoSeed() {
   const consoles = await queryAll("consoles");
