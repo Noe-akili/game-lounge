@@ -1,11 +1,16 @@
 // @ts-nocheck
-function detectCapacitor() {
-  if (typeof window === 'undefined') return false
-  const c = (window as any).Capacitor
-  return !!(c && c.isNativePlatform && c.isNativePlatform())
+function getApiBase() {
+  const envUrl = import.meta.env.VITE_API_URL
+  if (envUrl) return envUrl
+
+  if (window.location.protocol === 'capacitor:' || window.location.protocol === 'https:') {
+    return 'http://localhost:3001/api'
+  }
+
+  return '/api'
 }
-const isCapacitor = detectCapacitor()
-const API_BASE = isCapacitor ? 'http://127.0.0.1:3001/api' : '/api'
+
+const API_BASE = getApiBase()
 
 async function request(path, options = {}) {
   const token = localStorage.getItem('gl_token')
@@ -22,7 +27,7 @@ async function request(path, options = {}) {
       localStorage.removeItem('gl_token')
       localStorage.removeItem('gl_user')
       window.location.href = '/login'
-      throw new Error('Non autorisé')
+      throw new Error('Non autorise')
     }
 
     if (!res.ok) {
@@ -33,7 +38,7 @@ async function request(path, options = {}) {
     return res.json()
   } catch (e) {
     if (e.name === 'TypeError' && e.message?.includes('Failed to fetch')) {
-      throw new Error('Serveur indisponible — vérifiez la connexion')
+      throw new Error('Serveur indisponible — verifiez la connexion')
     }
     throw e
   }

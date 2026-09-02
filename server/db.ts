@@ -7,29 +7,38 @@ import dotenv from 'dotenv'
 let nodemailer: any = null
 try { nodemailer = await import('nodemailer') } catch {}
 
-// Fix __dirname for ESM
-const __filename = typeof __filename !== 'undefined' ? __filename : fileURLToPath(import.meta.url)
-const __dirname = typeof __dirname !== 'undefined' ? __dirname : dirname(__filename)
+// Fix: force IPv4 for Neon connection (undici tries IPv6 first and times out)
+try {
+  const { Agent, setGlobalDispatcher } = await import('undici')
+  setGlobalDispatcher(new Agent({ connect: { family: 4 } }))
+  console.log('🔧 Undici IPv4 forcé pour Neon')
+} catch {}
 
-// CapacitorNodeJS plugin sets DATADIR env var
-const PLUGIN_DATADIR = process.env.DATADIR || ''
+console.error('🚀 [DB.TS] Starting - import.meta.url:', import.meta.url)
+console.error('🚀 [DB.TS] process.cwd():', process.cwd())
+console.error('🚀 [DB.TS] process.env.DATADIR:', process.env.DATADIR)
+console.error('🚀 [DB.TS] NODE_PATH:', process.env.NODE_PATH)
+
+// Fix __dirname for ESM
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+
 const PROJECT_DIR = __dirname
 
 // Load .env from multiple locations
 const envPaths = [
   join(PROJECT_DIR, '.env'),
   join(process.cwd(), '.env'),
-  join(PLUGIN_DATADIR, '.env'),
 ]
 for (const p of envPaths) {
   try { if (existsSync(p)) { dotenv.config({ path: p }); break } } catch {}
 }
 dotenv.config()
 
-const DATA_DIR = process.env.DATA_DIR || (PLUGIN_DATADIR ? PLUGIN_DATADIR : join(PROJECT_DIR, 'data'))
+const DATA_DIR = process.env.DATA_DIR || join(PROJECT_DIR, 'data')
 const DB_PATH = join(DATA_DIR, 'app.db')
 
-console.log('🔧 Config:', { PROJECT_DIR, PLUGIN_DATADIR, DATA_DIR, DB_PATH, CWD: process.cwd() })
+console.log('🔧 Config:', { PROJECT_DIR, DATA_DIR, DB_PATH, CWD: process.cwd() })
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
 
@@ -39,7 +48,6 @@ const wasmCandidates = [
   join(PROJECT_DIR, 'node_modules', 'sql.js', 'dist'),
   join(PROJECT_DIR, '..', 'node_modules', 'sql.js', 'dist'),
   join(process.cwd(), 'node_modules', 'sql.js', 'dist'),
-  join(PLUGIN_DATADIR, 'node_modules', 'sql.js', 'dist'),
 ]
 let wasmDir = ''
 for (const d of wasmCandidates) {

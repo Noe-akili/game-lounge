@@ -3,11 +3,9 @@ dist/
 server/data/
 .env
 *.db
-android/.gradle/
-android/build/
-android/app/build/
-android/capacitor-android/
-android/capacitor-cordova-android-plugins/
+server-dist/
+
+android/
 data/
 public/nodejs/server.js
 public/nodejs/node_modules/

@@ -1,5 +1,5 @@
 <template>
-  <div v-if="serverReady || !isCapacitor" class="flex h-full w-full max-w-full overflow-hidden">
+  <div class="flex h-full w-full max-w-full overflow-hidden">
     <!-- Desktop: permanent sidebar -->
     <div v-if="isDesktop" class="hidden lg:flex flex-col w-64 bg-bg-card border-r border-white/5 flex-shrink-0 h-full">
       <AppSidebarDesktop />
@@ -22,18 +22,6 @@
     <BottomNav @create-session="showSessionModal = true" />
     <StartSessionModal :open="showSessionModal" @close="showSessionModal = false" @started="onSessionStarted" />
   </div>
-  <div v-else class="flex items-center justify-center h-full bg-bg">
-    <div class="text-center space-y-4 px-6">
-      <div class="w-16 h-16 mx-auto rounded-2xl bg-neon-violet/20 flex items-center justify-center animate-pulse">
-        <svg class="w-8 h-8 text-neon-violet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-      </div>
-      <h2 class="font-gaming text-xl font-bold text-neon-violet">Game Lounge</h2>
-      <p class="text-txt-dim text-sm">Démarrage du serveur...</p>
-      <div class="w-48 h-1 bg-bg-surface rounded-full mx-auto overflow-hidden">
-        <div class="h-full bg-gradient-to-r from-neon-violet to-neon-blue rounded-full animate-shimmer" style="background-size:200% 100%"></div>
-      </div>
-    </div>
-  </div>
 </template>
 
 <script setup lang="ts">
@@ -52,8 +40,6 @@ const router = useRouter()
 const settings = useSettingsStore()
 
 const isDesktop = ref(typeof window !== 'undefined' ? window.innerWidth >= 1024 : false)
-const isCapacitor = typeof window !== 'undefined' && !!(window as any).Capacitor
-const serverReady = ref(!isCapacitor)
 let pollInterval: ReturnType<typeof setInterval> | null = null
 
 function onSessionStarted() {
@@ -69,23 +55,6 @@ function onResize() {
   }
 }
 
-async function waitForServer() {
-  if (!isCapacitor) { serverReady.value = true; return }
-  for (let i = 0; i < 60; i++) {
-    try {
-      const res = await fetch('http://127.0.0.1:3001/api/auth/login', { method: 'OPTIONS', signal: AbortSignal.timeout(1000) })
-      if (res.ok || res.status === 204 || res.status === 401 || res.status === 404) {
-        serverReady.value = true
-        console.log('Serveur prêt après', i + 1, 'tentatives')
-        return
-      }
-    } catch {}
-    await new Promise(r => setTimeout(r, 1000))
-  }
-  serverReady.value = true
-  console.warn('Serveur pas disponible, mode offline')
-}
-
 async function pollForChanges() {
   try {
     const { api } = await import('@/utils/api')
@@ -99,7 +68,6 @@ async function pollForChanges() {
 onMounted(() => {
   settings.init()
   window.addEventListener('resize', onResize)
-  waitForServer()
   pollInterval = setInterval(() => {
     const token = localStorage.getItem('gl_token')
     if (token) pollForChanges()

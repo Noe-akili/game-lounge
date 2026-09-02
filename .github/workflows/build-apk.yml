@@ -1,15 +1,19 @@
-name: Build Android APK
+name: Build Game Lounge APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
@@ -17,75 +21,68 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --legacy-peer-deps
 
       - name: Build frontend
         run: npm run build
 
-      - name: Bundle server for CapacitorNodeJS plugin
-        run: |
-          npx esbuild server/server.ts \
-            --bundle \
-            --platform=node \
-            --format=esm \
-            --outfile=public/nodejs/server.js \
-            --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" \
-            --external:nodemailer \
-            --external:@neondatabase/serverless \
-            --external:sql.js
-          echo '{"name":"game-lounge-server","version":"1.0.0","type":"module","main":"server.js"}' > public/nodejs/package.json
+      - name: Bundle server for Android
+        run: node server/build-server.mjs
 
-      - name: Include sql.js (WASM) and neon in bundle
-        run: |
-          mkdir -p public/nodejs/node_modules/sql.js/dist
-          cp node_modules/sql.js/dist/sql-wasm.js public/nodejs/node_modules/sql.js/dist/
-          cp node_modules/sql.js/dist/sql-wasm.wasm public/nodejs/node_modules/sql.js/dist/
-          cp node_modules/sql.js/package.json public/nodejs/node_modules/sql.js/
-          # Copy @neondatabase/serverless for Neon sync
-          mkdir -p public/nodejs/node_modules/@neondatabase/serverless
-          cp node_modules/@neondatabase/serverless/package.json public/nodejs/node_modules/@neondatabase/serverless/ 2>/dev/null || true
-          cp node_modules/@neondatabase/serverless/index.js public/nodejs/node_modules/@neondatabase/serverless/ 2>/dev/null || true
-          # Create .env with DATABASE_URL for Neon sync in APK
-          cat > public/nodejs/.env << 'EOF'
-          DATABASE_URL='postgresql://neondb_owner:npg_AEay0ug9NHYj@ep-wild-cloud-axxw1ufj-pooler.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require'
-          SMTP_HOST=smtp.gmail.com
-          SMTP_PORT=587
-          SMTP_SECURE=false
-          SMTP_USER=noeakili502@gmail.com
-          SMTP_PASS=
-          EOF
-          echo "Contents:"
-          ls -la public/nodejs/node_modules/sql.js/dist/
+      - name: Verify dist/nodejs
+        run: ls -la dist/nodejs/ && du -sh dist/nodejs/
 
-      - name: Copy frontend into server/public for Express static serving
-        run: |
-          mkdir -p public/nodejs/public
-          cp -r dist/* public/nodejs/public/
-          echo "Server assets:"
-          ls public/nodejs/
-          echo "Frontend in server:"
-          ls public/nodejs/public/ | head -5
+      - name: Add Android platform
+        run: npx cap add android
 
       - name: Sync Capacitor
         run: npx cap sync android
 
-      - name: Setup Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Verify Android assets
+        run: |
+          echo "=== public/ ==="
+          ls android/app/src/main/assets/public/ 2>/dev/null || echo "no public/"
+          echo "=== nodejs/ ==="
+          ls android/app/src/main/assets/public/nodejs/ 2>/dev/null || echo "no nodejs/"
+          echo "=== Size ==="
+          du -sh android/app/src/main/assets/
 
       - name: Build Debug APK
         working-directory: android
         run: chmod +x gradlew && ./gradlew assembleDebug
 
-      - name: Upload APK artifact
+      - name: Build Release APK (unsigned)
+        working-directory: android
+        run: ./gradlew assembleRelease || true
+
+      - name: Check APK sizes
+        run: |
+          echo "=== Debug APK ==="
+          find android/app/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
+          echo "=== Total build size ==="
+          du -sh android/app/build/
+
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: game-lounge-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: game-lounge-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        if: hashFiles('android/app/build/outputs/apk/release/*.apk') != ''
+        with:
+          name: game-lounge-release-apk
+          path: android/app/build/outputs/apk/release/*.apk
           retention-days: 30

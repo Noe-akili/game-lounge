@@ -1,4 +1,9 @@
 // @ts-nocheck
+console.error('🚀 [SERVER.TS] Starting - import.meta.url:', import.meta.url)
+console.error('🚀 [SERVER.TS] process.cwd():', process.cwd())
+console.error('🚀 [SERVER.TS] process.env.DATADIR:', process.env.DATADIR)
+console.error('🚀 [SERVER.TS] NODE_PATH:', process.env.NODE_PATH)
+
 import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
@@ -1165,8 +1170,8 @@ app.get('/api/sync/poll', authMiddleware, async (req: any, res: any) => {
 
 // ===== STATIC FILES =====
 const distPaths = [
-  join(__dirname, 'public'),
   join(__dirname, '../dist'),
+  join(__dirname, 'public'),
   join(process.env.DATA_DIR || __dirname, '../dist'),
   join(process.env.DATA_DIR || __dirname, 'public'),
   join(process.env.DATA_DIR || __dirname, 'server/public'),
@@ -1200,15 +1205,6 @@ app.use((err: any, req: any, res: any, _next: any) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🎮 Game Lounge API running on http://0.0.0.0:${PORT}`)
-
-  // Signal CapacitorNodeJS plugin that server is ready
-  try {
-    const { channel } = require('bridge')
-    channel.send('ready')
-    console.log('✅ Bridge ready signal sent to CapacitorNodeJS')
-  } catch {
-    // Not running in Capacitor plugin (dev mode) - that's fine
-  }
 
   autoSeed().catch((e) => console.warn('⚠️ autoSeed error:', e?.message))
   startAutoSync(15000)
