@@ -19,7 +19,8 @@ export default defineConfig({
         inlineDynamicImports: true,
         entryFileNames: 'assets/app.js',
         assetFileNames: 'assets/app.[ext]'
-      }
+      },
+      external: ['react', 'react-dom']
     }
   },
   server: {
