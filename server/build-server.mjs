@@ -44,8 +44,12 @@ mkdirSync(undiciDir, { recursive: true })
 cpSync('node_modules/undici/package.json', join(undiciDir, 'package.json'))
 cpSync('node_modules/undici/index.js', join(undiciDir, 'index.js'))
 
-// Copy .env
-cpSync('server/.env', join(outdir, '.env'))
+// Copy .env if exists
+try {
+  cpSync('server/.env', join(outdir, '.env'))
+} catch {
+  writeFileSync(join(outdir, '.env'), "DATABASE_URL=''\n")
+}
 
 // Copy dotenv
 const dotenvDir = join(outdir, 'node_modules', 'dotenv')
