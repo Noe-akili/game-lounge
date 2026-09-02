@@ -19,6 +19,7 @@
     "@capawesome/capacitor-nodejs": "^0.1.1",
     "@neondatabase/serverless": "^0.10.0",
     "@types/sql.js": "^1.4.11",
+    "@vueuse/core": "^14.4.0",
     "bcryptjs": "^2.4.3",
     "chart.js": "^4.5.1",
     "cors": "^2.8.6",
