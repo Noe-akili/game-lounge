@@ -1,0 +1,89 @@
+name: Build APK with CapacitorNodeJS (Node 20)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20 (required by CapacitorNodeJS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Bundle server for CapacitorNodeJS (CommonJS)
+        run: |
+          npx esbuild server/server.ts \
+            --bundle \
+            --platform=node \
+            --format=cjs \
+            --outfile=public/nodejs/server.cjs \
+            --banner:js="const { createRequire } = require('module'); const require = createRequire(__filename);" \
+            --external:sql.js \
+            --external:@neondatabase/serverless \
+            --external:nodemailer
+          echo '{"name":"game-lounge-server","version":"1.0.0","type":"commonjs","main":"server.cjs"}' > public/nodejs/package.json
+
+      - name: Copy sql.js WASM
+        run: |
+          mkdir -p public/nodejs/node_modules/sql.js/dist
+          cp node_modules/sql.js/dist/sql-wasm.js public/nodejs/node_modules/sql.js/dist/
+          cp node_modules/sql.js/dist/sql-wasm.wasm public/nodejs/node_modules/sql.js/dist/
+          cp node_modules/sql.js/package.json public/nodejs/node_modules/sql.js/
+
+      - name: Copy Neon
+        run: |
+          mkdir -p public/nodejs/node_modules/@neondatabase/serverless
+          cp -r node_modules/@neondatabase/serverless/* public/nodejs/node_modules/@neondatabase/serverless/ 2>/dev/null || true
+
+      - name: Create .env for APK
+        run: |
+          cat > public/nodejs/.env << 'EOF'
+          DATABASE_URL='postgresql://neondb_owner:npg_AEay0ug9NHYj@ep-wild-cloud-axxw1ufj-pooler.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require'
+          NODE_ENV=production
+          PORT=3001
+          EOF
+
+      - name: Copy frontend to public
+        run: |
+          mkdir -p public/nodejs/public
+          cp -r dist/* public/nodejs/public/
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build Debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: game-lounge-apk-nodejs
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30

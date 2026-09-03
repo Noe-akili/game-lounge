@@ -2,16 +2,11 @@
   "appId": "com.gamelounge.app",
   "appName": "Game Lounge",
   "webDir": "dist",
-  "server": {
-    "androidScheme": "https",
-    "allowNavigation": ["*"]
-  },
   "android": {
-    "allowMixedContent": true,
-    "backgroundColor": "#0a0a0f"
+    "allowMixedContent": true
   },
   "plugins": {
-    "Nodejs": {
+    "CapacitorNodeJS": {
       "nodeDir": "nodejs",
       "startMode": "auto"
     }
