@@ -13,17 +13,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20 (for CapacitorNodeJS plugin)
+      - name: Setup Node.js 22 (for Capacitor CLI)
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
 
-      - name: Install dependencies (with legacy peer deps)
+      - name: Install dependencies
         run: npm ci --legacy-peer-deps
-
-      - name: Install older Capacitor CLI compatible with Node 20
-        run: npm install -D @capacitor/cli@7 @capacitor/core@7 @capacitor/android@7
 
       - name: Build frontend
         run: npm run build
