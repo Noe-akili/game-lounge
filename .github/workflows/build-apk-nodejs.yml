@@ -25,18 +25,18 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Bundle server for CapacitorNodeJS (CommonJS)
+      - name: Bundle server for CapacitorNodeJS (ESM)
         run: |
           npx esbuild server/server.ts \
             --bundle \
             --platform=node \
-            --format=cjs \
-            --outfile=public/nodejs/server.cjs \
-            --banner:js="const { createRequire } = require('module'); const require = createRequire(__filename);" \
+            --format=esm \
+            --outfile=public/nodejs/server.js \
+            --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" \
             --external:sql.js \
             --external:@neondatabase/serverless \
             --external:nodemailer
-          echo '{"name":"game-lounge-server","version":"1.0.0","type":"commonjs","main":"server.cjs"}' > public/nodejs/package.json
+          echo '{"name":"game-lounge-server","version":"1.0.0","type":"module","main":"server.js"}' > public/nodejs/package.json
 
       - name: Copy sql.js WASM
         run: |
