@@ -16,8 +16,9 @@
     >
       <router-view />
     </motion.div>
-    <Toaster
+    <VueSonner
       :position="isMobile ? 'top-center' : 'bottom-right'"
+      theme="dark"
       :toast-options="{
         style: {
           background: '#12121a',
@@ -26,12 +27,7 @@
           borderRadius: '12px',
           padding: '12px 16px',
         },
-        success: {
-          iconTheme: { primary: '#22c55e', secondary: '#0a0a0f' }
-        },
-        error: {
-          iconTheme: { primary: '#ef4444', secondary: '#0a0a0f' }
-        }
+        className: 'toast-gaming'
       }"
     />
   </div>
@@ -41,7 +37,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { motion } from 'motion-v'
-import { Toaster } from 'sonner'
+import { Toaster } from 'vue-sonner'
 
 const router = useRouter()
 const routeLoading = ref(false)

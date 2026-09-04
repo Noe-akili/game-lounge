@@ -80,7 +80,7 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { api } from '@/utils/api'
 import { useAuthStore } from '@/stores/auth'
-import { toast } from 'sonner'
+import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
 import { UserPlus, Trash2, Loader2, Pencil } from 'lucide-vue-next'
 import Loader from '@/components/ui/Loader.vue'

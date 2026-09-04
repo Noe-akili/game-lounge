@@ -167,7 +167,7 @@
 import { ref, reactive, onMounted, computed, onUnmounted } from 'vue'
 import { api } from '@/utils/api'
 import { formatDuration, formatCurrency, formatDate } from '@/utils/helpers'
-import { toast } from 'sonner'
+import { toast } from 'vue-sonner'
 import { PlayCircle, PauseCircle, Square, CheckCircle2, RefreshCw, Plus, Pencil, Trash2 } from 'lucide-vue-next'
 import Loader from '@/components/ui/Loader.vue'
 import Modal from '@/components/ui/Modal.vue'

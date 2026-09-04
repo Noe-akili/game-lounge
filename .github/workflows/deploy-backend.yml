@@ -1,0 +1,49 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build server bundle
+        run: |
+          cd server
+          npm ci
+          npm run build
+
+      - name: Deploy to Render
+        uses: render-deploy-action@v1
+        if: ${{ secrets.RENDER_API_KEY != '' }}
+        with:
+          service-id: ${{ secrets.RENDER_SERVICE_ID }}
+          api-key: ${{ secrets.RENDER_API_KEY }}
+          wait-for-success: true
+
+      - name: Deploy to Railway
+        uses: railway-action@v1
+        if: ${{ secrets.RAILWAY_TOKEN != '' }}
+        with:
+          token: ${{ secrets.RAILWAY_TOKEN }}
+          service: ${{ secrets.RAILWAY_SERVICE }}
+
+      - name: Deploy via Docker to VPS
+        if: ${{ secrets.VPS_HOST != '' }}
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd ~/game-lounge
+            git pull
+            docker-compose up -d --build

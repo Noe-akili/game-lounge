@@ -1,16 +1,26 @@
 // @ts-nocheck
-function getApiBase() {
-  const envUrl = import.meta.env.VITE_API_URL
-  if (envUrl) return envUrl
-
-  if (window.location.protocol === 'capacitor:' || window.location.protocol === 'https:') {
-    return 'http://localhost:3001/api'
-  }
-
-  return '/api'
+function detectCapacitor() {
+  if (typeof window === 'undefined') return false
+  const c = (window as any).Capacitor
+  return !!(c && c.isNativePlatform && c.isNativePlatform())
 }
 
-const API_BASE = getApiBase()
+const isCapacitor = detectCapacitor()
+
+// Priority: env var > localStorage (user override) > default
+const getApiBase = () => {
+  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL
+  const stored = localStorage.getItem('gl_api_url')
+  if (stored) return stored
+  return isCapacitor ? 'http://192.168.1.100:3001/api' : '/api'
+}
+
+let API_BASE = getApiBase()
+
+export function setApiUrl(url: string) {
+  API_BASE = url
+  localStorage.setItem('gl_api_url', url)
+}
 
 async function request(path, options = {}) {
   const token = localStorage.getItem('gl_token')
@@ -27,7 +37,7 @@ async function request(path, options = {}) {
       localStorage.removeItem('gl_token')
       localStorage.removeItem('gl_user')
       window.location.href = '/login'
-      throw new Error('Non autorise')
+      throw new Error('Non autorisé')
     }
 
     if (!res.ok) {
@@ -38,7 +48,7 @@ async function request(path, options = {}) {
     return res.json()
   } catch (e) {
     if (e.name === 'TypeError' && e.message?.includes('Failed to fetch')) {
-      throw new Error('Serveur indisponible — verifiez la connexion')
+      throw new Error('Serveur indisponible — vérifiez la connexion')
     }
     throw e
   }

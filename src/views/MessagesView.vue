@@ -50,7 +50,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { api } from '@/utils/api'
-import { toast } from 'sonner'
+import { toast } from 'vue-sonner'
 import { formatDate } from '@/utils/helpers'
 import Modal from '@/components/ui/Modal.vue'
 import Loader from '@/components/ui/Loader.vue'

@@ -106,7 +106,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { api } from '@/utils/api'
 import { formatCurrency, timeAgo } from '@/utils/helpers'
-import { toast } from 'sonner'
+import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
 import Loader from '@/components/ui/Loader.vue'
 import { Search, UserPlus, Users, Pencil, Trash2 } from 'lucide-vue-next'

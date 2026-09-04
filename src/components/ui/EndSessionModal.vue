@@ -90,7 +90,7 @@
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { api } from '@/utils/api'
 import { formatCurrency, formatDuration, calcJetonsEarned } from '@/utils/helpers'
-import { toast } from 'sonner'
+import { toast } from 'vue-sonner'
 import Modal from './Modal.vue'
 import { Square, Trophy, CheckCircle, Loader2, Banknote, CreditCard, Smartphone, Coins } from 'lucide-vue-next'
 import { isValidModePaiement } from '@/utils/validators'

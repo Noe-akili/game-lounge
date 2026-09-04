@@ -76,7 +76,7 @@ import { ref, reactive } from 'vue'
 import { motion } from 'motion-v'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { toast } from 'sonner'
+import { toast } from 'vue-sonner'
 import { Gamepad2, Mail, Lock, Eye, EyeOff, LogIn, Loader2 } from 'lucide-vue-next'
 import { isValidEmail, isValidPassword } from '@/utils/validators'
 

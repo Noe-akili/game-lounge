@@ -131,7 +131,7 @@ import { api } from '@/utils/api'
 import { formatCurrency } from '@/utils/helpers'
 import Loader from '@/components/ui/Loader.vue'
 import { Download, RefreshCw, BarChart3, Monitor, TrendingUp, Euro } from 'lucide-vue-next'
-import { toast } from 'sonner'
+import { toast } from 'vue-sonner'
 import { Bar, Doughnut, Line } from 'vue-chartjs'
 import {
   Chart as ChartJS,

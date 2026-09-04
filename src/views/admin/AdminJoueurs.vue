@@ -110,7 +110,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { api } from '@/utils/api'
-import { toast } from 'sonner'
+import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
 import { UserPlus, Pencil, Search, Users, Trash2 } from 'lucide-vue-next'
 import Loader from '@/components/ui/Loader.vue'

@@ -93,7 +93,7 @@
 import { ref, onMounted } from 'vue'
 import { api } from '@/utils/api'
 import { formatCurrency, formatDate } from '@/utils/helpers'
-import { toast } from 'sonner'
+import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
 import { CheckCircle, Clock, XCircle, Receipt, RefreshCw, Eye, Download } from 'lucide-vue-next'
 import Loader from '@/components/ui/Loader.vue'

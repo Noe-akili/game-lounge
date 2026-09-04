@@ -149,7 +149,7 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { api } from '@/utils/api'
 import { formatCurrency } from '@/utils/helpers'
-import { toast } from 'sonner'
+import { toast } from 'vue-sonner'
 import Modal from './Modal.vue'
 import { Play, Search, Check, ChevronRight, UserPlus, Monitor, Gamepad2, Loader2 } from 'lucide-vue-next'
 import { isValidNom, isValidPhone, isValidEmail, sanitizeInput, isValidId } from '@/utils/validators'

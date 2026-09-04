@@ -180,7 +180,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { api } from '@/utils/api'
-import { toast } from 'sonner'
+import { toast } from 'vue-sonner'
 import Loader from '@/components/ui/Loader.vue'
 import Modal from '@/components/ui/Modal.vue'
 import { Plus, Pencil, Trash2, Settings, Moon, Sun, Cloud, CloudOff, RefreshCw } from 'lucide-vue-next'
