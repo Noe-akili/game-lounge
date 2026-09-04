@@ -136,7 +136,7 @@ const update = (table: string, id: number, data: any) => {
   save()
 }
 const remove = (table: string, id: number) => { db.run(`DELETE FROM ${table} WHERE id=?`, [id]); save() }
-const logError = (msg: string, err?: any) => console.error(`[ERROR] ${msg}`, err?.message || err || '')
+const logError = (msg: string, err?: any) => { console.error(`[ERROR] ${msg}`, err?.message || err || '') }
 
 async function queryNeon(sql: string, params: any[] = []) {
   if (!neonSql) return null

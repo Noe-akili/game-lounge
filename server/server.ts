@@ -686,7 +686,7 @@ app.get('/api/factures/:id/pdf', authMiddleware, async (req: any, res: any) => {
     res.setHeader('Content-Disposition', `attachment; filename="${f.numero_facture}.pdf"`)
     res.send(Buffer.from(doc.output('arraybuffer') as ArrayBuffer))
   } catch (err: any) {
-    logError(err instanceof Error ? err : new Error(err.message || 'Erreur de génération PDF'), '/api/factures/:id/pdf', 'GET').catch(() => {})
+    logError(err instanceof Error ? err.message || 'Erreur de génération PDF' : String(err), '/api/factures/:id/pdf', 'GET')
     res.status(500).json({ message: 'Erreur génération PDF', error: err.message })
   }
 })
@@ -1199,7 +1199,7 @@ app.get('*', async (req: any, res: any) => {
 // ===== ERROR HANDLER =====
 app.use((err: any, req: any, res: any, _next: any) => {
   console.error('Erreur serveur:', err)
-  logError(err instanceof Error ? err : new Error(String(err)), req.originalUrl, req.method).catch(() => {})
+  logError(err instanceof Error ? err : new Error(String(err)), req.originalUrl)
   res.status(500).json({ message: 'Erreur interne du serveur' })
 })
 
