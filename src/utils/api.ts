@@ -15,56 +15,56 @@ const getApiBase = () => {
 }
 
 let API_BASE = getApiBase()
+let apiChecked = false
 
 export function setApiUrl(url: string) {
   API_BASE = url
   localStorage.setItem('gl_api_url', url)
 }
 
-// Wait for Node.js server to be ready on Capacitor
-let serverReadyResolve = null
-const serverReady = new Promise(resolve => { serverReadyResolve = resolve })
+// ===== Port / server discovery =====
+const CANDIDATE_BASES = [
+  'http://127.0.0.1:3001/api',
+  'http://localhost:3001/api',
+]
 
-async function waitForServer() {
-  if (!isCapacitor) return
-
+async function probeUrl(url, timeoutMs = 1500) {
   try {
-    const NodeJS = (window as any).Capacitor.Plugins.CapacitorNodeJS
-    if (NodeJS?.whenReady) {
-      await NodeJS.whenReady()
-      console.log('[API] Node.js server ready')
-    }
-  } catch (e) {
-    console.warn('[API] NodeJS.whenReady() failed:', e)
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), timeoutMs)
+    const res = await fetch(url + '/health', { signal: ctrl.signal })
+    clearTimeout(t)
+    return res.ok || res.status === 401 || res.status === 404
+  } catch {
+    return false
   }
-
-  // Poll until server responds
-  for (let i = 0; i < 30; i++) {
-    try {
-      const res = await fetch(`${API_BASE}/health`, {
-        signal: AbortSignal.timeout(3000)
-      })
-      if (res.ok || res.status === 401 || res.status === 404) {
-        console.log(`[API] Server responding after ${i + 1} attempts`)
-        serverReadyResolve?.()
-        return
-      }
-    } catch {}
-    await new Promise(r => setTimeout(r, 1000))
-  }
-  console.warn('[API] Server poll timeout, proceeding anyway')
-  serverReadyResolve?.()
 }
 
-// Start waiting immediately
-waitForServer()
+async function checkServerAvailable() {
+  if (!isCapacitor) return true
+
+  for (let attempt = 0; attempt < 20; attempt++) {
+    for (const candidate of CANDIDATE_BASES) {
+      const ok = await probeUrl(candidate)
+      if (ok) {
+        if (candidate !== API_BASE) {
+          API_BASE = candidate
+          localStorage.setItem('gl_api_url', candidate)
+        }
+        console.log('[API] Server found at', API_BASE)
+        return true
+      }
+    }
+    await new Promise(r => setTimeout(r, 1000))
+  }
+  console.warn('[API] Server not found after 20s, using default:', API_BASE)
+  return false
+}
+
+// Check once at module load (non-blocking)
+checkServerAvailable()
 
 async function request(path, options = {}) {
-  // Wait for server ready on Capacitor
-  if (isCapacitor) {
-    await serverReady
-  }
-
   const token = localStorage.getItem('gl_token')
   const headers = {
     'Content-Type': 'application/json',
@@ -73,7 +73,11 @@ async function request(path, options = {}) {
   }
 
   try {
-    const res = await fetch(`${API_BASE}${path}`, { ...options, headers, signal: AbortSignal.timeout(15000) })
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers,
+      signal: AbortSignal.timeout(15000),
+    })
 
     if (res.status === 401) {
       localStorage.removeItem('gl_token')
@@ -91,6 +95,9 @@ async function request(path, options = {}) {
   } catch (e) {
     if (e.name === 'TypeError' && e.message?.includes('Failed to fetch')) {
       throw new Error('Serveur indisponible — vérifiez la connexion')
+    }
+    if (e.name === 'TimeoutError' || e.name === 'AbortError') {
+      throw new Error('Serveur indisponible — délai dépassé')
     }
     throw e
   }

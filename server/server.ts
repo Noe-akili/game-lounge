@@ -11,7 +11,7 @@ import rateLimit from 'express-rate-limit'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { existsSync } from 'node:fs'
-import { queryAll, queryOne, insert, update, remove, logError, getSyncStatus, setSyncEnabled, runFullSync, isNeonEnabled, isNeonAvailable, pollChanges, startAutoSync, clearLocalData } from './db.ts'
+import { queryAll, queryOne, insert, update, remove, logError, getSyncStatus, setSyncEnabled, runFullSync, isNeonEnabled, isNeonAvailable, pollChanges, startAutoSync, clearLocalData, queryNeonUser, queryNeon, queryNeonAll } from './db.ts'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import {
@@ -91,35 +91,42 @@ app.post('/api/auth/login', loginLimiter, async (req: any, res: any) => {
   if (!isValidEmail(email)) return res.status(400).json({ message: 'Email invalide' })
   if (!isValidPassword(password)) return res.status(400).json({ message: 'Mot de passe invalide (min 6 caractères, au moins une lettre)' })
 
-  const hasLocalUsers = (await queryAll('users')).length > 0
-
-  // If Neon available, validate against Neon (online first)
-  if (isNeonAvailable()) {
-    try {
-      const neonUser: any = await (await import('./db.ts')).queryNeonUser(email)
-      if (neonUser && bcrypt.compareSync(password, neonUser.password_hash)) {
-        // Upsert user locally for offline cache
-        const existing = await queryOne('users', u => u.email === email)
-        if (!existing) {
-          await insert('users', { email: neonUser.email, password_hash: neonUser.password_hash, role: neonUser.role, nom: neonUser.nom })
-        }
-        const token = jwt.sign({ id: neonUser.id, email: neonUser.email, role: neonUser.role, nom: neonUser.nom }, JWT_SECRET, { expiresIn: '24h' })
-        return res.json({ token, user: { id: neonUser.id, email: neonUser.email, role: neonUser.role, nom: neonUser.nom } })
-      }
-      return res.status(401).json({ message: 'Identifiants incorrects' })
-    } catch (e) {
-      console.warn('⚠️ Neon login failed, falling back to local:', (e as Error).message?.slice(0, 100))
-    }
+  // Users are stored ONLY in Neon. Local DB only caches the connected user's data.
+  if (!isNeonAvailable()) {
+    return res.status(503).json({ message: 'Connexion internet requise pour la première connexion' })
   }
 
-  // Fallback to local (only if users were cached from a previous online login)
-  if (!hasLocalUsers) {
-    return res.status(401).json({ message: 'Connexion internet requise pour la première connexion' })
+  let neonUser: any = null
+  try {
+    neonUser = await queryNeonUser(email)
+  } catch (e) {
+    return res.status(503).json({ message: 'Impossible de joindre le serveur d\'authentification', error: (e as Error).message?.slice(0, 100) })
   }
-  const user: any = await queryOne('users', u => u.email === email)
-  if (!user || !bcrypt.compareSync(password, user.password_hash)) return res.status(401).json({ message: 'Identifiants incorrects' })
-  const token = jwt.sign({ id: user.id, email: user.email, role: user.role, nom: user.nom }, JWT_SECRET, { expiresIn: '24h' })
-  res.json({ token, user: { id: user.id, email: user.email, role: user.role, nom: user.nom } })
+
+  if (!neonUser || !bcrypt.compareSync(password, neonUser.password_hash)) {
+    return res.status(401).json({ message: 'Identifiants incorrects' })
+  }
+
+  // Cache the connected user locally for offline data sync
+  const existing = await queryOne('users', u => u.email === email)
+  if (!existing) {
+    await insert('users', {
+      id: neonUser.id,
+      email: neonUser.email,
+      password_hash: neonUser.password_hash,
+      role: neonUser.role,
+      nom: neonUser.nom
+    })
+  } else {
+    await update('users', existing.id, {
+      password_hash: neonUser.password_hash,
+      role: neonUser.role,
+      nom: neonUser.nom
+    })
+  }
+
+  const token = jwt.sign({ id: neonUser.id, email: neonUser.email, role: neonUser.role, nom: neonUser.nom }, JWT_SECRET, { expiresIn: '24h' })
+  res.json({ token, user: { id: neonUser.id, email: neonUser.email, role: neonUser.role, nom: neonUser.nom } })
 })
 
 // Logout: clear local cached user data
@@ -792,9 +799,22 @@ app.post('/api/users', authMiddleware, adminOnly, async (req: any, res: any) => 
   const sanitizedNom = sanitizeInput(nom, 50)
   const sanitizedEmail = sanitizeInput(email, 100)
   const password_hash = bcrypt.hashSync(password, 10)
-  // Create in Neon (handled by sync helpers)
-  const user: any = await insert('users', { email: sanitizedEmail, password_hash, role, nom: sanitizedNom })
-  res.status(201).json({ id: user.id, email: user.email, role: user.role, nom: user.nom, created_at: user.created_at })
+
+  // Insert into Neon first
+  let createdRow: any
+  try {
+    const rows: any[] = await queryNeon(
+      `INSERT INTO users (email, password_hash, nom, role, created_at) VALUES ($1, $2, $3, $4, NOW()) RETURNING id, email, nom, role, created_at`,
+      [sanitizedEmail, password_hash, sanitizedNom, role]
+    )
+    createdRow = rows?.[0]
+  } catch (e) {
+    return res.status(500).json({ message: 'Erreur création utilisateur Neon', error: (e as Error).message?.slice(0, 200) })
+  }
+
+  if (!createdRow) return res.status(500).json({ message: 'Erreur création utilisateur' })
+
+  res.status(201).json({ id: createdRow.id, email: createdRow.email, role: createdRow.role, nom: createdRow.nom, created_at: createdRow.created_at })
 })
 
 app.delete('/api/users/:id', authMiddleware, adminOnly, async (req: any, res: any) => {
@@ -1208,7 +1228,6 @@ app.use((err: any, req: any, res: any, _next: any) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🎮 Game Lounge API running on http://0.0.0.0:${PORT}`)
 
-  autoSeed().catch((e) => console.warn('⚠️ autoSeed error:', e?.message))
   startAutoSync(15000)
 })
 
@@ -1221,77 +1240,4 @@ process.on('unhandledRejection', (reason) => {
   console.error('❌ Unhandled rejection:', reason)
 })
 
-async function autoSeed() {
-  // Users are managed in Neon (online). Do NOT seed them locally.
-  // Only seed game data (consoles, jeux, tarifs) if DB is empty.
-  const consoles = await queryAll('consoles')
-  if (consoles.length > 0) return
-  console.log('🌱 Initialisation des données de jeu...')
 
-  const consolesData = [
-    { nom: 'PS5 - Poste 1', type: 'PS5', poste_numero: 1 },
-    { nom: 'PS5 - Poste 2', type: 'PS5', poste_numero: 2 },
-    { nom: 'PS4 - Poste 3', type: 'PS4', poste_numero: 3 },
-    { nom: 'PS4 - Poste 4', type: 'PS4', poste_numero: 4 },
-    { nom: 'PS5 - Poste 5', type: 'PS5', poste_numero: 5 },
-    { nom: 'PS4 - Poste 6', type: 'PS4', poste_numero: 6 },
-  ]
-  for (const c of consolesData) await insert('consoles', { ...c, etat: 'disponible', created_at: new Date().toISOString() })
-
-  const ps4Games = ['FIFA 26', 'Mortal Kombat', 'Tekken', 'Need for Speed', 'WWE 2K25', 'NBA 2K25', 'Fortnite']
-  const ps5Games = ['FIFA 26', 'Mortal Kombat', 'Tekken 8', 'Gran Turismo 7', 'Need for Speed', 'WWE 2K25', 'NBA 2K25', 'Call of Duty']
-
-  const ps4Consoles: any[] = await queryAll('consoles')
-  for (const titre of ps4Games) {
-    const c = ps4Consoles.find((x: any) => x.type === 'PS4')
-    if (c) await insert('jeux', { titre, genre: 'Sport/Combat', console_id: c.id, actif: 1, created_at: new Date().toISOString() })
-  }
-  const ps5Consoles: any[] = await queryAll('consoles')
-  for (const titre of ps5Games) {
-    const c = ps5Consoles.find((x: any) => x.type === 'PS5')
-    if (c) await insert('jeux', { titre, genre: 'Sport/Combat/Course', console_id: c.id, actif: 1, created_at: new Date().toISOString() })
-  }
-
-  const tarifs = [
-    { type: 'session', console_type: 'PS4', jeu: 'FIFA 26', duree_minutes: 30, prix: 2000, description: 'FIFA 26 PS4 - 30min' },
-    { type: 'session', console_type: 'PS4', jeu: 'FIFA 26', duree_minutes: 60, prix: 4000, description: 'FIFA 26 PS4 - 1h' },
-    { type: 'session', console_type: 'PS4', jeu: 'Mortal Kombat', duree_minutes: 30, prix: 1500, description: 'MK PS4 - 30min' },
-    { type: 'session', console_type: 'PS4', jeu: 'Mortal Kombat', duree_minutes: 60, prix: 3000, description: 'MK PS4 - 1h' },
-    { type: 'session', console_type: 'PS4', jeu: 'Tekken', duree_minutes: 30, prix: 1500, description: 'Tekken PS4 - 30min' },
-    { type: 'session', console_type: 'PS4', jeu: 'Tekken', duree_minutes: 60, prix: 3000, description: 'Tekken PS4 - 1h' },
-    { type: 'session', console_type: 'PS4', jeu: 'Need for Speed', duree_minutes: 15, prix: 500, description: 'NFS PS4 - 15min' },
-    { type: 'session', console_type: 'PS4', jeu: 'Need for Speed', duree_minutes: 30, prix: 1000, description: 'NFS PS4 - 30min' },
-    { type: 'session', console_type: 'PS4', jeu: 'Need for Speed', duree_minutes: 60, prix: 2000, description: 'NFS PS4 - 1h' },
-    { type: 'session', console_type: 'PS4', jeu: 'WWE 2K25', duree_minutes: 30, prix: 2000, description: 'WWE PS4 - 30min' },
-    { type: 'session', console_type: 'PS4', jeu: 'WWE 2K25', duree_minutes: 60, prix: 4000, description: 'WWE PS4 - 1h' },
-    { type: 'session', console_type: 'PS4', jeu: 'NBA 2K25', duree_minutes: 30, prix: 2500, description: 'NBA PS4 - 30min' },
-    { type: 'session', console_type: 'PS4', jeu: 'NBA 2K25', duree_minutes: 60, prix: 4000, description: 'NBA PS4 - 1h' },
-    { type: 'session', console_type: 'PS4', jeu: 'Fortnite', duree_minutes: 15, prix: 500, description: 'Fortnite PS4 - 15min' },
-    { type: 'session', console_type: 'PS4', jeu: 'Fortnite', duree_minutes: 30, prix: 2000, description: 'Fortnite PS4 - 30min' },
-    { type: 'session', console_type: 'PS4', jeu: 'Fortnite', duree_minutes: 60, prix: 3000, description: 'Fortnite PS4 - 1h' },
-    { type: 'session', console_type: 'PS5', jeu: 'FIFA 26', duree_minutes: 30, prix: 4000, description: 'FIFA 26 PS5 - 30min' },
-    { type: 'session', console_type: 'PS5', jeu: 'FIFA 26', duree_minutes: 60, prix: 8000, description: 'FIFA 26 PS5 - 1h' },
-    { type: 'session', console_type: 'PS5', jeu: 'Mortal Kombat', duree_minutes: 30, prix: 3000, description: 'MK PS5 - 30min' },
-    { type: 'session', console_type: 'PS5', jeu: 'Mortal Kombat', duree_minutes: 60, prix: 6000, description: 'MK PS5 - 1h' },
-    { type: 'session', console_type: 'PS5', jeu: 'Tekken 8', duree_minutes: 30, prix: 3000, description: 'Tekken 8 PS5 - 30min' },
-    { type: 'session', console_type: 'PS5', jeu: 'Tekken 8', duree_minutes: 60, prix: 6000, description: 'Tekken 8 PS5 - 1h' },
-    { type: 'session', console_type: 'PS5', jeu: 'Gran Turismo 7', duree_minutes: 15, prix: 2000, description: 'GT7 PS5 - 15min' },
-    { type: 'session', console_type: 'PS5', jeu: 'Gran Turismo 7', duree_minutes: 30, prix: 3500, description: 'GT7 PS5 - 30min' },
-    { type: 'session', console_type: 'PS5', jeu: 'Gran Turismo 7', duree_minutes: 60, prix: 7000, description: 'GT7 PS5 - 1h' },
-    { type: 'session', console_type: 'PS5', jeu: 'Need for Speed', duree_minutes: 15, prix: 1000, description: 'NFS PS5 - 15min' },
-    { type: 'session', console_type: 'PS5', jeu: 'Need for Speed', duree_minutes: 30, prix: 2000, description: 'NFS PS5 - 30min' },
-    { type: 'session', console_type: 'PS5', jeu: 'Need for Speed', duree_minutes: 60, prix: 4000, description: 'NFS PS5 - 1h' },
-    { type: 'session', console_type: 'PS5', jeu: 'WWE 2K25', duree_minutes: 30, prix: 3000, description: 'WWE PS5 - 30min' },
-    { type: 'session', console_type: 'PS5', jeu: 'WWE 2K25', duree_minutes: 60, prix: 6000, description: 'WWE PS5 - 1h' },
-    { type: 'session', console_type: 'PS5', jeu: 'NBA 2K25', duree_minutes: 30, prix: 4000, description: 'NBA PS5 - 30min' },
-    { type: 'session', console_type: 'PS5', jeu: 'NBA 2K25', duree_minutes: 60, prix: 7000, description: 'NBA PS5 - 1h' },
-    { type: 'session', console_type: 'PS5', jeu: 'Call of Duty', duree_minutes: 15, prix: 1500, description: 'CoD PS5 - 15min' },
-    { type: 'session', console_type: 'PS5', jeu: 'Call of Duty', duree_minutes: 30, prix: 3000, description: 'CoD PS5 - 30min' },
-    { type: 'session', console_type: 'PS5', jeu: 'Call of Duty', duree_minutes: 60, prix: 6000, description: 'CoD PS5 - 1h' },
-  ]
-  for (const t of tarifs) await insert('tarifs', { ...t, actif: true })
-
-  await insert('parametres_fidelite', { regle_type: 'temps', seuil: 60, jetons_attribues: 1, actif: true })
-
-  console.log('✅ Données de jeu initialisées (consoles, jeux, tarifs)')
-}

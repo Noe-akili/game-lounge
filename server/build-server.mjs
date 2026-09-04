@@ -27,25 +27,6 @@ await build({
 })
 
 // CJS wrapper
-const wrapper = `// CJS wrapper for Android Node runtime
-const path = require('path')
-const { createRequire } = require('module')
-const r2 = createRequire(__filename)
-process.chdir(__dirname)
-try { require('dotenv/config') } catch {}
-;(async () => {
-  try {
-    try {
-      const { Agent, setGlobalDispatcher } = r2('undici')
-      setGlobalDispatcher(new Agent({ connect: { family: 4 } }))
-    } catch {}
-    const url = require2().pathToFileURL(path.join(__dirname, 'server.mjs')).href
-    function require2() { return require('url') }
-    await import(url)
-  } catch (e) { console.error('Fatal:', e); process.exit(1) }
-})()
-`
-// fix: there's a function hoisting issue, write clean version
 const wrapperClean = `// CJS wrapper for Android Node runtime
 const path = require('path')
 const urlMod = require('url')
@@ -55,10 +36,6 @@ process.chdir(__dirname)
 try { require('dotenv/config') } catch {}
 ;(async () => {
   try {
-    try {
-      const { Agent, setGlobalDispatcher } = r2('undici')
-      setGlobalDispatcher(new Agent({ connect: { family: 4 } }))
-    } catch {}
     const esmUrl = urlMod.pathToFileURL(path.join(__dirname, 'server.mjs')).href
     await import(esmUrl)
   } catch (e) { console.error('Fatal:', e); process.exit(1) }

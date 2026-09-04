@@ -7,7 +7,7 @@ import dotenv from 'dotenv'
 let nodemailer: any = null
 try { nodemailer = await import('nodemailer') } catch {}
 
-// Fix: force IPv4 for Neon connection (undici tries IPv6 first and times out)
+// Force IPv4 for Neon since Termux/Proot can't connect via IPv6
 try {
   const { Agent, setGlobalDispatcher } = await import('undici')
   setGlobalDispatcher(new Agent({ connect: { family: 4 } }))
@@ -61,25 +61,17 @@ async function initDb() {
   const db = new SQL.Database(prevDb)
   if (!prevDb) {
     db.run(`
-      CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE, password_hash TEXT, nom TEXT, role TEXT DEFAULT 'employe', created_at TEXT);
-      CREATE TABLE IF NOT EXISTS consoles (id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT, type_console TEXT, etat TEXT DEFAULT 'disponible', date_ajout TEXT);
-      CREATE TABLE IF NOT EXISTS jeux (id INTEGER PRIMARY KEY AUTOINCREMENT, titre TEXT, genre TEXT, console_id INTEGER, actif INTEGER DEFAULT 1, created_at TEXT);
-      CREATE TABLE IF NOT EXISTS joueurs (id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT, telephone TEXT, email TEXT, jetons_solde INTEGER DEFAULT 0, date_inscription TEXT);
-      CREATE TABLE IF NOT EXISTS sessions_jeu (id INTEGER PRIMARY KEY AUTOINCREMENT, console_id INTEGER, joueur_id INTEGER, jeu_id INTEGER, employe_id INTEGER, debut TEXT, fin TEXT, duree_minutes INTEGER, montant INTEGER, tarif_prix INTEGER, jetons_gagnes INTEGER DEFAULT 0, statut TEXT, created_at TEXT);
-      CREATE TABLE IF NOT EXISTS tarifs (id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT, type_tarif TEXT, prix INTEGER, duree_minutes INTEGER, created_at TEXT);
-      CREATE TABLE IF NOT EXISTS factures (id INTEGER PRIMARY KEY AUTOINCREMENT, numero_facture TEXT UNIQUE, session_id INTEGER, joueur_id INTEGER, montant_ht REAL, taux_tva REAL, montant_tva REAL, montant_ttc REAL, mode_paiement TEXT, statut TEXT, date_paiement TEXT, created_at TEXT);
-      CREATE TABLE IF NOT EXISTS jetons_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, joueur_id INTEGER, quantite INTEGER, type_transaction TEXT, description TEXT, created_at TEXT);
-      CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, titre TEXT, contenu TEXT, auteur TEXT, created_at TEXT);
+      CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, nom TEXT, role TEXT DEFAULT 'employe', created_at TEXT);
+      CREATE TABLE IF NOT EXISTS consoles (id INTEGER PRIMARY KEY, nom TEXT, type_console TEXT, etat TEXT DEFAULT 'disponible', date_ajout TEXT);
+      CREATE TABLE IF NOT EXISTS jeux (id INTEGER PRIMARY KEY, titre TEXT, genre TEXT, console_id INTEGER, actif INTEGER DEFAULT 1, created_at TEXT);
+      CREATE TABLE IF NOT EXISTS joueurs (id INTEGER PRIMARY KEY, nom TEXT, telephone TEXT, email TEXT, jetons_solde INTEGER DEFAULT 0, date_inscription TEXT);
+      CREATE TABLE IF NOT EXISTS sessions_jeu (id INTEGER PRIMARY KEY, console_id INTEGER, joueur_id INTEGER, jeu_id INTEGER, employe_id INTEGER, debut TEXT, fin TEXT, duree_minutes INTEGER, montant INTEGER, tarif_prix INTEGER, jetons_gagnes INTEGER DEFAULT 0, statut TEXT, created_at TEXT);
+      CREATE TABLE IF NOT EXISTS tarifs (id INTEGER PRIMARY KEY, nom TEXT, type_tarif TEXT, prix INTEGER, duree_minutes INTEGER, created_at TEXT);
+      CREATE TABLE IF NOT EXISTS factures (id INTEGER PRIMARY KEY, numero_facture TEXT UNIQUE, session_id INTEGER, joueur_id INTEGER, montant_ht REAL, taux_tva REAL, montant_tva REAL, montant_ttc REAL, mode_paiement TEXT, statut TEXT, date_paiement TEXT, created_at TEXT);
+      CREATE TABLE IF NOT EXISTS jetons_transactions (id INTEGER PRIMARY KEY, joueur_id INTEGER, quantite INTEGER, type_transaction TEXT, description TEXT, created_at TEXT);
+      CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, titre TEXT, contenu TEXT, auteur TEXT, created_at TEXT);
     `)
-    const defaultTarif = { nom: 'Standard', type_tarif: 'heure', prix: 2000, duree_minutes: 60, created_at: new Date().toISOString() }
-    db.run(`INSERT INTO tarifs (nom, type_tarif, prix, duree_minutes, created_at) VALUES (?,?,?,?,?)`,
-      [defaultTarif.nom, defaultTarif.type_tarif, defaultTarif.prix, defaultTarif.duree_minutes, defaultTarif.created_at])
-    const consoles = [['PlayStation 1', 'PS1'], ['PlayStation 2', 'PS2'], ['PlayStation 3', 'PS3'], ['PlayStation 4', 'PS4'], ['PlayStation 5', 'PS5']]
-    for (const [nom, type] of consoles) {
-      db.run(`INSERT INTO consoles (nom, type_console, etat, date_ajout) VALUES (?,?,?,?)`, [nom, type, 'disponible', new Date().toISOString()])
-    }
-    const adminPassword = '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi'
-    db.run(`INSERT INTO users (email, password_hash, nom, role) VALUES (?,?,?,?)`, ['admin@gamelounge.com', adminPassword, 'Administrateur', 'admin'])
+    // No local seeding — all data comes from Neon and is cached locally for offline use only
   }
   const data = db.export()
   writeFileSync(DB_PATH, Buffer.from(data))
@@ -94,7 +86,6 @@ process.on('SIGINT', () => { save(); process.exit() })
 
 // Neon
 let neonSql: any = null
-let neonModule: any = null
 const hasNeon = !!(process.env.DATABASE_URL)
 if (hasNeon) {
   try {
@@ -105,6 +96,107 @@ if (hasNeon) {
 }
 const isNeonAvailable = () => hasNeon && !!neonSql
 const isNeonEnabled = () => isNeonAvailable()
+
+// Wrap neon query with timeout to avoid hanging on bad network
+function withTimeout(promise, ms = 8000, label = 'neon query') {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms))
+  ])
+}
+async function safeNeon(sql, params = [], label = 'neon') {
+  try {
+    return await withTimeout(neonSql(sql, params), 8000, label)
+  } catch (e) {
+    console.warn(`  ⚠️ ${label}:`, e.message?.slice(0, 100))
+    return null
+  }
+}
+
+async function ensureNeonSchema() {
+  if (!neonSql) return
+  console.log('🌱 ensureNeonSchema starting...')
+  try {
+    // Create schemas (non-blocking, ignore errors if exists)
+    const schemas = [
+      `CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, nom TEXT, role TEXT DEFAULT 'employe', created_at TIMESTAMPTZ DEFAULT NOW())`,
+      `CREATE TABLE IF NOT EXISTS consoles (id SERIAL PRIMARY KEY, nom TEXT, type_console TEXT, etat TEXT DEFAULT 'disponible', date_ajout TIMESTAMPTZ DEFAULT NOW())`,
+      `CREATE TABLE IF NOT EXISTS jeux (id SERIAL PRIMARY KEY, titre TEXT, genre TEXT, console_id INTEGER, actif BOOLEAN DEFAULT TRUE, created_at TIMESTAMPTZ DEFAULT NOW())`,
+      `CREATE TABLE IF NOT EXISTS joueurs (id SERIAL PRIMARY KEY, nom TEXT, telephone TEXT, email TEXT, jetons_solde INTEGER DEFAULT 0, date_inscription TIMESTAMPTZ DEFAULT NOW())`,
+      `CREATE TABLE IF NOT EXISTS sessions_jeu (id SERIAL PRIMARY KEY, console_id INTEGER, joueur_id INTEGER, jeu_id INTEGER, employe_id INTEGER, debut TIMESTAMPTZ, fin TIMESTAMPTZ, duree_minutes INTEGER, montant INTEGER, tarif_prix INTEGER, jetons_gagnes INTEGER DEFAULT 0, statut TEXT, created_at TIMESTAMPTZ DEFAULT NOW())`,
+      `CREATE TABLE IF NOT EXISTS tarifs (id SERIAL PRIMARY KEY, nom TEXT, type_tarif TEXT, prix INTEGER, duree_minutes INTEGER, created_at TIMESTAMPTZ DEFAULT NOW())`,
+      `CREATE TABLE IF NOT EXISTS factures (id SERIAL PRIMARY KEY, numero_facture TEXT UNIQUE, session_id INTEGER, joueur_id INTEGER, montant_ht REAL, taux_tva REAL DEFAULT 20, montant_tva REAL, montant_ttc REAL, mode_paiement TEXT, statut TEXT, date_paiement TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW())`,
+      `CREATE TABLE IF NOT EXISTS jetons_transactions (id SERIAL PRIMARY KEY, joueur_id INTEGER, quantite INTEGER, type_transaction TEXT, description TEXT, created_at TIMESTAMPTZ DEFAULT NOW())`,
+      `CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, titre TEXT, contenu TEXT, auteur TEXT, created_at TIMESTAMPTZ DEFAULT NOW())`,
+    ]
+    for (const s of schemas) {
+      await safeNeon(s, [], 'create-schema')
+    }
+    console.log('  schemas done')
+
+    // Check & seed admin user
+    const existingUsers = await safeNeon(`SELECT id FROM users LIMIT 1`, [], 'check-users')
+    if (!existingUsers || existingUsers.length === 0) {
+      console.log('  Seeding admin user...')
+      const bcrypt = await import('bcryptjs')
+      const hash = bcrypt.hashSync('admin1234', 10)
+      await safeNeon(`INSERT INTO users (email, password_hash, nom, role) VALUES ($1, $2, $3, $4)`,
+        ['admin@gamelounge.com', hash, 'Administrateur', 'admin'], 'insert-admin')
+      console.log('  admin seeded')
+    } else {
+      console.log('  users already exist, skip seed')
+    }
+
+    // Check & seed consoles
+    const existingConsoles = await safeNeon(`SELECT id FROM consoles LIMIT 1`, [], 'check-consoles')
+    if (!existingConsoles || existingConsoles.length === 0) {
+      console.log('  Seeding consoles...')
+      for (const c of [['PS5 - Poste 1','PS5'],['PS5 - Poste 2','PS5'],['PS4 - Poste 3','PS4'],['PS4 - Poste 4','PS4'],['PS5 - Poste 5','PS5'],['PS4 - Poste 6','PS4']]) {
+        await safeNeon(`INSERT INTO consoles (nom, type_console) VALUES ($1, $2)`, c, 'insert-console')
+      }
+      console.log('  consoles seeded')
+    } else {
+      console.log('  consoles already exist, skip seed')
+    }
+
+    // Check & seed tarifs
+    const existingTarifs = await safeNeon(`SELECT id FROM tarifs LIMIT 1`, [], 'check-tarifs')
+    if (!existingTarifs || existingTarifs.length === 0) {
+      console.log('  Seeding tarifs...')
+      await safeNeon(`INSERT INTO tarifs (nom, type_tarif, prix, duree_minutes) VALUES ('Standard', 'heure', 2000, 60)`, [], 'insert-tarif')
+      console.log('  tarifs seeded')
+    } else {
+      console.log('  tarifs already exist, skip seed')
+    }
+
+    // Sync to local SQLite
+    try {
+      const neonConsoles = await safeNeon(`SELECT * FROM consoles`, [], 'sync-consoles')
+      if (neonConsoles) {
+        for (const c of neonConsoles) {
+          db.run(`INSERT OR IGNORE INTO consoles (id, nom, type_console, etat, date_ajout) VALUES (?,?,?,?,?)`,
+            [c.id, c.nom, c.type_console, 'disponible', c.date_ajout])
+        }
+      }
+      const neonTarifs = await safeNeon(`SELECT * FROM tarifs`, [], 'sync-tarifs')
+      if (neonTarifs) {
+        for (const t of neonTarifs) {
+          db.run(`INSERT OR IGNORE INTO tarifs (id, nom, type_tarif, prix, duree_minutes, created_at) VALUES (?,?,?,?,?,?)`,
+            [t.id, t.nom, t.type_tarif, t.prix, t.duree_minutes, t.created_at])
+        }
+      }
+      save()
+      console.log('  local synced')
+    } catch (e) { console.warn('  ⚠️ local sync error:', e.message) }
+
+    console.log('✅ Neon schema ready')
+  } catch (e) {
+    console.error('❌ ensureNeonSchema failed:', e.message)
+  }
+}
+
+// Run schema init in background (don't block server startup)
+setTimeout(() => { ensureNeonSchema().catch(e => console.warn('⚠️ ensureNeonSchema error:', e.message)) }, 100)
 
 // Query helpers
 const queryAll = (table: string, filter?: (row: any) => boolean) => {
@@ -120,11 +212,15 @@ const queryOne = (table: string, filter: (row: any) => boolean) => {
   return queryAll(table).find(filter) || null
 }
 const insert = (table: string, data: any) => {
+  // If data has an explicit id, use it; otherwise omit so AUTOINCREMENT assigns
   const keys = Object.keys(data).filter(k => k !== 'id')
   const vals = keys.map(k => data[k])
-  const q = `INSERT INTO ${table} (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`
-  db.run(q, vals)
-  const id = db.exec(`SELECT last_insert_rowid() as id`)[0]?.values[0]?.[0]
+  const q = data.id != null
+    ? `INSERT OR REPLACE INTO ${table} (id, ${keys.join(',')}) VALUES (?, ${keys.map(() => '?').join(',')})`
+    : `INSERT INTO ${table} (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`
+  const params = data.id != null ? [data.id, ...vals] : vals
+  db.run(q, params)
+  const id = data.id ?? db.exec(`SELECT last_insert_rowid() as id`)[0]?.values[0]?.[0]
   save()
   return { id, ...data }
 }
