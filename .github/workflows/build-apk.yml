@@ -20,7 +20,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm install --ignore-scripts
+        run: npm install
 
       - name: Create server .env
         run: |
@@ -33,9 +33,6 @@ jobs:
 
       - name: Build frontend
         run: npm run build
-
-      - name: Bundle server for Android
-        run: npm run build:server
 
       - name: Add Android platform
         run: npx cap add android

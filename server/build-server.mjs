@@ -1,6 +1,6 @@
 import { build } from 'esbuild'
-import { existsSync, mkdirSync, cpSync, writeFileSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, cpSync, writeFileSync, rmSync, readdirSync, statSync } from 'node:fs'
+import { join, dirname } from 'node:path'
 
 const outdir = 'dist/nodejs'
 
@@ -19,30 +19,53 @@ await build({
     js: `import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);`
   },
   external: [
-    'nodemailer',
     '@neondatabase/serverless',
-    'sql.js'
+    'sql.js',
+    'undici',
+    'dotenv',
+    'buffer',
+    'path',
+    'fs',
+    'os',
+    'crypto'
   ],
   target: 'node20',
   minify: false,
   sourcemap: false,
 })
 
-// Copy sql.js WASM
-const sqlWasmDir = join(outdir, 'node_modules', 'sql.js', 'dist')
-mkdirSync(sqlWasmDir, { recursive: true })
-cpSync('node_modules/sql.js/dist/sql-wasm.wasm', join(sqlWasmDir, 'sql-wasm.wasm'))
+// Copy node_modules deps
+function copyDirContents(src, dest) {
+  if (!existsSync(src)) return
+  mkdirSync(dest, { recursive: true })
+  for (const f of readdirSync(src)) {
+    const sp = join(src, f)
+    const dp = join(dest, f)
+    if (statSync(sp).isDirectory()) {
+      copyDirContents(sp, dp)
+    } else {
+      cpSync(sp, dp)
+    }
+  }
+}
 
-// Copy @neondatabase/serverless
-const neonDir = join(outdir, 'node_modules', '@neondatabase', 'serverless')
-mkdirSync(neonDir, { recursive: true })
-cpSync('node_modules/@neondatabase/serverless/index.js', join(neonDir, 'index.js'))
+const deps = [
+  ['sql.js', 'dist'],
+  ['@neondatabase/serverless', null],
+  ['undici', null],
+  ['dotenv', null],
+]
 
-// Copy undici
-const undiciDir = join(outdir, 'node_modules', 'undici')
-mkdirSync(undiciDir, { recursive: true })
-cpSync('node_modules/undici/package.json', join(undiciDir, 'package.json'))
-cpSync('node_modules/undici/index.js', join(undiciDir, 'index.js'))
+for (const [pkg, sub] of deps) {
+  const src = sub ? join('node_modules', pkg, sub) : join('node_modules', pkg)
+  const dest = join(outdir, 'node_modules', pkg, sub || '')
+  if (existsSync(src)) {
+    copyDirContents(src, dest)
+    console.log(`  Copied ${pkg}${sub ? '/' + sub : ''}`)
+  } else {
+    console.warn(`  Skipped ${pkg} (not found)`)
+  }
+}
 
 // Copy .env if exists
 try {
@@ -50,14 +73,6 @@ try {
 } catch {
   writeFileSync(join(outdir, '.env'), "DATABASE_URL=''\n")
 }
-
-// Copy dotenv
-const dotenvDir = join(outdir, 'node_modules', 'dotenv')
-mkdirSync(dotenvDir, { recursive: true })
-cpSync('node_modules/dotenv/package.json', join(dotenvDir, 'package.json'))
-cpSync('node_modules/dotenv/lib/main.js', join(dotenvDir, 'lib', 'main.js'))
-mkdirSync(join(dotenvDir, 'lib'), { recursive: true })
-cpSync('node_modules/dotenv/lib/main.js', join(dotenvDir, 'lib', 'main.js'))
 
 // Create package.json
 writeFileSync(join(outdir, 'package.json'), JSON.stringify({
@@ -67,9 +82,8 @@ writeFileSync(join(outdir, 'package.json'), JSON.stringify({
   main: 'index.js'
 }, null, 2))
 
-console.log('Server bundled to', outdir)
+console.log('\nServer bundled to', outdir)
 console.log('Files:')
-import { readdirSync, statSync } from 'node:fs'
 function listFiles(dir, prefix = '') {
   for (const f of readdirSync(dir)) {
     const p = join(dir, f)

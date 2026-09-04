@@ -12,7 +12,7 @@ const getApiBase = () => {
   if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL
   const stored = localStorage.getItem('gl_api_url')
   if (stored) return stored
-  return isCapacitor ? 'http://localhost:3001/api' : '/api'
+  return isCapacitor ? 'http://192.168.1.100:3001/api' : '/api'
 }
 
 let API_BASE = getApiBase()

@@ -4,11 +4,5 @@
   "webDir": "dist",
   "android": {
     "allowMixedContent": true
-  },
-  "plugins": {
-    "CapacitorNodeJS": {
-      "nodeDir": "nodejs",
-      "startMode": "auto"
-    }
   }
 }

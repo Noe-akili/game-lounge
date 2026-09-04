@@ -17,7 +17,6 @@
   },
   "dependencies": {
     "@capacitor/core": "^8.5.1",
-    "@jadejr/capacitor-nodejs": "^1.0.3",
     "@neondatabase/serverless": "^0.10.0",
     "@types/sql.js": "^1.4.11",
     "@vueuse/core": "^14.4.0",
