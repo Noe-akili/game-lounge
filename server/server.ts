@@ -1169,10 +1169,12 @@ app.get('/api/sync/poll', authMiddleware, async (req: any, res: any) => {
 })
 
 // ===== STATIC FILES =====
+const isBundled = __dirname.includes('dist/nodejs')
+const distParent = isBundled ? '../../dist' : '../dist'
 const distPaths = [
-  join(__dirname, '../../dist'),
+  join(__dirname, distParent),
   join(__dirname, 'public'),
-  join(process.env.DATA_DIR || __dirname, '../../dist'),
+  join(process.env.DATA_DIR || __dirname, distParent),
   join(process.env.DATA_DIR || __dirname, 'public'),
   join(process.env.DATA_DIR || __dirname, 'server/public'),
 ]
