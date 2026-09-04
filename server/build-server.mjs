@@ -1,98 +1,110 @@
 import { build } from 'esbuild'
-import { existsSync, mkdirSync, cpSync, writeFileSync, rmSync, readdirSync, statSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { existsSync, mkdirSync, cpSync, writeFileSync, rmSync, readdirSync, statSync, readFileSync, writeFileSync as wf } from 'node:fs'
+import { join } from 'node:path'
 
 const outdir = 'dist/nodejs'
 
-// Clean
 if (existsSync(outdir)) rmSync(outdir, { recursive: true })
 mkdirSync(outdir, { recursive: true })
 
-// Bundle server
+// Bundle as ESM with all dependencies (so require() inside bundled CJS deps works)
 await build({
   entryPoints: ['server/server.ts'],
   bundle: true,
   platform: 'node',
   format: 'esm',
-  outfile: `${outdir}/index.js`,
-  banner: {
-    js: `import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);`
-  },
+  outfile: `${outdir}/server.mjs`,
   external: [
-    '@neondatabase/serverless',
     'sql.js',
+    '@neondatabase/serverless',
     'undici',
     'dotenv',
-    'buffer',
-    'path',
-    'fs',
-    'os',
-    'crypto'
+    'express', 'cors', 'helmet', 'bcryptjs', 'jsonwebtoken', 'express-rate-limit'
   ],
   target: 'node20',
   minify: false,
-  sourcemap: false,
+  sourcemap: false
 })
 
-// Copy node_modules deps
-function copyDirContents(src, dest) {
+// CJS wrapper
+const wrapper = `// CJS wrapper for Android Node runtime
+const path = require('path')
+const { createRequire } = require('module')
+const r2 = createRequire(__filename)
+process.chdir(__dirname)
+try { require('dotenv/config') } catch {}
+;(async () => {
+  try {
+    try {
+      const { Agent, setGlobalDispatcher } = r2('undici')
+      setGlobalDispatcher(new Agent({ connect: { family: 4 } }))
+    } catch {}
+    const url = require2().pathToFileURL(path.join(__dirname, 'server.mjs')).href
+    function require2() { return require('url') }
+    await import(url)
+  } catch (e) { console.error('Fatal:', e); process.exit(1) }
+})()
+`
+// fix: there's a function hoisting issue, write clean version
+const wrapperClean = `// CJS wrapper for Android Node runtime
+const path = require('path')
+const urlMod = require('url')
+const { createRequire } = require('module')
+const r2 = createRequire(__filename)
+process.chdir(__dirname)
+try { require('dotenv/config') } catch {}
+;(async () => {
+  try {
+    try {
+      const { Agent, setGlobalDispatcher } = r2('undici')
+      setGlobalDispatcher(new Agent({ connect: { family: 4 } }))
+    } catch {}
+    const esmUrl = urlMod.pathToFileURL(path.join(__dirname, 'server.mjs')).href
+    await import(esmUrl)
+  } catch (e) { console.error('Fatal:', e); process.exit(1) }
+})()
+`
+wf(`${outdir}/index.js`, wrapperClean)
+
+writeFileSync(join(outdir, 'package.json'), JSON.stringify({
+  name: 'game-lounge-server',
+  version: '1.0.0',
+  main: 'index.js'
+}, null, 2))
+
+function copyDirContents(src, dest, files = null) {
   if (!existsSync(src)) return
   mkdirSync(dest, { recursive: true })
-  for (const f of readdirSync(src)) {
+  const items = files || readdirSync(src)
+  for (const f of items) {
     const sp = join(src, f)
     const dp = join(dest, f)
-    if (statSync(sp).isDirectory()) {
+    if (existsSync(sp) && statSync(sp).isDirectory()) {
       copyDirContents(sp, dp)
-    } else {
+    } else if (existsSync(sp)) {
       cpSync(sp, dp)
     }
   }
 }
 
-const deps = [
-  ['sql.js', 'dist'],
-  ['@neondatabase/serverless', null],
-  ['undici', null],
-  ['dotenv', null],
-]
-
-for (const [pkg, sub] of deps) {
-  const src = sub ? join('node_modules', pkg, sub) : join('node_modules', pkg)
-  const dest = join(outdir, 'node_modules', pkg, sub || '')
-  if (existsSync(src)) {
-    copyDirContents(src, dest)
-    console.log(`  Copied ${pkg}${sub ? '/' + sub : ''}`)
-  } else {
-    console.warn(`  Skipped ${pkg} (not found)`)
+const deps = ['sql.js', '@neondatabase/serverless', 'undici', 'dotenv',
+  'express', 'cors', 'helmet', 'bcryptjs', 'jsonwebtoken', 'express-rate-limit']
+for (const pkg of deps) {
+  const srcBase = join('node_modules', pkg)
+  const destBase = join(outdir, 'node_modules', pkg)
+  if (existsSync(srcBase)) {
+    const entries = readdirSync(srcBase).filter(f => f !== 'node_modules')
+    copyDirContents(srcBase, destBase, entries)
+    console.log(`  Copied ${pkg}`)
   }
 }
 
-// Copy .env if exists
-try {
-  cpSync('server/.env', join(outdir, '.env'))
-} catch {
-  writeFileSync(join(outdir, '.env'), "DATABASE_URL=''\n")
-}
+const srcWasm = 'node_modules/sql.js/dist/sql-wasm.wasm'
+const destWasm = join(outdir, 'node_modules/sql.js/dist/sql-wasm.wasm')
+if (existsSync(srcWasm)) cpSync(srcWasm, destWasm)
 
-// Create package.json
-writeFileSync(join(outdir, 'package.json'), JSON.stringify({
-  name: 'game-lounge-server',
-  version: '1.0.0',
-  type: 'module',
-  main: 'index.js'
-}, null, 2))
+if (existsSync('server/.env')) cpSync('server/.env', join(outdir, '.env'))
+else writeFileSync(join(outdir, '.env'), "DATABASE_URL=''\n")
 
 console.log('\nServer bundled to', outdir)
-console.log('Files:')
-function listFiles(dir, prefix = '') {
-  for (const f of readdirSync(dir)) {
-    const p = join(dir, f)
-    if (statSync(p).isDirectory()) {
-      listFiles(p, prefix + f + '/')
-    } else {
-      const size = statSync(p).size
-      console.log(`  ${prefix}${f} (${(size / 1024).toFixed(1)}KB)`)
-    }
-  }
-}
-listFiles(outdir)
+console.log(`Total size: ${(statSync(outdir).size / 1024 / 1024).toFixed(1)}MB`)
