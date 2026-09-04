@@ -73,11 +73,6 @@
   dependencies:
     tslib "^2.1.0"
 
-"@capawesome/capacitor-nodejs@^0.1.1":
-  version "0.1.1"
-  resolved "https://registry.npmjs.org/@capawesome/capacitor-nodejs/-/capacitor-nodejs-0.1.1.tgz"
-  integrity sha512-Qx2fnIhINx362ZLdvGlQOzhmmPfq2vrt3C53wlu8FmkRVsX54Q8A9dTwFHSW1bHezm3Xrrtvtr1+ViboMN16/A==
-
 "@esbuild/linux-arm64@0.24.2":
   version "0.24.2"
   resolved "https://registry.npmjs.org/@esbuild/linux-arm64/-/linux-arm64-0.24.2.tgz"
@@ -189,6 +184,11 @@
   dependencies:
     minipass "^7.0.4"
 
+"@jadejr/capacitor-nodejs@^1.0.3":
+  version "1.0.3"
+  resolved "https://registry.npmjs.org/@jadejr/capacitor-nodejs/-/capacitor-nodejs-1.0.3.tgz"
+  integrity sha512-cu10mijx+0sa9a07UZDy2hCZCfZn8mHwLecPBXuGZ4MCHO4acnxR9ar/y95dDqiGt5Amwu9OnYAEpSw6qoYuNQ==
+
 "@jridgewell/gen-mapping@^0.3.2":
   version "0.3.13"
   resolved "https://registry.npmjs.org/@jridgewell/gen-mapping/-/gen-mapping-0.3.13.tgz"
@@ -257,16 +257,6 @@
   version "4.62.4"
   resolved "https://registry.npmjs.org/@rollup/rollup-linux-arm64-musl/-/rollup-linux-arm64-musl-4.62.4.tgz"
   integrity sha512-iFOibiHnTRuhrWLlRsOQFdZJJIa7S8OwkneJr4ocALP16u5yk6lWLINFwhHaEqBFMsKDUZofLkGos7+CPzGB3g==
-
-"@rollup/wasm-node@^4.62.4":
-  version "4.62.4"
-  resolved "https://registry.npmjs.org/@rollup/wasm-node/-/wasm-node-4.62.4.tgz"
-  integrity sha512-GJFM5d4k5dSoY/oyILsKArplGvkss1DOURyXsl6IEM/X9RV3bQwqu9GY6tYfA97ZwIejfAguHa9fo1pGOQcyDg==
-  dependencies:
-    "@types/estree" "1.0.9"
-  optionalDependencies:
-    "@napi-rs/lzma-linux-x64-gnu" "1.5.1"
-    fsevents "~2.3.2"
 
 "@types/bcryptjs@^2.4.6":
   version "2.4.6"

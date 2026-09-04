@@ -1,4 +1,4 @@
-name: Build Android APK (Pure Frontend)
+name: Build Android APK (Full Bundle)
 
 on:
   push:
@@ -8,22 +8,34 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 24
         uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
 
       - name: Install dependencies
         run: npm ci --platform=linux
 
+      - name: Create server .env
+        run: |
+          mkdir -p server
+          cat > server/.env << EOF
+          DATABASE_URL=${{ secrets.DATABASE_URL }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          EOF
+          echo "DATABASE_URL length: ${#DATABASE_URL}"
+
       - name: Build frontend
         run: npm run build
+
+      - name: Bundle server for Android
+        run: npm run build:server
 
       - name: Add Android platform
         run: npx cap add android
@@ -38,7 +50,17 @@ jobs:
           java-version: 21
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          if [ ! -d "$ANDROID_HOME/cmdline-tools/latest" ]; then
+            mkdir -p "$ANDROID_HOME/cmdline-tools"
+            cd "$ANDROID_HOME/cmdline-tools"
+            curl -sL "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" -o cmdline-tools.zip
+            unzip -q cmdline-tools.zip
+            mv cmdline-tools latest
+            rm cmdline-tools.zip
+          fi
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-34" "build-tools;34.0.0" > /dev/null 2>&1
 
       - name: Generate release keystore
         run: |
@@ -103,6 +125,7 @@ jobs:
           name: game-lounge-apk-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
+          if-no-files-found: error
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v5
@@ -110,3 +133,4 @@ jobs:
           name: game-lounge-apk-release
           path: android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
+          if-no-files-found: error
