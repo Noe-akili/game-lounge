@@ -20,7 +20,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci --platform=linux
+        run: npm install --ignore-scripts
 
       - name: Create server .env
         run: |
