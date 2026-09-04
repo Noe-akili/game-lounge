@@ -98,8 +98,8 @@ let neonModule: any = null
 const hasNeon = !!(process.env.DATABASE_URL)
 if (hasNeon) {
   try {
-    neonModule = await import('@neondatabase/serverless')
-    neonSql = neonModule.default(process.env.DATABASE_URL)
+    const { neon } = await import('@neondatabase/serverless')
+    neonSql = neon(process.env.DATABASE_URL)
     console.log('✅ Neon connected')
   } catch (e) { console.warn('⚠️ Neon init failed:', e.message) }
 }
@@ -140,17 +140,17 @@ const logError = (msg: string, err?: any) => { console.error(`[ERROR] ${msg}`, e
 
 async function queryNeon(sql: string, params: any[] = []) {
   if (!neonSql) return null
-  const r = await neonSql[0](sql, params)
+  const r = await neonSql(sql, params)
   return r
 }
 async function queryNeonUser(email: string) {
   if (!neonSql) return null
-  const rows = await neonSql[0](`SELECT * FROM users WHERE email=$1`, [email])
+  const rows = await neonSql(`SELECT * FROM users WHERE email=$1`, [email])
   return rows?.[0] || null
 }
 async function queryNeonAll(table: string) {
   if (!neonSql) return null
-  return await neonSql[0](`SELECT * FROM ${table}`)
+  return await neonSql(`SELECT * FROM ${table}`)
 }
 
 const getSyncStatus = () => ({ neonEnabled: isNeonEnabled(), neonAvailable: isNeonAvailable(), hasLocalData: queryAll('users').length > 0 })

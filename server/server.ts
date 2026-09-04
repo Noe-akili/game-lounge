@@ -81,6 +81,10 @@ function adminOnly(req: any, res: any, next: any) {
 
 // ===== AUTH =====
 // Login: requires internet for first connection. Validates against Neon, caches locally.
+app.get('/api/health', async (_req: any, res: any) => {
+  res.json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() })
+})
+
 app.post('/api/auth/login', loginLimiter, async (req: any, res: any) => {
   const { email, password } = req.body as { email: string; password: string }
   if (!email || !password) return res.status(400).json({ message: 'Email et mot de passe requis' })
@@ -326,7 +330,7 @@ app.post('/api/messages', authMiddleware, async (req: any, res: any) => {
   // Save to Neon directly if available (for online persistence)
   if (isNeonAvailable()) {
     try {
-      const neonSql = (await import('./db.ts')).neonSqlGetter()
+      const neonSql = (await import('./db.ts')).neonSql
       if (neonSql) {
         const rows: any[] = await neonSql(`INSERT INTO messages (titre, contenu, auteur, created_at) VALUES ($1, $2, $3, $4) RETURNING *`,
           [titre || null, contenu.trim().slice(0, 1000), req.user?.nom || 'Système', new Date().toISOString()])
@@ -788,11 +792,7 @@ app.post('/api/users', authMiddleware, adminOnly, async (req: any, res: any) => 
   const sanitizedNom = sanitizeInput(nom, 50)
   const sanitizedEmail = sanitizeInput(email, 100)
   const password_hash = bcrypt.hashSync(password, 10)
-  // Create in Neon
-  try {
-    const neonSql = (await import('./db.ts')).default
-    // Insert via syncToNeon (already called by insert)
-  } catch {}
+  // Create in Neon (handled by sync helpers)
   const user: any = await insert('users', { email: sanitizedEmail, password_hash, role, nom: sanitizedNom })
   res.status(201).json({ id: user.id, email: user.email, role: user.role, nom: user.nom, created_at: user.created_at })
 })

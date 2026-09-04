@@ -7,12 +7,11 @@ function detectCapacitor() {
 
 const isCapacitor = detectCapacitor()
 
-// Priority: env var > localStorage (user override) > default
 const getApiBase = () => {
   if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL
   const stored = localStorage.getItem('gl_api_url')
   if (stored) return stored
-  return isCapacitor ? 'http://192.168.1.100:3001/api' : '/api'
+  return isCapacitor ? 'http://127.0.0.1:3001/api' : '/api'
 }
 
 let API_BASE = getApiBase()
@@ -22,7 +21,50 @@ export function setApiUrl(url: string) {
   localStorage.setItem('gl_api_url', url)
 }
 
+// Wait for Node.js server to be ready on Capacitor
+let serverReadyResolve = null
+const serverReady = new Promise(resolve => { serverReadyResolve = resolve })
+
+async function waitForServer() {
+  if (!isCapacitor) return
+
+  try {
+    const NodeJS = (window as any).Capacitor.Plugins.CapacitorNodeJS
+    if (NodeJS?.whenReady) {
+      await NodeJS.whenReady()
+      console.log('[API] Node.js server ready')
+    }
+  } catch (e) {
+    console.warn('[API] NodeJS.whenReady() failed:', e)
+  }
+
+  // Poll until server responds
+  for (let i = 0; i < 30; i++) {
+    try {
+      const res = await fetch(`${API_BASE}/health`, {
+        signal: AbortSignal.timeout(3000)
+      })
+      if (res.ok || res.status === 401 || res.status === 404) {
+        console.log(`[API] Server responding after ${i + 1} attempts`)
+        serverReadyResolve?.()
+        return
+      }
+    } catch {}
+    await new Promise(r => setTimeout(r, 1000))
+  }
+  console.warn('[API] Server poll timeout, proceeding anyway')
+  serverReadyResolve?.()
+}
+
+// Start waiting immediately
+waitForServer()
+
 async function request(path, options = {}) {
+  // Wait for server ready on Capacitor
+  if (isCapacitor) {
+    await serverReady
+  }
+
   const token = localStorage.getItem('gl_token')
   const headers = {
     'Content-Type': 'application/json',
