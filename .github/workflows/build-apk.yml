@@ -8,13 +8,13 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm
@@ -32,13 +32,49 @@ jobs:
         run: npx cap sync android
 
       - name: Setup Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Generate release keystore
+        run: |
+          keytool -genkeypair -v \
+            -storetype PKCS12 \
+            -keystore android/app/release.keystore \
+            -alias gamlounge \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass gamlounge123 \
+            -keypass gamlounge123 \
+            -dname "CN=Game Lounge, OU=Mobile, O=Game Lounge, L=Kinshasa, S=Kinshasa, C=CD"
+
+      - name: Configure release signing
+        working-directory: android
+        run: |
+          cat >> app/build.gradle << 'GRADLE'
+          android {
+              signingConfigs {
+                  release {
+                      storeFile file("release.keystore")
+                      storePassword "gamlounge123"
+                      keyAlias "gamlounge"
+                      keyPassword "gamlounge123"
+                  }
+              }
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.release
+                      minifyEnabled false
+                      shrinkResources false
+                  }
+              }
+          }
+          GRADLE
 
       - name: Build Debug APK
         working-directory: android
@@ -62,14 +98,14 @@ jobs:
           done
 
       - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: game-lounge-apk-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
 
       - name: Upload Release APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: game-lounge-apk-release
           path: android/app/build/outputs/apk/release/app-release.apk
