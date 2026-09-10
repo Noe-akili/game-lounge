@@ -75,17 +75,41 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let handle = app.handle();
-            let db = open_db(handle).unwrap_or_else(|e| {
-                eprintln!("DB init error: {e}");
-                std::process::exit(1);
-            });
-            let jwt_secret =
-                std::env::var("JWT_SECRET").unwrap_or_else(|_| "game-lounge-secret-2024".into());
-            app.manage(AppState {
-                db,
-                jwt_secret,
-                login_attempts: Mutex::new(std::collections::HashMap::new()),
-            });
+            match open_db(handle) {
+                Ok(db) => {
+                    let jwt_secret =
+                        std::env::var("JWT_SECRET").unwrap_or_else(|_| "game-lounge-secret-2024".into());
+                    app.manage(AppState {
+                        db,
+                        jwt_secret,
+                        login_attempts: Mutex::new(std::collections::HashMap::new()),
+                    });
+                }
+                Err(e) => {
+                    eprintln!("DB init error: {e}");
+                    let handle = app.handle();
+                    let path = handle
+                        .path()
+                        .app_data_dir()
+                        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                    let db_path = path.join("gamelounge.db");
+                    match Db::open(&db_path) {
+                        Ok(db) => {
+                            eprintln!("Recovered with fresh DB at {db_path:?}");
+                            let jwt_secret =
+                                std::env::var("JWT_SECRET").unwrap_or_else(|_| "game-lounge-secret-2024".into());
+                            app.manage(AppState {
+                                db,
+                                jwt_secret,
+                                login_attempts: Mutex::new(std::collections::HashMap::new()),
+                            });
+                        }
+                        Err(e2) => {
+                            eprintln!("Fatal: cannot open DB: {e2}");
+                        }
+                    }
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

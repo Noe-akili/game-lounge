@@ -88,6 +88,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { toast } from 'vue-sonner'
 import { api } from '@/utils/api'
 import { formatCurrency } from '@/utils/helpers'
 import { BarChart3, Users, Trophy } from 'lucide-vue-next'
