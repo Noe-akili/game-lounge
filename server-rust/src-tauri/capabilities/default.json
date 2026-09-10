@@ -2,5 +2,5 @@
   "identifier": "default",
   "description": "Permissions par défaut pour la fenêtre principale",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "opener:default"]
 }

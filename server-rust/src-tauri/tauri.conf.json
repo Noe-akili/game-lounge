@@ -36,22 +36,7 @@
       "icons/icon.png"
     ],
     "android": {
-      "minSdkVersion": 24,
-      "targetSdkVersion": 34,
-      "versionCode": 1
-    },
-    "resources": [],
-    "externalBin": [],
-    "windows": {
-      "certificateThumbprint": null,
-      "digestAlgorithm": "sha256",
-      "displayLanguage": "fr-FR"
-    }
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "",
-      "endpoints": []
+      "minSdkVersion": 24
     }
   }
 }
