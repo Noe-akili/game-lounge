@@ -1,11 +1,12 @@
-import bcrypt from 'bcryptjs'
-import { insert, queryOne } from './db.ts'
+import { hashPassword } from './utils/native.ts'
+import { insert, queryOne, dbReady } from './db.ts'
 
 console.log('🌱 Seeding database with REAL KING OF GAME tariffs...')
 
 async function main() {
-  const adminHash: string = bcrypt.hashSync('admin123', 10)
-  const empHash: string = bcrypt.hashSync('employe123', 10)
+  await dbReady
+  const adminHash: string = hashPassword('admin123')
+  const empHash: string = hashPassword('employe123')
 
   if (!await queryOne('users', u => u.email === 'admin@gamelounge.com')) {
     await insert('users', { email: 'admin@gamelounge.com', password_hash: adminHash, role: 'admin', nom: 'Admin', created_at: new Date().toISOString() })

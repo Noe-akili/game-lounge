@@ -1,0 +1,200 @@
+// @ts-nocheck
+// Pont frontend ↔ backend Rust/Tauri.
+// Traduit les appels HTTP du vrai frontend Vue (api.get/post/put/delete)
+// en commandes Tauri, avec les mêmes routes/sémantiques que server/ (Express)
+// et que le mode navigateur (src/lib/clientApi.ts).
+
+declare global {
+  interface Window {
+    __TAURI__?: any
+  }
+}
+
+export function isTauriRuntime() {
+  return typeof window !== 'undefined' && !!window.__TAURI__?.core?.invoke
+}
+
+function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<any> {
+  return window.__TAURI__.core.invoke(cmd, args)
+}
+
+function getPath(url: string): string {
+  return url.split('?')[0]
+}
+
+function parseQuery(url: string): Record<string, string> {
+  const idx = url.indexOf('?')
+  if (idx === -1) return {}
+  const q: Record<string, string> = {}
+  for (const [k, v] of new URLSearchParams(url.slice(idx + 1))) q[k] = v
+  return q
+}
+
+function num(v: any): number | undefined {
+  if (v === undefined || v === null || v === '') return undefined
+  const n = Number(v)
+  return Number.isFinite(n) ? n : undefined
+}
+
+function bval(v: any): boolean | undefined {
+  if (v === undefined || v === null || v === '') return undefined
+  return v === true || v === 1 || v === '1' || v === 'true'
+}
+
+function val(body: any, key: string): any {
+  return body ? body[key] : undefined
+}
+
+type Ctx = {
+  segs: Record<string, string>
+  query: Record<string, string>
+  body: any
+  token: string | null
+}
+
+type RouteDef = {
+  m: string
+  p: string
+  f: (ctx: Ctx) => { cmd: string; args: Record<string, unknown> }
+}
+
+const ROUTES: RouteDef[] = [
+  { m: 'GET', p: '/health', f: () => ({ cmd: 'health', args: {} }) },
+
+  // ===== AUTH =====
+  { m: 'POST', p: '/auth/login', f: ({ body }) => ({ cmd: 'auth_login', args: { email: val(body, 'email'), password: val(body, 'password') } }) },
+  { m: 'POST', p: '/auth/logout', f: ({ token }) => ({ cmd: 'auth_logout', args: { token } }) },
+  { m: 'GET', p: '/auth/me', f: ({ token }) => ({ cmd: 'auth_me', args: { token } }) },
+
+  // ===== CONSOLES =====
+  { m: 'GET', p: '/consoles', f: ({ token }) => ({ cmd: 'consoles_list', args: { token } }) },
+  { m: 'GET', p: '/consoles/:id', f: ({ token, segs }) => ({ cmd: 'consoles_get', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/consoles', f: ({ token, body }) => ({ cmd: 'consoles_create', args: { token, nom: val(body, 'nom'), type: val(body, 'type'), posteNumero: num(val(body, 'poste_numero')), etat: val(body, 'etat') } }) },
+  { m: 'PUT', p: '/consoles/:id', f: ({ token, segs, body }) => ({ cmd: 'consoles_update', args: { token, id: num(segs.id), nom: val(body, 'nom'), type: val(body, 'type'), posteNumero: num(val(body, 'poste_numero')), etat: val(body, 'etat') } }) },
+  { m: 'DELETE', p: '/consoles/:id', f: ({ token, segs }) => ({ cmd: 'consoles_delete', args: { token, id: num(segs.id) } }) },
+
+  // ===== JEUX =====
+  { m: 'GET', p: '/jeux', f: ({ token, query }) => ({ cmd: 'jeux_list', args: { token, consoleId: num(query.console_id) } }) },
+  { m: 'GET', p: '/jeux/:id', f: ({ token, segs }) => ({ cmd: 'jeux_get', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/jeux', f: ({ token, body }) => ({ cmd: 'jeux_create', args: { token, titre: val(body, 'titre'), genre: val(body, 'genre'), consoleId: num(val(body, 'console_id')), jaquetteUrl: val(body, 'jaquette_url') } }) },
+  { m: 'PUT', p: '/jeux/:id', f: ({ token, segs, body }) => ({ cmd: 'jeux_update', args: { token, id: num(segs.id), titre: val(body, 'titre'), genre: val(body, 'genre'), consoleId: val(body, 'console_id'), jaquetteUrl: val(body, 'jaquette_url') } }) },
+  { m: 'DELETE', p: '/jeux/:id', f: ({ token, segs }) => ({ cmd: 'jeux_delete', args: { token, id: num(segs.id) } }) },
+
+  // ===== JOUEURS =====
+  { m: 'GET', p: '/joueurs', f: ({ token, query }) => ({ cmd: 'joueurs_list', args: { token, search: query.search } }) },
+  { m: 'GET', p: '/joueurs/:id/historique', f: ({ token, segs }) => ({ cmd: 'joueurs_historique', args: { token, id: num(segs.id) } }) },
+  { m: 'GET', p: '/joueurs/:id', f: ({ token, segs }) => ({ cmd: 'joueurs_get', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/joueurs', f: ({ token, body }) => ({ cmd: 'joueurs_create', args: { token, nom: val(body, 'nom'), telephone: val(body, 'telephone'), email: val(body, 'email') } }) },
+  { m: 'PUT', p: '/joueurs/:id', f: ({ token, segs, body }) => ({ cmd: 'joueurs_update', args: { token, id: num(segs.id), nom: val(body, 'nom'), telephone: val(body, 'telephone'), email: val(body, 'email'), jetonsSolde: num(val(body, 'jetons_solde')) } }) },
+  { m: 'DELETE', p: '/joueurs/:id', f: ({ token, segs }) => ({ cmd: 'joueurs_delete', args: { token, id: num(segs.id) } }) },
+
+  // ===== SESSIONS =====
+  { m: 'GET', p: '/sessions', f: ({ token, query }) => ({ cmd: 'sessions_list', args: { token, statut: query.statut } }) },
+  { m: 'GET', p: '/sessions/:id', f: ({ token, segs }) => ({ cmd: 'sessions_get', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/sessions', f: ({ token, body }) => ({ cmd: 'sessions_create', args: { token, consoleId: num(val(body, 'console_id')), joueurId: num(val(body, 'joueur_id')), jeuId: num(val(body, 'jeu_id')), tarifId: num(val(body, 'tarif_id')) } }) },
+  { m: 'PUT', p: '/sessions/:id/pause', f: ({ token, segs }) => ({ cmd: 'sessions_pause', args: { token, id: num(segs.id) } }) },
+  { m: 'PUT', p: '/sessions/:id/reprendre', f: ({ token, segs }) => ({ cmd: 'sessions_reprendre', args: { token, id: num(segs.id) } }) },
+  { m: 'PUT', p: '/sessions/:id/terminer', f: ({ token, segs }) => ({ cmd: 'sessions_terminer', args: { token, id: num(segs.id) } }) },
+  { m: 'PUT', p: '/sessions/:id', f: ({ token, segs, body }) => ({ cmd: 'sessions_update', args: { token, id: num(segs.id), consoleId: num(val(body, 'console_id')), joueurId: num(val(body, 'joueur_id')), jeuId: num(val(body, 'jeu_id')), statut: val(body, 'statut'), dureeMinutes: num(val(body, 'duree_minutes')), montant: num(val(body, 'montant')) } }) },
+  { m: 'DELETE', p: '/sessions/:id', f: ({ token, segs }) => ({ cmd: 'sessions_delete', args: { token, id: num(segs.id) } }) },
+
+  // ===== FACTURES =====
+  { m: 'GET', p: '/factures', f: ({ token, query }) => ({ cmd: 'factures_list', args: { token, statut: query.statut, joueurId: num(query.joueur_id), dateStart: query.date_start, dateEnd: query.date_end } }) },
+  { m: 'GET', p: '/factures/:id/pdf', f: ({ token, segs }) => ({ cmd: 'factures_pdf', args: { token, id: num(segs.id) } }) },
+  { m: 'GET', p: '/factures/:id', f: ({ token, segs }) => ({ cmd: 'factures_get', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/factures', f: ({ token, body }) => ({ cmd: 'factures_create', args: { token, sessionId: num(val(body, 'session_id')), joueurId: num(val(body, 'joueur_id')), montantHt: num(val(body, 'montant_ht')), tauxTva: num(val(body, 'taux_tva')), montantTva: num(val(body, 'montant_tva')), montantTtc: num(val(body, 'montant_ttc')), modePaiement: val(body, 'mode_paiement'), statut: val(body, 'statut') } }) },
+  { m: 'PUT', p: '/factures/:id/annuler', f: ({ token, segs }) => ({ cmd: 'factures_annuler', args: { token, id: num(segs.id) } }) },
+  { m: 'PUT', p: '/factures/:id', f: ({ token, segs, body }) => ({ cmd: 'factures_update', args: { token, id: num(segs.id), statut: val(body, 'statut'), modePaiement: val(body, 'mode_paiement'), montantTtc: num(val(body, 'montant_ttc')) } }) },
+  { m: 'DELETE', p: '/factures/:id', f: ({ token, segs }) => ({ cmd: 'factures_delete', args: { token, id: num(segs.id) } }) },
+
+  // ===== LIGNES FACTURE =====
+  { m: 'GET', p: '/lignes_facture', f: ({ token, query }) => ({ cmd: 'lignes_list', args: { token, factureId: num(query.facture_id) } }) },
+  { m: 'GET', p: '/lignes_facture/:id', f: ({ token, segs }) => ({ cmd: 'lignes_get', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/lignes_facture', f: ({ token, body }) => ({ cmd: 'lignes_create', args: { token, factureId: num(val(body, 'facture_id')), description: val(body, 'description'), quantite: num(val(body, 'quantite')), prixUnitaire: num(val(body, 'prix_unitaire')), totalLigne: num(val(body, 'total_ligne')) } }) },
+  { m: 'PUT', p: '/lignes_facture/:id', f: ({ token, segs, body }) => ({ cmd: 'lignes_update', args: { token, id: num(segs.id), description: val(body, 'description'), quantite: num(val(body, 'quantite')), prixUnitaire: num(val(body, 'prix_unitaire')), totalLigne: num(val(body, 'total_ligne')) } }) },
+  { m: 'DELETE', p: '/lignes_facture/:id', f: ({ token, segs }) => ({ cmd: 'lignes_delete', args: { token, id: num(segs.id) } }) },
+
+  // ===== TARIFS =====
+  { m: 'GET', p: '/tarifs', f: ({ token }) => ({ cmd: 'tarifs_list', args: { token } }) },
+  { m: 'GET', p: '/tarifs/:id', f: ({ token, segs }) => ({ cmd: 'tarifs_get', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/tarifs', f: ({ token, body }) => ({ cmd: 'tarifs_create', args: { token, type: val(body, 'type'), dureeMinutes: num(val(body, 'duree_minutes')), prix: num(val(body, 'prix')), description: val(body, 'description'), consoleType: val(body, 'console_type'), jeu: val(body, 'jeu') } }) },
+  { m: 'PUT', p: '/tarifs/:id', f: ({ token, segs, body }) => ({ cmd: 'tarifs_update', args: { token, id: num(segs.id), type: val(body, 'type'), dureeMinutes: num(val(body, 'duree_minutes')), prix: num(val(body, 'prix')), description: val(body, 'description'), actif: bval(val(body, 'actif')), consoleType: val(body, 'console_type'), jeu: val(body, 'jeu') } }) },
+  { m: 'DELETE', p: '/tarifs/:id', f: ({ token, segs }) => ({ cmd: 'tarifs_delete', args: { token, id: num(segs.id) } }) },
+
+  // ===== JETONS =====
+  { m: 'GET', p: '/jetons', f: ({ token, query }) => ({ cmd: 'jetons_list', args: { token, joueurId: num(query.joueur_id) } }) },
+  { m: 'GET', p: '/jetons/:id', f: ({ token, segs }) => ({ cmd: 'jetons_get', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/jetons', f: ({ token, body }) => ({ cmd: 'jetons_create', args: { token, joueurId: num(val(body, 'joueur_id')), type: val(body, 'type'), quantite: num(val(body, 'quantite')), raison: val(body, 'raison'), sessionId: num(val(body, 'session_id')) } }) },
+  { m: 'PUT', p: '/jetons/:id', f: ({ token, segs, body }) => ({ cmd: 'jetons_update', args: { token, id: num(segs.id), type: val(body, 'type'), quantite: num(val(body, 'quantite')), raison: val(body, 'raison') } }) },
+  { m: 'DELETE', p: '/jetons/:id', f: ({ token, segs }) => ({ cmd: 'jetons_delete', args: { token, id: num(segs.id) } }) },
+
+  // ===== MESSAGES =====
+  { m: 'GET', p: '/messages', f: ({ token }) => ({ cmd: 'messages_list', args: { token } }) },
+  { m: 'POST', p: '/messages', f: ({ token, body }) => ({ cmd: 'messages_create', args: { token, titre: val(body, 'titre'), contenu: val(body, 'contenu') } }) },
+  { m: 'PUT', p: '/messages/:id', f: ({ token, segs, body }) => ({ cmd: 'messages_update', args: { token, id: num(segs.id), titre: val(body, 'titre'), contenu: val(body, 'contenu') } }) },
+  { m: 'DELETE', p: '/messages/:id', f: ({ token, segs }) => ({ cmd: 'messages_delete', args: { token, id: num(segs.id) } }) },
+
+  // ===== PARAMÈTRES FIDÉLITÉ =====
+  { m: 'GET', p: '/parametres/fidelite', f: ({ token }) => ({ cmd: 'fidelite_get', args: { token } }) },
+  { m: 'GET', p: '/parametres/fidelite/:id', f: ({ token, segs }) => ({ cmd: 'fidelite_get_by_id', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/parametres/fidelite', f: ({ token, body }) => ({ cmd: 'fidelite_create', args: { token, regleType: val(body, 'regle_type'), seuil: num(val(body, 'seuil')), jetonsAttribues: num(val(body, 'jetons_attribues')), actif: bval(val(body, 'actif')) } }) },
+  { m: 'PUT', p: '/parametres/fidelite', f: ({ token, body }) => ({ cmd: 'fidelite_put', args: { token, regleType: val(body, 'regle_type'), seuil: num(val(body, 'seuil')), jetonsAttribues: num(val(body, 'jetons_attribues')), actif: bval(val(body, 'actif')) } }) },
+  { m: 'DELETE', p: '/parametres/fidelite/:id', f: ({ token, segs }) => ({ cmd: 'fidelite_delete', args: { token, id: num(segs.id) } }) },
+
+  // ===== RAPPORTS =====
+  { m: 'GET', p: '/rapports/ca', f: ({ token }) => ({ cmd: 'rapports_ca', args: { token } }) },
+
+  // ===== USERS (admin) =====
+  { m: 'GET', p: '/users', f: ({ token }) => ({ cmd: 'users_list', args: { token } }) },
+  { m: 'GET', p: '/users/:id', f: ({ token, segs }) => ({ cmd: 'users_get', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/users', f: ({ token, body }) => ({ cmd: 'users_create', args: { token, email: val(body, 'email'), password: val(body, 'password'), role: val(body, 'role'), nom: val(body, 'nom') } }) },
+  { m: 'PUT', p: '/users/:id', f: ({ token, segs, body }) => ({ cmd: 'users_update', args: { token, id: num(segs.id), email: val(body, 'email'), role: val(body, 'role'), nom: val(body, 'nom'), password: val(body, 'password') } }) },
+  { m: 'DELETE', p: '/users/:id', f: ({ token, segs }) => ({ cmd: 'users_delete', args: { token, id: num(segs.id) } }) },
+
+  // ===== SYNC =====
+  { m: 'GET', p: '/sync/status', f: ({ token }) => ({ cmd: 'sync_status', args: { token } }) },
+  { m: 'POST', p: '/sync/toggle', f: ({ token, body }) => ({ cmd: 'sync_toggle', args: { token, enabled: !!val(body, 'enabled') } }) },
+  { m: 'POST', p: '/sync/run', f: ({ token }) => ({ cmd: 'sync_run', args: { token } }) },
+  { m: 'GET', p: '/sync/poll', f: ({ token }) => ({ cmd: 'sync_poll', args: { token } }) },
+]
+
+function compile(pattern: string): RegExp {
+  const src = pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)')
+  return new RegExp('^' + src + '$')
+}
+
+export async function handleTauriRequest(
+  path: string,
+  method: string,
+  body?: any,
+  authToken?: string
+): Promise<{ status: number; body: any }> {
+  const clean = getPath(path)
+  const ready = clean.startsWith('/api') ? clean.slice(4) : clean
+  const query = parseQuery(path)
+
+  for (const r of ROUTES) {
+    if (r.m !== method) continue
+    const m = ready.match(compile(r.p))
+    if (!m) continue
+
+    const segs: Record<string, string> = {}
+    for (const [k, v] of Object.entries(m.groups || {})) segs[k] = v
+
+    const { cmd, args } = r.f({ segs, query, body, token: authToken || null })
+
+    try {
+      const result = await invoke(cmd, args)
+      return { status: 200, body: result }
+    } catch (e: any) {
+      const status = e && typeof e.status === 'number' ? e.status : 500
+      const message = (e && e.message) || 'Erreur interne'
+      if (status === 401) {
+        try { localStorage.removeItem('gl_token'); localStorage.removeItem('gl_user') } catch { /* plateforme non navigateur */ }
+      }
+      return { status, body: { message } }
+    }
+  }
+
+  return { status: 404, body: { message: `Route non trouvée: ${method} ${ready}` } }
+}

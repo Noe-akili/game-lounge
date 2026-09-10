@@ -4,16 +4,12 @@ console.error('🚀 [SERVER.TS] process.cwd():', process.cwd())
 console.error('🚀 [SERVER.TS] process.env.DATADIR:', process.env.DATADIR)
 console.error('🚀 [SERVER.TS] NODE_PATH:', process.env.NODE_PATH)
 
-import express from 'express'
-import cors from 'cors'
-import helmet from 'helmet'
-import rateLimit from 'express-rate-limit'
+import { createApp, staticFiles } from './utils/http.ts'
+import { cors, helmet, rateLimit, jwt, hashPassword, comparePassword, isScryptHash } from './utils/native.ts'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { existsSync } from 'node:fs'
-import { queryAll, queryOne, insert, update, remove, logError, getSyncStatus, setSyncEnabled, runFullSync, isNeonEnabled, isNeonAvailable, pollChanges, startAutoSync, clearLocalData, queryNeonUser, queryNeon, queryNeonAll } from './db.ts'
-import bcrypt from 'bcryptjs'
-import jwt from 'jsonwebtoken'
+import { queryAll, queryOne, insert, update, remove, logError, getSyncStatus, setSyncEnabled, runFullSync, isNeonEnabled, isNeonAvailable, pollChanges, startAutoSync, clearLocalData, queryNeonUser, queryNeon, queryNeonAll, dbReady } from './db.ts'
 import {
   isValidEmail,
   isValidPassword,
@@ -42,12 +38,11 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const JWT_SECRET: string = process.env.JWT_SECRET || 'game-lounge-secret-2024'
-const app = express()
+const app = createApp()
 const PORT: number = Number(process.env.PORT) || 3001
 
 app.use(helmet())
 app.use(cors())
-app.use(express.json())
 
 // Rate limiter for login - prevent brute force
 const loginLimiter = rateLimit({
@@ -91,42 +86,60 @@ app.post('/api/auth/login', loginLimiter, async (req: any, res: any) => {
   if (!isValidEmail(email)) return res.status(400).json({ message: 'Email invalide' })
   if (!isValidPassword(password)) return res.status(400).json({ message: 'Mot de passe invalide (min 6 caractères, au moins une lettre)' })
 
-  // Users are stored ONLY in Neon. Local DB only caches the connected user's data.
-  if (!isNeonAvailable()) {
-    return res.status(503).json({ message: 'Connexion internet requise pour la première connexion' })
+  // Try Neon first (preferred), fallback to local DB
+  let user: any = null
+  let userSource = 'neon'
+
+  if (isNeonAvailable()) {
+    try {
+      const neonResult = await queryNeonUser(email)
+      if (neonResult && await comparePassword(password, neonResult.password_hash)) {
+        user = neonResult
+      }
+    } catch (e) {
+      console.warn('Neon query failed, falling back to local DB')
+    }
   }
 
-  let neonUser: any = null
-  try {
-    neonUser = await queryNeonUser(email)
-  } catch (e) {
-    return res.status(503).json({ message: 'Impossible de joindre le serveur d\'authentification', error: (e as Error).message?.slice(0, 100) })
+  // Fallback to local DB if Neon didn't work
+  if (!user) {
+    user = queryOne('users', u => u.email === email)
+    userSource = 'local'
   }
 
-  if (!neonUser || !bcrypt.compareSync(password, neonUser.password_hash)) {
+  if (!user || !await comparePassword(password, user.password_hash)) {
     return res.status(401).json({ message: 'Identifiants incorrects' })
+  }
+
+  // Upgrade legacy bcrypt hashes to native scrypt on first successful login
+  if (!isScryptHash(user.password_hash)) {
+    const upgraded = hashPassword(password)
+    if (userSource === 'neon' && isNeonAvailable()) {
+      try { await queryNeon(`UPDATE users SET password_hash=$1 WHERE email=$2`, [upgraded, user.email]) } catch {}
+    }
+    user.password_hash = upgraded
   }
 
   // Cache the connected user locally for offline data sync
   const existing = await queryOne('users', u => u.email === email)
   if (!existing) {
     await insert('users', {
-      id: neonUser.id,
-      email: neonUser.email,
-      password_hash: neonUser.password_hash,
-      role: neonUser.role,
-      nom: neonUser.nom
+      id: user.id,
+      email: user.email,
+      password_hash: user.password_hash,
+      role: user.role,
+      nom: user.nom
     })
   } else {
     await update('users', existing.id, {
-      password_hash: neonUser.password_hash,
-      role: neonUser.role,
-      nom: neonUser.nom
+      password_hash: user.password_hash,
+      role: user.role,
+      nom: user.nom
     })
   }
 
-  const token = jwt.sign({ id: neonUser.id, email: neonUser.email, role: neonUser.role, nom: neonUser.nom }, JWT_SECRET, { expiresIn: '24h' })
-  res.json({ token, user: { id: neonUser.id, email: neonUser.email, role: neonUser.role, nom: neonUser.nom } })
+  const token = jwt.sign({ id: user.id, email: user.email, role: user.role, nom: user.nom }, JWT_SECRET, { expiresIn: '24h' })
+  res.json({ token, user: { id: user.id, email: user.email, role: user.role, nom: user.nom } })
 })
 
 // Logout: clear local cached user data
@@ -798,7 +811,7 @@ app.post('/api/users', authMiddleware, adminOnly, async (req: any, res: any) => 
   if (!isValidRole(role)) return res.status(400).json({ message: 'Rôle invalide' })
   const sanitizedNom = sanitizeInput(nom, 50)
   const sanitizedEmail = sanitizeInput(email, 100)
-  const password_hash = bcrypt.hashSync(password, 10)
+  const password_hash = hashPassword(password)
 
   // Insert into Neon first
   let createdRow: any
@@ -858,7 +871,7 @@ app.put('/api/users/:id', authMiddleware, adminOnly, async (req: any, res: any) 
   }
   if (password !== undefined && password) {
     if (!isValidPassword(password)) return res.status(400).json({ message: 'Mot de passe invalide (min 6 caractères, au moins une lettre)' })
-    updates.password_hash = bcrypt.hashSync(password, 10)
+    updates.password_hash = hashPassword(password)
   }
   const updated: any = await update('users', id, updates)
   res.json({ id: updated.id, email: updated.email, role: updated.role, nom: updated.nom, created_at: updated.created_at })
@@ -1197,21 +1210,12 @@ const distPaths = [
   join(process.env.DATA_DIR || __dirname, distParent),
   join(process.env.DATA_DIR || __dirname, 'public'),
   join(process.env.DATA_DIR || __dirname, 'server/public'),
+  join(__dirname, 'dist'),
 ]
 const distDir = distPaths.find(p => { try { return existsSync(p) } catch { return false } }) || distPaths[0]
 console.log('📁 Static files:', distDir)
 
-app.use(express.static(distDir, {
-  setHeaders: (res, path) => {
-    if (path.endsWith('.html')) {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
-      res.setHeader('Pragma', 'no-cache')
-      res.setHeader('Expires', '0')
-    } else {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
-    }
-  }
-}))
+app.use(staticFiles(distDir))
 app.get('*', async (req: any, res: any) => {
   if (!req.path.startsWith('/api')) {
     res.sendFile(join(distDir, 'index.html'))
@@ -1225,11 +1229,20 @@ app.use((err: any, req: any, res: any, _next: any) => {
   res.status(500).json({ message: 'Erreur interne du serveur' })
 })
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🎮 Game Lounge API running on http://0.0.0.0:${PORT}`)
+async function bootServer() {
+  try {
+    await dbReady
+  } catch (e) {
+    console.error('❌ Database did not initialize, server not started:', e)
+    return
+  }
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🎮 Game Lounge API running on http://0.0.0.0:${PORT}`)
 
-  startAutoSync(15000)
-})
+    startAutoSync(15000)
+  })
+}
+bootServer()
 
 // Catch startup errors
 process.on('uncaughtException', (err) => {

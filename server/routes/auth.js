@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import bcrypt from 'bcryptjs'
-import jwt from 'jsonwebtoken'
+import { jwt } from '../utils/native.ts'
 import { queryOne } from '../db.js'
 import { JWT_SECRET } from '../middleware/auth.js'
 

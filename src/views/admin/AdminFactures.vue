@@ -192,6 +192,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { api } from '@/utils/api'
+import { getFacturePdfBlob } from '@/lib/clientPdf'
 import { formatCurrency, formatDate } from '@/utils/helpers'
 import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
@@ -277,10 +278,7 @@ async function viewDetail(f) {
 
 async function downloadPdf(f) {
   try {
-    const token = localStorage.getItem('gl_token')
-    const res = await fetch(`/api/factures/${f.id}/pdf`, { headers: { Authorization: `Bearer ${token}` } })
-    if (!res.ok) throw new Error('Erreur PDF')
-    const blob = await res.blob()
+    const blob = await getFacturePdfBlob(f.id)
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a'); a.href = url; a.download = `${f.numero_facture}.pdf`; a.click()
     URL.revokeObjectURL(url)

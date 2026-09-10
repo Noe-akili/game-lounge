@@ -2,6 +2,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api } from '@/utils/api'
+import { getFacturePdfBlob } from '@/lib/clientPdf'
 
 export const useFacturesStore = defineStore('factures', () => {
   const factures = ref([])
@@ -26,10 +27,7 @@ export const useFacturesStore = defineStore('factures', () => {
   }
 
   async function getFacturePdf(id) {
-    const res = await fetch(`/api/factures/${id}/pdf`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('gl_token')}` }
-    })
-    return await res.blob()
+    return await getFacturePdfBlob(id)
   }
 
   return { factures, loading, fetchFactures, getFacture, cancelFacture, getFacturePdf }

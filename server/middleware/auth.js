@@ -1,4 +1,4 @@
-import jwt from 'jsonwebtoken'
+import { jwt } from '../utils/native.ts'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'game-lounge-secret-key-2024'
 
