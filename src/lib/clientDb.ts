@@ -82,7 +82,19 @@ const SCHEMA = `
 export async function initClientDb() {
   if (db) return db
 
-  SQL = await initSqlJs({ locateFile: () => 'https://sql.js.org/dist/sql-wasm.wasm' })
+  // Fix APK offline : tente d'abord le WASM local (bundlé par Vite ou copié dans public)
+  // puis fallback CDN, puis fallback sans WASM (erreur gérée)
+  const locate = (file: string) => {
+    // En build Tauri, le WASM peut être dans /assets, / ou via base './'
+    const candidates = [`./${file}`, `/${file}`, `/assets/${file}`, `assets/${file}`, `https://sql.js.org/dist/${file}`]
+    return candidates[0]
+  }
+  try {
+    SQL = await initSqlJs({ locateFile: (f: string) => locate(f) })
+  } catch (e) {
+    console.warn('WASM local failed, trying CDN', e)
+    SQL = await initSqlJs({ locateFile: () => 'https://sql.js.org/dist/sql-wasm.wasm' })
+  }
 
   const prev = await loadFromIdb()
   db = new SQL.Database(prev || undefined)

@@ -40,8 +40,13 @@ pub fn is_scrypt_hash(hash: &str) -> bool {
 /// Compare un mot de passe avec un hash stocké.
 /// - hash `scrypt$v1$...` : vérifié avec scrypt (paramètres Node).
 /// - hash bcrypt `$2a/$2b/$2y` : vérifié avec la crate `bcrypt` (rétrocompatibilité).
+/// Ne panic jamais, catch les erreurs scrypt (OOM sur low-end Android 1GB)
 pub fn compare_password(password: &str, stored: &str) -> bool {
     if password.is_empty() || stored.is_empty() {
+        return false;
+    }
+    // Limite taille pour éviter DoS / OOM sur Android (scrypt alloue 16MB)
+    if password.len() > 128 || stored.len() > 512 {
         return false;
     }
     if is_scrypt_hash(stored) {
@@ -54,23 +59,35 @@ pub fn compare_password(password: &str, stored: &str) -> bool {
             Ok(s) => s,
             Err(_) => return false,
         };
-        let _expected = match URL_SAFE_NO_PAD.decode(parts[3]) {
-            Ok(h) => h,
-            Err(_) => return false,
-        };
+        // Vérifie que le salt a une taille raisonnable (16 bytes attendu)
+        if salt.is_empty() || salt.len() > 64 {
+            return false;
+        }
+        if URL_SAFE_NO_PAD.decode(parts[3]).is_err() {
+            return false;
+        }
         let params = match ScryptParams::new(SCRYPT_LOG_N, SCRYPT_R, SCRYPT_P, SCRYPT_KEYLEN) {
             Ok(p) => p,
             Err(_) => return false,
         };
         let mut dk = [0u8; SCRYPT_KEYLEN];
-        if scrypt(password.as_bytes(), &salt, &params, &mut dk).is_err() {
-            return false;
+        // scrypt peut panic/oom sur device 512MB ; on catch avec std::panic::catch_unwind
+        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            scrypt(password.as_bytes(), &salt, &params, &mut dk)
+        }));
+        match res {
+            Ok(Ok(())) => {
+                let actual = URL_SAFE_NO_PAD.encode(dk);
+                constant_time_eq(actual.as_bytes(), parts[3].as_bytes())
+            }
+            _ => {
+                eprintln!("scrypt compare failed (oom or error) on Android");
+                false
+            }
         }
-        let actual = URL_SAFE_NO_PAD.encode(dk);
-        // Comparaison en temps raisonnablement constant.
-        constant_time_eq(actual.as_bytes(), parts[3].as_bytes())
     } else if stored.starts_with("$2") {
-        bcrypt::verify(password, stored).unwrap_or(false)
+        // bcrypt peut aussi panic sur hash malformé
+        std::panic::catch_unwind(|| bcrypt::verify(password, stored).unwrap_or(false)).unwrap_or(false)
     } else {
         false
     }
@@ -119,15 +136,28 @@ pub fn sign_token(claims: &Claims, secret: &str) -> ApiResult<String> {
 }
 
 /// Vérifie un JWT et renvoie les claims. 401 si invalide/expiré.
+/// Ne panic jamais (token malformé depuis WebView localStorage corrompu)
 pub fn verify_token(token: &str, secret: &str) -> ApiResult<Claims> {
+    if token.is_empty() || token.len() > 4096 || secret.is_empty() {
+        return Err(ApiError::unauthorized("Token invalide ou expiré"));
+    }
     let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
-    validation.leeway = 0;
-    let data = jsonwebtoken::decode::<Claims>(
-        token,
-        &jsonwebtoken::DecodingKey::from_secret(secret.as_bytes()),
-        &validation,
-    )
+    validation.leeway = 5; // 5s de marge pour horloge Android désynchronisée (sans NTP)
+    validation.validate_exp = true;
+    validation.validate_nbf = false;
+    let data = std::panic::catch_unwind(|| {
+        jsonwebtoken::decode::<Claims>(
+            token,
+            &jsonwebtoken::DecodingKey::from_secret(secret.as_bytes()),
+            &validation,
+        )
+    })
+    .map_err(|_| ApiError::unauthorized("Token invalide ou expiré"))?
     .map_err(|_| ApiError::unauthorized("Token invalide ou expiré"))?;
+    // Vérifie que les champs essentiels ne sont pas vides (payload corrompu)
+    if data.claims.email.is_empty() || data.claims.role.is_empty() {
+        return Err(ApiError::unauthorized("Token invalide ou expiré"));
+    }
     Ok(data.claims)
 }
 

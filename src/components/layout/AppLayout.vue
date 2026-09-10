@@ -66,15 +66,28 @@ async function pollForChanges() {
 }
 
 onMounted(() => {
-  settings.init()
+  try { settings.init() } catch (e) { console.warn('[AppLayout] settings.init failed', e) }
   window.addEventListener('resize', onResize)
+  // Android back button : fermer sidebar/modal avant de quitter
+  const onAndroidBack = () => {
+    if (isSidebarOpen.value) { isSidebarOpen.value = false; return }
+    if (showSessionModal.value) { showSessionModal.value = false; return }
+  }
+  window.addEventListener('android-back-pressed', onAndroidBack as any)
+  // Poll sync moins agressif sur Android (économise batterie, évite ANR sur low-end)
+  const intervalMs = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent) ? 15000 : 10000
   pollInterval = setInterval(() => {
-    const token = localStorage.getItem('gl_token')
-    if (token) pollForChanges()
-  }, 10000)
+    try {
+      const token = localStorage.getItem('gl_token')
+      if (token) pollForChanges()
+    } catch {}
+  }, intervalMs)
+  // Nettoyage sur unmount
+  ;(window as any).__gl_cleanup_back = () => window.removeEventListener('android-back-pressed', onAndroidBack as any)
 })
 onUnmounted(() => {
   window.removeEventListener('resize', onResize)
   if (pollInterval) clearInterval(pollInterval)
+  try { (window as any).__gl_cleanup_back?.() } catch {}
 })
 </script>

@@ -94,21 +94,38 @@ const form = reactive({
 })
 
 async function handleLogin() {
+  // Anti double-clic (important sur APK où le scrypt prend 1-2s)
+  if (loading.value) return
   if (!isValidEmail(form.email)) return toast.error('Email invalide')
   if (!isValidPassword(form.password)) return toast.error('Mot de passe invalide (min 6 caractères, au moins une lettre)')
   loading.value = true
   error.value = ''
+  // Normalise les entrées (évite espace invisible sur clavier Android)
+  const email = form.email.trim().toLowerCase()
+  const password = form.password.trim()
   try {
-    await auth.login(form.email, form.password)
+    await auth.login(email, password)
     toast.success('Connexion réussie !')
-    router.push(auth.user?.role === 'admin' ? '/admin' : '/dashboard')
+    // Petit délai pour laisser le temps au toast avant navigation sur WebView lente
+    await new Promise(r => setTimeout(r, 100))
+    await router.push(auth.user?.role === 'admin' ? '/admin' : '/dashboard')
   } catch (e: any) {
-    const msg = e.message || 'Identifiants incorrects'
+    // Extraction robuste du message (Tauri renvoie parfois {message,status} en JSON)
+    let msg = e?.message || e?.data?.message || 'Identifiants incorrects'
+    try {
+      if (typeof msg === 'string' && msg.startsWith('{')) {
+        const p = JSON.parse(msg)
+        if (p.message) msg = p.message
+      }
+    } catch {}
     error.value = msg
+    console.error('[login] failed', e)
     if (msg.includes('internet') || msg.includes('indisponible') || msg.includes('Failed to fetch') || msg.includes('Connexion requise')) {
       toast.error('Pas de connexion internet — connectez-vous pour la première fois')
-    } else if (msg.includes('incorrects')) {
+    } else if (msg.includes('incorrects') || msg.includes('401') || msg.includes('Token')) {
       toast.error('Email ou mot de passe incorrect')
+    } else if (msg.includes('Trop de tentatives') || msg.includes('429')) {
+      toast.error('Trop de tentatives, réessayez dans quelques minutes')
     } else {
       toast.error(msg)
     }

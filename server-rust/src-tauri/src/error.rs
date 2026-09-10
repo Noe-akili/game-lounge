@@ -51,6 +51,15 @@ impl std::error::Error for ApiError {}
 
 impl From<rusqlite::Error> for ApiError {
     fn from(e: rusqlite::Error) -> Self {
+        // Sur Android, certains erreurs sont dues à disk I/O (SD éjectée, low storage)
+        // On les mappe en 503 pour que le frontend affiche "réessayer" au lieu de crash
+        let msg = e.to_string();
+        if msg.contains("disk I/O") || msg.contains("database is locked") || msg.contains("busy") {
+            return ApiError::service_unavailable(format!("Base temporairement indisponible: {e}"));
+        }
+        if msg.contains("malformed") || msg.contains("corrupt") {
+            return ApiError::internal(format!("Base corrompue, redémarrez l'app: {e}"));
+        }
         ApiError::internal(format!("Erreur base de données: {e}"))
     }
 }

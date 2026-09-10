@@ -3,9 +3,25 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '@/utils/api'
 
+function safeParseUser() {
+  try {
+    const raw = localStorage.getItem('gl_user')
+    if (!raw || raw === 'null' || raw === 'undefined') return null
+    return JSON.parse(raw)
+  } catch {
+    try { localStorage.removeItem('gl_user') } catch {}
+    return null
+  }
+}
+function safeGetToken() {
+  try { return localStorage.getItem('gl_token') || null } catch { return null }
+}
+function safeSetItem(k: string, v: string) { try { localStorage.setItem(k, v) } catch {} }
+function safeRemoveItem(k: string) { try { localStorage.removeItem(k) } catch {} }
+
 export const useAuthStore = defineStore('auth', () => {
-  const user = ref(JSON.parse(localStorage.getItem('gl_user') || 'null'))
-  const token = ref(localStorage.getItem('gl_token') || null)
+  const user = ref(safeParseUser())
+  const token = ref(safeGetToken())
 
   const isAuthenticated = computed(() => !!token.value && !!user.value)
   const isAdmin = computed(() => user.value?.role === 'admin')
@@ -15,8 +31,8 @@ export const useAuthStore = defineStore('auth', () => {
     const data = await api.post('/auth/login', { email, password })
     token.value = data.token
     user.value = data.user
-    localStorage.setItem('gl_token', data.token)
-    localStorage.setItem('gl_user', JSON.stringify(data.user))
+    safeSetItem('gl_token', data.token)
+    safeSetItem('gl_user', JSON.stringify(data.user))
     return data.user
   }
 
@@ -24,17 +40,17 @@ export const useAuthStore = defineStore('auth', () => {
     try { await api.post('/auth/logout') } catch {}
     token.value = null
     user.value = null
-    localStorage.removeItem('gl_token')
-    localStorage.removeItem('gl_user')
+    safeRemoveItem('gl_token')
+    safeRemoveItem('gl_user')
   }
 
   async function fetchMe() {
     try {
       const data = await api.get('/auth/me')
       user.value = data.user
-      localStorage.setItem('gl_user', JSON.stringify(data.user))
+      safeSetItem('gl_user', JSON.stringify(data.user))
     } catch {
-      logout()
+      await logout()
     }
   }
 

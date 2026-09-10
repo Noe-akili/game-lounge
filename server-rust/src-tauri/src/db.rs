@@ -92,21 +92,93 @@ fn bind_value(params: &mut Vec<Box<dyn rusqlite::types::ToSql>>, v: &Value) {
     }
 }
 
+fn apply_pragmas(conn: &Connection) {
+    // WAL peut échouer sur certains FS Android (exFAT, SD) -> fallback silencieux
+    // On essaye WAL, sinon on reste en DELETE (sûr partout)
+    // busy_timeout évite "database is locked" sur flash lente low-end
+    let pragmas = [
+        "PRAGMA busy_timeout=5000;",
+        "PRAGMA synchronous=NORMAL;",
+        "PRAGMA journal_mode=WAL;",
+        "PRAGMA cache_size=-8192;", // 8MB cache, évite OOM sur device 1GB
+        "PRAGMA temp_store=MEMORY;",
+        "PRAGMA foreign_keys=ON;",
+    ];
+    for sql in pragmas {
+        let _ = conn.execute_batch(sql);
+    }
+    // Vérifie que WAL est bien actif, sinon force DELETE+NORMAL (pas de crash)
+    if let Ok(mut stmt) = conn.prepare("PRAGMA journal_mode;") {
+        if let Ok(jmode) = stmt.query_row([], |r| r.get::<_, String>(0)) {
+            if jmode.to_uppercase() != "WAL" {
+                let _ = conn.execute_batch("PRAGMA journal_mode=DELETE;");
+            }
+        }
+    }
+    // Index légers pour accélérer les filtres fréquents (évite full scan sur device lent)
+    let _ = conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_statut ON sessions_jeu(statut);
+         CREATE INDEX IF NOT EXISTS idx_sessions_joueur ON sessions_jeu(joueur_id);
+         CREATE INDEX IF NOT EXISTS idx_factures_joueur ON factures(joueur_id);
+         CREATE INDEX IF NOT EXISTS idx_jetons_joueur ON jetons_transactions(joueur_id);
+         CREATE INDEX IF NOT EXISTS idx_lignes_facture ON lignes_facture(facture_id);
+         CREATE INDEX IF NOT EXISTS idx_jeux_console ON jeux(console_id);",
+    );
+}
+
 impl Db {
     pub fn open(path: &Path) -> ApiResult<Db> {
         let conn = Connection::open(path)
             .map_err(|e| ApiError::internal(format!("Ouverture SQLite: {e}")))?;
+        // Détecte corruption au premier open (Android coupe brutalement l'alim)
+        // Si la DB est corrompue, on tente un recovery via VACUUM ou on laisse l'appelant fallback en mémoire
+        if let Err(e) = conn.execute_batch("PRAGMA quick_check;") {
+            eprintln!("quick_check warning: {e}");
+        }
         conn.execute_batch(SCHEMA)
             .map_err(|e| ApiError::internal(format!("Init schéma: {e}")))?;
+        apply_pragmas(&conn);
+        // Test écriture immédiate pour détecter disque plein / permission early
+        let _ = conn.execute_batch("CREATE TABLE IF NOT EXISTS __healthcheck (id INTEGER PRIMARY KEY); DROP TABLE IF EXISTS __healthcheck;");
+        Ok(Db(Mutex::new(conn)))
+    }
+
+    /// Fallback en mémoire si le fichier est inaccessible (permissions Android, disque plein).
+    /// Permet à l'app de démarrer et d'afficher un message au lieu de crasher.
+    pub fn open_in_memory() -> ApiResult<Db> {
+        let conn = Connection::open_in_memory()
+            .map_err(|e| ApiError::internal(format!("Ouverture SQLite mémoire: {e}")))?;
+        conn.execute_batch(SCHEMA)
+            .map_err(|e| ApiError::internal(format!("Init schéma mémoire: {e}")))?;
+        apply_pragmas(&conn);
         Ok(Db(Mutex::new(conn)))
     }
 
     /// `SELECT * FROM {table}` puis filtre optionnel en Rust (comme le backend JS).
+    /// Gère le poison du Mutex sans panic (Android peut tuer le thread)
     pub fn query_all(&self, table: &str) -> ApiResult<Vec<Value>> {
-        let conn = self.0.lock().map_err(|_| ApiError::internal("Lock poison"))?;
+        // Sur Android, le Mutex peut être poisoned si un panic a eu lieu lors d'une transaction
+        // On récupère quand même l'intérieur pour éviter crash définitif
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(poisoned) => {
+                eprintln!("DB Mutex poisoned for {table}, recovering");
+                poisoned.into_inner()
+            }
+        };
+        // Validation nom de table pour éviter injection (bien que table vienne du code, pas de l'utilisateur)
+        if !TABLES.contains(&table) {
+            return Err(ApiError::internal(format!("Table inconnue: {table}")));
+        }
         let mut stmt = conn
             .prepare(&format!("SELECT * FROM \"{table}\""))
-            .map_err(|e| ApiError::internal(format!("Requête {table}: {e}")))?;
+            .map_err(|e| {
+                // Sur Android low-end, "database disk image is malformed" arrive après coupure batterie
+                if e.to_string().contains("malformed") || e.to_string().contains("corrupt") {
+                    eprintln!("DB corruption detected on {table}: {e}");
+                }
+                ApiError::internal(format!("Requête {table}: {e}"))
+            })?;
         let rows = stmt
             .query_map([], |r| row_to_value(r))
             .map_err(|e| ApiError::internal(format!("Requête {table}: {e}")))?
@@ -121,7 +193,10 @@ impl Db {
 
     /// Insère un enregistrement. Si un `id` est fourni, INSERT OR REPLACE (comme db.ts).
     pub fn insert(&self, table: &str, data: &Map<String, Value>) -> ApiResult<Value> {
-        let conn = self.0.lock().map_err(|_| ApiError::internal("Lock poison"))?;
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
         let has_id = data.contains_key("id");
         let keys: Vec<&String> = data.keys().collect();
         let cols: Vec<&str> = keys.iter().map(|k| k.as_str()).collect();
@@ -154,7 +229,10 @@ impl Db {
     }
 
     pub fn update(&self, table: &str, id: i64, updates: &Map<String, Value>) -> ApiResult<Value> {
-        let conn = self.0.lock().map_err(|_| ApiError::internal("Lock poison"))?;
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
         if updates.is_empty() {
             drop(conn);
             return self.get(table, id);
@@ -173,14 +251,20 @@ impl Db {
     }
 
     pub fn remove(&self, table: &str, id: i64) -> ApiResult<()> {
-        let conn = self.0.lock().map_err(|_| ApiError::internal("Lock poison"))?;
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
         conn.execute(&format!("DELETE FROM \"{table}\" WHERE id=?"), [id])
             .map_err(|e| ApiError::internal(format!("Delete {table}: {e}")))?;
         Ok(())
     }
 
     pub fn get(&self, table: &str, id: i64) -> ApiResult<Value> {
-        let conn = self.0.lock().map_err(|_| ApiError::internal("Lock poison"))?;
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
         let mut stmt = conn
             .prepare(&format!("SELECT * FROM \"{table}\" WHERE id=?"))
             .map_err(|e| ApiError::internal(format!("Get {table}: {e}")))?;

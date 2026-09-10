@@ -40,9 +40,9 @@ pub fn users_get(state: State<'_, AppState>, token: Option<String>, id: i64) -> 
     Ok(to_public(&row))
 }
 
-/// POST /api/users
-#[tauri::command]
-pub fn users_create(
+/// POST /api/users - ASYNC pour éviter ANR (scrypt 1-2s sur Android low-end)
+#[tauri::command(async)]
+pub async fn users_create(
     state: State<'_, AppState>,
     token: Option<String>,
     email: String,
@@ -76,7 +76,12 @@ pub fn users_create(
     {
         return Err(ApiError::new(409, "Email déjà utilisé"));
     }
-    let hash = auth_core::hash_password(&password)?;
+    // Hash dans thread bloquant pour ne pas freezer l'UI Android
+    let pwd = password.clone();
+    let hash = tokio::task::spawn_blocking(move || auth_core::hash_password(&pwd))
+        .await
+        .map_err(|e| ApiError::internal(format!("Erreur hachage: {e}")))?
+        ?;
     let mut row = jmap();
     row.insert("email".into(), json!(validators::sanitize_input(&email, 100)));
     row.insert("password_hash".into(), json!(hash));
@@ -87,9 +92,9 @@ pub fn users_create(
     Ok(to_public(&created))
 }
 
-/// PUT /api/users/:id
-#[tauri::command]
-pub fn users_update(
+/// PUT /api/users/:id - ASYNC si password (scrypt)
+#[tauri::command(async)]
+pub async fn users_update(
     state: State<'_, AppState>,
     token: Option<String>,
     id: i64,
@@ -131,7 +136,11 @@ pub fn users_update(
                     "Mot de passe invalide (min 6 caractères, au moins une lettre)",
                 ));
             }
-            let hash = auth_core::hash_password(&p)?;
+            let p2 = p.clone();
+            let hash = tokio::task::spawn_blocking(move || auth_core::hash_password(&p2))
+                .await
+                .map_err(|e| ApiError::internal(format!("Erreur hachage: {e}")))?
+                ?;
             updates.insert("password_hash".into(), json!(hash));
         }
     }

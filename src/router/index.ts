@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, createWebHashHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 const routes = [
@@ -109,27 +109,60 @@ const routes = [
   }
 ]
 
+const isFileProtocol = typeof window !== 'undefined' && window.location.protocol === 'file:'
+// Tauri Android utilise http://tauri.localhost -> createWebHistory OK ; file:// fallback en hash
+const routerHistory = isFileProtocol ? createWebHashHistory() : createWebHistory()
+
 const router = createRouter({
-  history: createWebHistory(),
+  history: routerHistory,
   routes
 })
 
+// Android back button : double tap to exit si on est à la racine (évite fermeture accidentelle)
+let lastBackPress = 0
+if (typeof window !== 'undefined') {
+  window.addEventListener('android-back-pressed', () => {
+    const auth = useAuthStore()
+    if (!auth.isAuthenticated) return
+    // Si modale ouverte, l'event est consommé par AppLayout, on ne fait rien
+    const path = router.currentRoute.value.path
+    if (path === '/login' || path === '/') return
+    // Sinon nav back
+    router.back()
+  })
+  // Fallback pour WebView Android sans plugin Tauri : intercept popstate
+  window.addEventListener('popstate', () => {
+    const now = Date.now()
+    if (now - lastBackPress < 2000) return
+    lastBackPress = now
+  })
+}
+
 router.beforeEach((to, from, next) => {
-  const auth = useAuthStore()
+  try {
+    const auth = useAuthStore()
 
-  if (to.meta.requiresAuth !== false && !auth.isAuthenticated) {
-    return next('/login')
+    if (to.meta.requiresAuth !== false && !auth.isAuthenticated) {
+      return next('/login')
+    }
+
+    if (to.path === '/login' && auth.isAuthenticated) {
+      return next(auth.user?.role === 'admin' ? '/admin' : '/dashboard')
+    }
+
+    if (to.meta.roles && !to.meta.roles.includes(auth.user?.role)) {
+      return next(auth.user?.role === 'admin' ? '/admin' : '/dashboard')
+    }
+
+    next()
+  } catch (e) {
+    console.error('[router] beforeEach failed', e)
+    next('/login')
   }
+})
 
-  if (to.path === '/login' && auth.isAuthenticated) {
-    return next(auth.user?.role === 'admin' ? '/admin' : '/dashboard')
-  }
-
-  if (to.meta.roles && !to.meta.roles.includes(auth.user?.role)) {
-    return next(auth.user?.role === 'admin' ? '/admin' : '/dashboard')
-  }
-
-  next()
+router.onError((err) => {
+  console.error('[router] navigation error (Android WebView)', err)
 })
 
 export default router

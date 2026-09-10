@@ -9,15 +9,27 @@ function base64ToUint8Array(b64: string): Uint8Array {
 }
 
 export async function getFacturePdfBlob(id: number): Promise<Blob> {
-  const token = localStorage.getItem('gl_token')
+  let token: string | null = null
+  try { token = localStorage.getItem('gl_token') } catch { token = null }
 
   // En mode Tauri : PDF généré par le backend Rust (commande factures_pdf).
-  if (isTauri()) {
-    const result = await handleRequest(`/factures/${id}/pdf`, 'GET', undefined, token)
-    if (result.status >= 400) throw new Error(result.body?.message || 'Facture non trouvée')
-    const b64 = result.body?.pdf_base64
-    if (!b64) throw new Error('PDF non généré')
-    return new Blob([base64ToUint8Array(b64)], { type: 'application/pdf' })
+  // On wrappe avec try pour éviter crash Android si Tauri IPC échoue (WebView killed)
+  try {
+    if (isTauri()) {
+      const result = await handleRequest(`/factures/${id}/pdf`, 'GET', undefined, token || undefined)
+      if (result.status >= 400) throw new Error(result.body?.message || 'Facture non trouvée')
+      const b64 = result.body?.pdf_base64
+      if (!b64) throw new Error('PDF non généré')
+      // Vérifie que le base64 est valide (évite crash atob sur Android low mem)
+      if (b64.length > 5 * 1024 * 1024) throw new Error('PDF trop volumineux')
+      return new Blob([base64ToUint8Array(b64)], { type: 'application/pdf' })
+    }
+  } catch (e) {
+    console.warn('[pdf] Tauri path failed, fallback to local', e)
+    // Si Tauri échoue (panic DB ou IPC), on tente le fallback local si possible, sinon on propage
+    if (!isTauri()) throw e
+    // Sur Tauri, on ne fallback pas vers jspdf (pas de données locales), on propage l'erreur proprement
+    throw e
   }
 
   // Mode navigateur : génération locale (jspdf).

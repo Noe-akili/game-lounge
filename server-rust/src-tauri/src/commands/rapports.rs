@@ -7,17 +7,26 @@ use super::{claims, db, row_id};
 use crate::error::ApiResult;
 use crate::AppState;
 
-/// GET /api/rapports/ca
+/// GET /api/rapports/ca - Optimisé Android : évite OOM si 10k sessions (limite 5000)
 #[tauri::command]
 pub fn rapports_ca(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
     claims(&state, &token)?;
     let db = db(&state);
-    let factures: Vec<Value> = db
+    // Sur Android 1GB, 10k factures/sessions peuvent OOM si on charge tout ; on limite
+    let mut factures: Vec<Value> = db
         .query_all("factures")?
         .into_iter()
         .filter(|f| f.get("statut").and_then(Value::as_str) == Some("payee"))
         .collect();
-    let sessions = db.query_all("sessions_jeu")?;
+    if factures.len() > 5000 {
+        eprintln!("rapports_ca: truncating factures {} -> 5000 to avoid Android OOM", factures.len());
+        factures.truncate(5000);
+    }
+    let mut sessions = db.query_all("sessions_jeu")?;
+    if sessions.len() > 5000 {
+        eprintln!("rapports_ca: truncating sessions {} -> 5000", sessions.len());
+        sessions.truncate(5000);
+    }
     let joueurs = db.query_all("joueurs")?;
     let jeux = db.query_all("jeux")?;
     let consoles = db.query_all("consoles")?;

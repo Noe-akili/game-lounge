@@ -1,5 +1,21 @@
-[source.crates-io]
-replace-with = "rsproxy"
+# Cargo registry config
+# Par défaut on utilise crates.io officiel (stable pour build Android CI).
+# Si vous êtes en Chine et que crates.io est lent, décommentez les 3 lignes ci-dessous
+# pour utiliser le miroir rsproxy (accélère le build APK en CN).
+# [source.crates-io]
+# replace-with = "rsproxy"
+# [source.rsproxy]
+# registry = "sparse+https://rsproxy.cn/index/"
 
-[source.rsproxy]
-registry = "sparse+https://rsproxy.cn/index/"
+# Optimisations Android : réduit la taille du binaire et évite OOM sur device 1GB
+[target.aarch64-linux-android]
+linker = "aarch64-linux-android-clang"
+
+[target.armv7-linux-androideabi]
+linker = "armv7a-linux-androideabi-clang"
+
+[target.i686-linux-android]
+linker = "i686-linux-android-clang"
+
+[target.x86_64-linux-android]
+linker = "x86_64-linux-android-clang"

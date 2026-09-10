@@ -29,9 +29,10 @@ fn too_many_attempts(state: &State<'_, AppState>, key: &str) -> bool {
     }
 }
 
-/// POST /api/auth/login
-#[tauri::command]
-pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -> ApiResult<Value> {
+/// POST /api/auth/login - ASYNC pour ne pas bloquer le thread principal Android
+/// Le scrypt (N=16384) prend 800ms-2s sur mobile, en sync il cause ANR -> fermeture APK
+#[tauri::command(async)]
+pub async fn auth_login(state: State<'_, AppState>, email: String, password: String) -> ApiResult<Value> {
     if email.is_empty() || password.is_empty() {
         return Err(ApiError::bad_request("Email et mot de passe requis"));
     }
@@ -62,13 +63,23 @@ pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -
         .map(|s| s.to_string())
         .ok_or_else(|| ApiError::unauthorized("Identifiants incorrects"))?;
 
-    if !auth_core::compare_password(&password, &stored) {
+    // Scrypt exécuté dans un thread bloquant pour ne pas freezer l'UI Android
+    let pwd = password.clone();
+    let st = stored.clone();
+    let is_valid = tokio::task::spawn_blocking(move || auth_core::compare_password(&pwd, &st))
+        .await
+        .map_err(|e| ApiError::internal(format!("Erreur vérification: {e}")))?;
+    if !is_valid {
         return Err(ApiError::unauthorized("Identifiants incorrects"));
     }
 
-    // Mise à niveau des anciens hashs bcrypt vers scrypt au premier login réussi.
+    // Mise à niveau des anciens hashs bcrypt vers scrypt au premier login réussi (non bloquant)
     if !auth_core::is_scrypt_hash(&stored) {
-        if let Ok(upgraded) = auth_core::hash_password(&password) {
+        let pwd2 = password.clone();
+        if let Ok(upgraded) = tokio::task::spawn_blocking(move || auth_core::hash_password(&pwd2))
+            .await
+            .unwrap_or_else(|_| Err(ApiError::internal("hash failed")))
+        {
             let mut upd = jmap();
             upd.insert("password_hash".into(), json!(upgraded));
             if let Some(id) = user.get("id").and_then(Value::as_i64) {

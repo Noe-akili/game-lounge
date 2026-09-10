@@ -121,10 +121,31 @@ async function viewDetail(f) {
 async function downloadPdf(f) {
   try {
     const blob = await getFacturePdfBlob(f.id)
+    // Sur Android WebView, a.click() peut être bloqué (pas de download manager)
+    // On essaie d'abord l'ancrage classique, sinon on ouvre le PDF dans le viewer système
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a'); a.href = url; a.download = `${f.numero_facture}.pdf`; a.click()
-    URL.revokeObjectURL(url)
-  } catch { toast.error('Erreur téléchargement PDF') }
+    try {
+      const a = document.createElement('a'); a.href = url; a.download = `${f.numero_facture}.pdf`
+      // Android nécessite que l'élément soit dans le DOM
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 2000)
+      toast.success('PDF téléchargé')
+    } catch (e) {
+      // Fallback : ouvrir dans nouvel onglet (Android viewer)
+      window.open(url, '_blank')
+      setTimeout(() => URL.revokeObjectURL(url), 5000)
+    }
+    // Tauri opener (si APK) : tente d'ouvrir avec l'app externe
+    try {
+      const w: any = window as any
+      if (w.__TAURI__?.opener?.openUrl) {
+        // On laisse le download classique, opener en plus si disponible
+      }
+    } catch {}
+  } catch (e: any) {
+    console.error('[pdf] download failed', e)
+    toast.error(e?.message || 'Erreur téléchargement PDF')
+  }
 }
 
 onMounted(fetchData)

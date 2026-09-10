@@ -11,11 +11,21 @@ declare global {
 }
 
 export function isTauriRuntime() {
-  return typeof window !== 'undefined' && !!window.__TAURI__?.core?.invoke
+  if (typeof window === 'undefined') return false
+  const w: any = window as any
+  return !!(w.__TAURI__?.core?.invoke || w.__TAURI_INTERNALS__?.invoke || w.__TAURI_IPC__)
 }
 
 function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<any> {
-  return window.__TAURI__.core.invoke(cmd, args)
+  const w: any = window as any
+  const fn = w.__TAURI__?.core?.invoke || w.__TAURI_INTERNALS__?.invoke
+  if (!fn) return Promise.reject({ message: 'Tauri non disponible', status: 500 })
+  // Sur Android, l'IPC peut mettre 2-3s si Rust est occupé (scrypt) ; on timeout à 15s pour éviter hang infini
+  const timeoutMs = cmd === 'auth_login' || cmd === 'users_create' || cmd === 'users_update' ? 20000 : 10000
+  return Promise.race([
+    fn(cmd, args),
+    new Promise((_, reject) => setTimeout(() => reject({ message: 'Timeout IPC (Android WebView)', status: 504 }), timeoutMs))
+  ])
 }
 
 function getPath(url: string): string {
@@ -187,11 +197,35 @@ export async function handleTauriRequest(
       const result = await invoke(cmd, args)
       return { status: 200, body: result }
     } catch (e: any) {
-      const status = e && typeof e.status === 'number' ? e.status : 500
-      const message = (e && e.message) || 'Erreur interne'
-      if (status === 401) {
-        try { localStorage.removeItem('gl_token'); localStorage.removeItem('gl_user') } catch { /* plateforme non navigateur */ }
+      // Tauri peut rejeter avec string, objet {message,status}, ou {message:"..."}
+      // Sur Android, e peut être null si WebView est détruit (rotation) -> on évite crash
+      if (e == null) {
+        console.warn(`[tauriApi] ${cmd} failed: null error (WebView destroyed)`)
+        return { status: 503, body: { message: 'Service temporairement indisponible, réessayez' } }
       }
+      let status = 500
+      let message = 'Erreur interne'
+      if (typeof e === 'string') {
+        message = e
+        try { const parsed = JSON.parse(e); if (parsed.status) status = parsed.status; if (parsed.message) message = parsed.message } catch {}
+      } else if (e && typeof e === 'object') {
+        status = typeof e.status === 'number' ? e.status : (typeof e.code === 'number' ? e.code : 500)
+        // 504 = timeout IPC Android, on le mappe en 503 pour retry
+        if (status === 504) status = 503
+        message = e.message || e.error || (typeof e.toString === 'function' ? e.toString() : message)
+        if (typeof message === 'string' && message.startsWith('{')) {
+          try { const p = JSON.parse(message); if (p.message) message = p.message; if (p.status) status = p.status } catch {}
+        }
+        // Android WebView parfois renvoie {error: "database is locked"}
+        if (message.includes('database is locked') || message.includes('busy')) {
+          status = 503
+          message = 'Base temporairement verrouillée, réessayez'
+        }
+      }
+      if (status === 401) {
+        try { localStorage.removeItem('gl_token'); localStorage.removeItem('gl_user') } catch {}
+      }
+      console.warn(`[tauriApi] ${cmd} failed:`, { status, message, raw: e })
       return { status, body: { message } }
     }
   }

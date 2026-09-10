@@ -280,9 +280,16 @@ async function downloadPdf(f) {
   try {
     const blob = await getFacturePdfBlob(f.id)
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a'); a.href = url; a.download = `${f.numero_facture}.pdf`; a.click()
-    URL.revokeObjectURL(url)
-  } catch { toast.error('Erreur téléchargement PDF') }
+    try {
+      const a = document.createElement('a'); a.href = url; a.download = `${f.numero_facture}.pdf`
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 2000)
+      toast.success('PDF téléchargé')
+    } catch {
+      window.open(url, '_blank')
+      setTimeout(() => URL.revokeObjectURL(url), 5000)
+    }
+  } catch (e: any) { console.error('[pdf] download failed', e); toast.error(e?.message || 'Erreur téléchargement PDF') }
 }
 
 async function cancelFacture(f) {

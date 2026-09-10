@@ -28,33 +28,37 @@ fn genre_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"^[a-zA-ZÀ-ÿ0-9\s\-'&]{2,50}$").unwrap())
 }
-fn pattern(re: &str) -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(re).unwrap())
-}
 fn role_re() -> &'static Regex {
-    pattern(r"^(admin|employe)$")
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^(admin|employe)$").unwrap())
 }
 fn console_type_re() -> &'static Regex {
-    pattern(r"^(PS5|PS4|XBOX|PC|SWITCH)$")
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^(PS5|PS4|XBOX|PC|SWITCH)$").unwrap())
 }
 fn tarif_type_re() -> &'static Regex {
-    pattern(r"^(horaire|forfait|session|partie)$")
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^(horaire|forfait|session|partie)$").unwrap())
 }
 fn regle_type_re() -> &'static Regex {
-    pattern(r"^(temps|montant)$")
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^(temps|montant)$").unwrap())
 }
 fn jeton_type_re() -> &'static Regex {
-    pattern(r"^(gain|depense|bonus)$")
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^(gain|depense|bonus)$").unwrap())
 }
 fn statut_session_re() -> &'static Regex {
-    pattern(r"^(en_cours|pause|terminee|annulee)$")
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^(en_cours|pause|terminee|annulee)$").unwrap())
 }
 fn statut_facture_re() -> &'static Regex {
-    pattern(r"^(payee|en_attente|annulee)$")
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^(payee|en_attente|annulee)$").unwrap())
 }
 fn mode_paiement_re() -> &'static Regex {
-    pattern(r"^(especes|carte|mobile|mobile_money|jetons)$")
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^(especes|carte|mobile|mobile_money|jetons)$").unwrap())
 }
 
 /// Supprime ` < ` et ` > `, tronque à max_length (port de sanitizeInput).

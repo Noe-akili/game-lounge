@@ -10,13 +10,25 @@ rust-version = "1.77"
 name = "game_lounge_rust_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+name = "gl-server"
+path = "src/bin/server.rs"
+required-features = ["http-server"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+default = []
+http-server = ["dep:axum"]
+
 [dependencies]
 tauri = { version = "2", features = [] }
+# Plugin opener nécessaire pour gérer les PDF / liens externes sans crasher le WebView Android
+tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# bundled compile sqlite pour Android (lourd mais sûr) ; limite à 1 target pour accélérer build
 rusqlite = { version = "0.31", features = ["bundled"] }
 jsonwebtoken = "9"
 scrypt = "0.11"
@@ -25,6 +37,8 @@ rand = "0.8"
 regex = "1"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
+axum = { version = "0.7", features = ["json"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "rt", "sync", "time", "fs"] }
 
 [profile.release]
 panic = "abort"
@@ -32,3 +46,6 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 strip = true
+
+[profile.dev]
+panic = "abort"

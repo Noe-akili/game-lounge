@@ -198,14 +198,29 @@ pub fn facture_pdf(f: &Value, joueur: Option<&Value>, lignes: &[Value]) -> PResu
     c.text_white(352.0, 703.5, 9.0, "P.U.");
     c.text_white(448.0, 703.5, 9.0, "Total");
 
-    // ----- Lignes -----
+    // ----- Lignes ----- (limite 40 lignes pour éviter OOM / dépassement page sur Android)
+    let lignes_affichees = if data.lignes.len() > 40 { &data.lignes[..40] } else { &data.lignes[..] };
     let mut y: f64 = 684.0;
-    for l in &data.lignes {
-        c.text(74.0, y, 9.0, &l.description);
+    for l in lignes_affichees {
+        // Sur Android low-end, description trop longue peut faire exploser la mémoire du PDF (injection PDF)
+        let desc = if l.description.chars().count() > 60 {
+            l.description.chars().take(57).collect::<String>() + "..."
+        } else {
+            l.description.clone()
+        };
+        // Évite d'écrire hors page (y < 80 chevauche footer)
+        if y < 90.0 { break; }
+        c.text(74.0, y, 9.0, &desc);
         c.text(320.0, y, 9.0, &l.quantite.to_string());
         c.text(352.0, y, 9.0, &fmt_fc(l.prix_unitaire));
         c.text(448.0, y, 9.0, &fmt_fc(l.total_ligne));
         y -= 9.0;
+    }
+    if data.lignes.len() > 40 {
+        if y >= 90.0 {
+            c.text(74.0, y, 7.0, &format!("... et {} lignes supplémentaires", data.lignes.len() - 40));
+            y -= 9.0;
+        }
     }
 
     // ----- Totaux -----
