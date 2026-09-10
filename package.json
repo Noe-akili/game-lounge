@@ -54,6 +54,10 @@
   "optionalDependencies": {
     "@rollup/rollup-linux-x64-gnu": "^4.63.1"
   },
+  "overrides": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
   "build": {
     "appId": "com.gamelounge.app",
     "productName": "Game Lounge",
