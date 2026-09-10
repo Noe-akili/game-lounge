@@ -70,6 +70,7 @@ fn seed_default_users(db: &Db) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
