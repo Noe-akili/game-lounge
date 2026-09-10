@@ -75,15 +75,61 @@ jobs:
         working-directory: server-rust
         run: npm run android:build
 
+      - name: Decode signing keystore
+        if: env.KEYSTORE_BASE64 != ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > /tmp/game-lounge.keystore
+
+      - name: Sign APK with apksigner
+        if: env.KEYSTORE_BASE64 != ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          APK_DIR="server-rust/src-tauri/gen/android/app/build/outputs/apk/universal/release"
+          UNSIGNED_APK="$APK_DIR/app-universal-release-unsigned.apk"
+          ALIGNED_APK="$APK_DIR/app-universal-release-aligned.apk"
+          SIGNED_APK="$APK_DIR/game-lounge.apk"
+
+          if [ ! -f "$UNSIGNED_APK" ]; then
+            echo "Unsigned APK not found at $UNSIGNED_APK"
+            ls -R server-rust/src-tauri/gen/android/app/build/outputs/apk/ || true
+            exit 1
+          fi
+
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          ZIPALIGN="$BUILD_TOOLS/zipalign"
+          APKSIGNER="$BUILD_TOOLS/apksigner"
+
+          # Zipalign
+          "$ZIPALIGN" -f 4 "$UNSIGNED_APK" "$ALIGNED_APK"
+
+          # Sign
+          "$APKSIGNER" sign \
+            --ks /tmp/game-lounge.keystore \
+            --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
+            --ks-pass "pass:${{ secrets.KEYSTORE_PASSWORD }}" \
+            --key-pass "pass:${{ secrets.KEY_PASSWORD }}" \
+            --out "$SIGNED_APK" \
+            "$ALIGNED_APK"
+
+          # Verify
+          "$APKSIGNER" verify "$SIGNED_APK"
+          echo "✅ Signed APK: $SIGNED_APK"
+          ls -lh "$SIGNED_APK"
+
       - name: List APK outputs
         run: |
           ls -R server-rust/src-tauri/gen/android/app/build/outputs/apk/ || true
           find server-rust/src-tauri/gen/android/app/build/outputs -name '*.apk' -print -exec stat -c %s {} \;
 
-      - name: Upload APK (debug + release)
+      - name: Upload APK (signed)
         uses: actions/upload-artifact@v5
         with:
           name: game-lounge-tauri-apk
-          path: server-rust/src-tauri/gen/android/app/build/outputs/apk/
+          path: |
+            server-rust/src-tauri/gen/android/app/build/outputs/apk/universal/release/game-lounge.apk
+            server-rust/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
           retention-days: 30
-          if-no-files-found: error
+          if-no-files-found: warn
