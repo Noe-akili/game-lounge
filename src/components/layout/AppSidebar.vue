@@ -74,16 +74,23 @@
       <span>Rapports</span>
      </router-link>
 
-     <span class="px-4 py-2 mt-4 text-[10px] font-semibold text-txt-dim uppercase tracking-widest">Paramètres</span>
-     <router-link to="/admin/parametres" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
-      <Settings class="w-4 h-4" />
-      <span>Paramètres</span>
-     </router-link>
-     <router-link to="/admin/utilisateurs" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
-      <UserCog class="w-4 h-4" />
-      <span>Utilisateurs</span>
-     </router-link>
-    </template>
+      <span class="px-4 py-2 mt-4 text-[10px] font-semibold text-txt-dim uppercase tracking-widest">Paramètres</span>
+      <router-link to="/admin/parametres" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
+       <Settings class="w-4 h-4" />
+       <span>Paramètres</span>
+      </router-link>
+      <router-link to="/admin/utilisateurs" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
+       <UserCog class="w-4 h-4" />
+       <span>Utilisateurs</span>
+      </router-link>
+      <template v-if="isDebug">
+        <span class="px-4 py-2 mt-4 text-[10px] font-semibold text-amber-400 uppercase tracking-widest">Développeur</span>
+        <router-link to="/admin/developpeur" class="sidebar-link border border-amber-500/20 bg-amber-500/5" active-class="sidebar-link-active" @click="$emit('close')">
+         <Bug class="w-4 h-4 text-amber-400" />
+         <span class="text-amber-400">Développeur</span>
+        </router-link>
+      </template>
+     </template>
 
     <template v-else>
      <router-link to="/dashboard" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
@@ -149,7 +156,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
 import {
  Gamepad2, LayoutDashboard, Monitor, Joystick, Users, DollarSign, Coins,
- Receipt, BarChart3, Settings, UserCog, LogOut, PlayCircle, CreditCard, MessageSquare, X, Moon, Sun
+ Receipt, BarChart3, Settings, UserCog, LogOut, PlayCircle, CreditCard, MessageSquare, X, Moon, Sun, Bug
 } from 'lucide-vue-next'
 
 const props = defineProps({ open: Boolean })
@@ -160,6 +167,7 @@ const router = useRouter()
 const settings = useSettingsStore()
 
 const isAdmin = computed(() => auth.user?.role === 'admin')
+const isDebug = computed(() => auth.isAuthenticated && (auth.user?.email === 'debug@gamelounge.com' || (() => { try { return localStorage.getItem('gl_debug_bypass') === '1' } catch { return false } })()))
 const userInitials = computed(() => {
  const nom = auth.user?.nom || ''
  return nom.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)

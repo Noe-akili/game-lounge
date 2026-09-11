@@ -24,6 +24,7 @@ const routes = [
       { path: 'admin/rapports', component: () => import('@/views/admin/AdminRapports.vue') },
       { path: 'admin/parametres', component: () => import('@/views/admin/AdminParametres.vue') },
       { path: 'admin/utilisateurs', component: () => import('@/views/admin/AdminUtilisateurs.vue') },
+      { path: 'admin/developpeur', component: () => import('@/views/admin/DeveloperView.vue') },
     ]
   }
 ]
