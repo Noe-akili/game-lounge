@@ -11,6 +11,11 @@ const TARIF_PATHS: &[&str] = &[
     "/sdcard/developpement/Playstation/tarif",
     "/storage/emulated/0/Développement/Playstation/tarif",
     "/storage/emulated/0/développement/playstation/tarif",
+    // Bundled dans l'app (Tauri resources) - seed embarqué
+    "../dist/tarifs",
+    "tarifs",
+    "resources/tarifs",
+    "/data/data/com.gamelounge.android/files/tarifs",
 ];
 
 // Identifiant unique de l'appareil autorisé pour debug (fingerprint de ce téléphone)

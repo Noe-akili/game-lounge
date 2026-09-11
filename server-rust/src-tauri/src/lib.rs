@@ -99,31 +99,150 @@ fn open_db(app: &tauri::AppHandle) -> Result<Db, Box<dyn std::error::Error>> {
 /// et faisait freezer le setup() puis ANR -> fermeture.
 /// On utilise des hash pré-générés, et on ne recalcule qu'en fallback.
 fn seed_default_users(db: &Db) -> Result<(), Box<dyn std::error::Error>> {
-    if !db.query_all("users")?.is_empty() {
-        return Ok(());
-    }
     let now = db::now_iso();
+    let need_users = db.query_all("users")?.is_empty();
+    if need_users {
+        const ADMIN_HASH: &str = "scrypt$v1$mNiC7OIMBUkGTXUIwS1T0g$4o0DaGrFw3_nPQAA4Bea38LtsBbjkKvNioWytoQvUfYgQ4YZVJNaEfiHn-DMHe1BJLOLG-r0tt8YvmWHumnHOg";
+        const EMPLOYE_HASH: &str = "scrypt$v1$Kb8e9sajtrVwQmOdMRvKUw$hmXRgQLLfSc6uFjVgdK-OgxhzNSezDVygFc9qW_sF_Z0lUvN-N4F1UKF4w-6mi6GOdwELSe3gJTnTepvv8WBlw";
+        let mut admin = serde_json::Map::new();
+        admin.insert("email".into(), serde_json::json!("admin@gamelounge.com"));
+        admin.insert("password_hash".into(), serde_json::json!(ADMIN_HASH));
+        admin.insert("role".into(), serde_json::json!("admin"));
+        admin.insert("nom".into(), serde_json::json!("Admin"));
+        admin.insert("created_at".into(), serde_json::json!(now.clone()));
+        db.insert("users", &admin)?;
+        let mut emp = serde_json::Map::new();
+        emp.insert("email".into(), serde_json::json!("john@gamelounge.com"));
+        emp.insert("password_hash".into(), serde_json::json!(EMPLOYE_HASH));
+        emp.insert("role".into(), serde_json::json!("employe"));
+        emp.insert("nom".into(), serde_json::json!("John Doe"));
+        emp.insert("created_at".into(), serde_json::json!(now.clone()));
+        db.insert("users", &emp)?;
+        eprintln!("[seed] users par défaut créés");
+    }
+    // Seed tarifs/jeux depuis PDFs si vide (données embarquées)
+    if db.query_all("tarifs")?.is_empty() {
+        eprintln!("[seed] tarifs vide, seed embarqué depuis PDFs");
+        seed_tarifs_from_pdfs(db)?;
+    }
+    if db.query_all("jeux")?.is_empty() {
+        eprintln!("[seed] jeux vide, seed embarqué");
+        seed_jeux_from_pdfs(db)?;
+    }
+    if db.query_all("consoles")?.is_empty() {
+        for i in 1..=6 {
+            let mut c = serde_json::Map::new();
+            c.insert("nom".into(), json!(format!("Poste {}", i)));
+            c.insert("type".into(), json!(if i <= 3 { "PS5" } else { "PS4" }));
+            c.insert("poste_numero".into(), json!(i));
+            c.insert("etat".into(), json!("disponible"));
+            let now2 = db::now_iso();
+            c.insert("created_at".into(), json!(now2.clone()));
+            c.insert("date_ajout".into(), json!(now2));
+            let _ = db.insert("consoles", &c);
+        }
+    }
+    Ok(())
+}
 
-    // Hash pré-calculés (scrypt v1, N=16384, r=8, p=1) pour éviter calcul au démarrage APK
-    const ADMIN_HASH: &str = "scrypt$v1$mNiC7OIMBUkGTXUIwS1T0g$4o0DaGrFw3_nPQAA4Bea38LtsBbjkKvNioWytoQvUfYgQ4YZVJNaEfiHn-DMHe1BJLOLG-r0tt8YvmWHumnHOg";
-    const EMPLOYE_HASH: &str = "scrypt$v1$Kb8e9sajtrVwQmOdMRvKUw$hmXRgQLLfSc6uFjVgdK-OgxhzNSezDVygFc9qW_sF_Z0lUvN-N4F1UKF4w-6mi6GOdwELSe3gJTnTepvv8WBlw";
+fn seed_tarifs_from_pdfs(db: &Db) -> Result<(), Box<dyn std::error::Error>> {
+    let now = db::now_iso();
+    let tarifs_ps4 = vec![
+        ("partie", 5, 500, "PS4", "FIFA 26", "FIFA 26 PS4 - 1 Match 5min"),
+        ("session", 30, 2000, "PS4", "FIFA 26", "FIFA 26 PS4 - 30min"),
+        ("session", 60, 4000, "PS4", "FIFA 26", "FIFA 26 PS4 - 1h"),
+        ("partie", 5, 500, "PS4", "Mortal Kombat", "Mortal Kombat PS4 - 2 combats"),
+        ("session", 30, 1500, "PS4", "Mortal Kombat", "Mortal Kombat PS4 - 30min"),
+        ("session", 60, 3000, "PS4", "Mortal Kombat", "Mortal Kombat PS4 - 1h"),
+        ("session", 15, 500, "PS4", "Need for Speed", "Need for Speed PS4 - 15min"),
+        ("session", 30, 1000, "PS4", "Need for Speed", "Need for Speed PS4 - 30min"),
+        ("session", 60, 2000, "PS4", "Need for Speed", "Need for Speed PS4 - 1h"),
+        ("partie", 10, 1000, "PS4", "WWE 2K25", "WWE 2K25 PS4 - 10min"),
+        ("session", 30, 2000, "PS4", "WWE 2K25", "WWE PS4 - 30min"),
+        ("session", 60, 4000, "PS4", "WWE 2K25", "WWE PS4 - 1h"),
+        ("partie", 15, 1500, "PS4", "NBA 2K25", "NBA PS4 - 10-20min"),
+        ("session", 30, 2500, "PS4", "NBA 2K25", "NBA PS4 - 30min"),
+        ("session", 60, 4000, "PS4", "NBA 2K25", "NBA PS4 - 1h"),
+        ("session", 15, 500, "PS4", "GTA V", "GTA V PS4 - 15min"),
+        ("session", 30, 1500, "PS4", "GTA V", "GTA V PS4 - 30min"),
+        ("session", 60, 3000, "PS4", "GTA V", "GTA V PS4 - 1h"),
+        ("session", 15, 500, "PS4", "God of War", "God of War PS4 - 15min"),
+        ("session", 30, 1500, "PS4", "God of War", "God of War PS4 - 30min"),
+        ("session", 60, 3000, "PS4", "God of War", "God of War PS4 - 1h"),
+        ("session", 15, 500, "PS4", "Call of Duty", "COD PS4 - 15min"),
+        ("session", 30, 1500, "PS4", "Call of Duty", "COD PS4 - 30min"),
+        ("session", 60, 3000, "PS4", "Call of Duty", "COD PS4 - 1h"),
+    ];
+    let tarifs_ps5 = vec![
+        ("partie", 5, 1000, "PS5", "FIFA 26", "FIFA 26 PS5 - 5min"),
+        ("session", 30, 4000, "PS5", "FIFA 26", "FIFA 26 PS5 - 30min"),
+        ("session", 60, 8000, "PS5", "FIFA 26", "FIFA 26 PS5 - 1h"),
+        ("partie", 5, 1000, "PS5", "Mortal Kombat", "Mortal Kombat PS5 - 1 combat"),
+        ("session", 30, 3000, "PS5", "Mortal Kombat", "Mortal Kombat PS5 - 30min"),
+        ("session", 60, 6000, "PS5", "Mortal Kombat", "Mortal Kombat PS5 - 1h"),
+        ("partie", 5, 1000, "PS5", "Tekken 8", "Tekken 8 PS5 - 1 combat"),
+        ("session", 30, 3000, "PS5", "Tekken 8", "Tekken 8 PS5 - 30min"),
+        ("session", 60, 6000, "PS5", "Tekken 8", "Tekken 8 PS5 - 1h"),
+        ("session", 5, 1000, "PS5", "Gran Turismo 7", "GT7 PS5 - course courte"),
+        ("session", 15, 2000, "PS5", "Gran Turismo 7", "GT7 PS5 - 15min G29"),
+        ("session", 15, 3000, "PS5", "Gran Turismo 7", "GT7 PS5 - 15min G29+VR2"),
+        ("session", 30, 3500, "PS5", "Gran Turismo 7", "GT7 PS5 - 30min G29"),
+        ("session", 30, 5000, "PS5", "Gran Turismo 7", "GT7 PS5 - 30min G29+VR2"),
+        ("session", 60, 7000, "PS5", "Gran Turismo 7", "GT7 PS5 - 1h G29"),
+        ("session", 60, 10000, "PS5", "Gran Turismo 7", "GT7 PS5 - 1h G29+VR2"),
+        ("session", 15, 1000, "PS5", "Need for Speed", "NFS PS5 - 15min"),
+        ("session", 15, 1500, "PS5", "Need for Speed", "NFS PS5 - 15min G29"),
+        ("session", 30, 2000, "PS5", "Need for Speed", "NFS PS5 - 30min"),
+        ("session", 30, 3000, "PS5", "Need for Speed", "NFS PS5 - 30min G29"),
+        ("session", 60, 4000, "PS5", "Need for Speed", "NFS PS5 - 1h"),
+        ("session", 60, 6000, "PS5", "Need for Speed", "NFS PS5 - 1h G29"),
+        ("partie", 10, 1500, "PS5", "WWE 2K25", "WWE PS5 - 10min"),
+        ("session", 30, 3000, "PS5", "WWE 2K25", "WWE PS5 - 30min"),
+        ("session", 60, 6000, "PS5", "WWE 2K25", "WWE PS5 - 1h"),
+        ("partie", 15, 2000, "PS5", "NBA 2K25", "NBA PS5 - 1 match"),
+        ("session", 30, 4000, "PS5", "NBA 2K25", "NBA PS5 - 30min"),
+        ("session", 60, 7000, "PS5", "NBA 2K25", "NBA PS5 - 1h"),
+        ("session", 15, 1000, "PS5", "GTA V", "GTA V PS5 - 15min"),
+        ("session", 30, 2000, "PS5", "GTA V", "GTA V PS5 - 30min"),
+        ("session", 60, 4000, "PS5", "GTA V", "GTA V PS5 - 1h"),
+        ("session", 15, 1000, "PS5", "God of War", "God of War PS5 - 15min"),
+        ("session", 30, 2000, "PS5", "God of War", "God of War PS5 - 30min"),
+        ("session", 60, 4000, "PS5", "God of War", "God of War PS5 - 1h"),
+        ("session", 15, 1500, "PS5", "Call of Duty", "COD PS5 - 15min"),
+        ("session", 30, 3000, "PS5", "Call of Duty", "COD PS5 - 30min"),
+        ("session", 60, 6000, "PS5", "Call of Duty", "COD PS5 - 1h"),
+    ];
+    for (t, d, p, ct, jeu, desc) in tarifs_ps4.into_iter().chain(tarifs_ps5) {
+        let mut m = serde_json::Map::new();
+        m.insert("type".into(), json!(t));
+        m.insert("duree_minutes".into(), json!(d));
+        m.insert("prix".into(), json!(p));
+        m.insert("description".into(), json!(desc));
+        m.insert("console_type".into(), json!(ct));
+        m.insert("jeu".into(), json!(jeu));
+        m.insert("actif".into(), json!(1));
+        m.insert("created_at".into(), json!(now.clone()));
+        let _ = db.insert("tarifs", &m);
+    }
+    Ok(())
+}
 
-    let mut admin = serde_json::Map::new();
-    admin.insert("email".into(), serde_json::json!("admin@gamelounge.com"));
-    // Hash pré-calculé direct (0ms) - évite scrypt au démarrage qui causait ANR
-    admin.insert("password_hash".into(), serde_json::json!(ADMIN_HASH));
-    admin.insert("role".into(), serde_json::json!("admin"));
-    admin.insert("nom".into(), serde_json::json!("Admin"));
-    admin.insert("created_at".into(), serde_json::json!(now.clone()));
-    db.insert("users", &admin)?;
-
-    let mut emp = serde_json::Map::new();
-    emp.insert("email".into(), serde_json::json!("john@gamelounge.com"));
-    emp.insert("password_hash".into(), serde_json::json!(EMPLOYE_HASH));
-    emp.insert("role".into(), serde_json::json!("employe"));
-    emp.insert("nom".into(), serde_json::json!("John Doe"));
-    emp.insert("created_at".into(), serde_json::json!(now));
-    db.insert("users", &emp)?;
+fn seed_jeux_from_pdfs(db: &Db) -> Result<(), Box<dyn std::error::Error>> {
+    let jeux = vec![
+        ("FIFA 26", "Sport"), ("Mortal Kombat 1", "Combat"), ("Tekken 8", "Combat"), ("Gran Turismo 7", "Course"),
+        ("Need for Speed", "Course"), ("WWE 2K25", "Combat"), ("NBA 2K25", "Sport"), ("GTA V", "Action"),
+        ("God of War", "Action"), ("Call of Duty", "Action"), ("Fortnite", "Action"), ("Spider-Man 2", "Action"),
+        ("Red Dead Redemption 2", "Action"), ("Uncharted 4", "Aventure"), ("Resident Evil 4", "Horreur"),
+        ("Undisputed", "Combat"), ("EA Sports UFC 5", "Combat"), ("Naruto Storm 4", "Combat"),
+    ];
+    for (titre, genre) in jeux {
+        let mut m = serde_json::Map::new();
+        m.insert("titre".into(), json!(titre));
+        m.insert("genre".into(), json!(genre));
+        m.insert("actif".into(), json!(1));
+        m.insert("created_at".into(), json!(db::now_iso()));
+        let _ = db.insert("jeux", &m);
+    }
     Ok(())
 }
 
