@@ -2,6 +2,7 @@ pub mod auth;
 pub mod commands;
 pub mod db;
 pub mod error;
+pub mod import;
 pub mod neon;
 pub mod pdf;
 pub mod validators;
@@ -130,6 +131,8 @@ fn seed_default_users(db: &Db) -> Result<(), Box<dyn std::error::Error>> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
             let handle = app.handle();
             // GARANTIE : AppState est TOUJOURS enregistré, même si la DB échoue.
@@ -328,6 +331,10 @@ pub fn run() {
             commands::sync_toggle,
             commands::sync_run,
             commands::sync_poll,
+            // ==== DEBUG / IMPORT (appareil dev uniquement) ====
+            commands::debug_is_allowed,
+            commands::import_default_tarifs,
+            commands::neon_status,
         ])
         .run(tauri::generate_context!())
         .expect("erreur lors de l'exécution de Tauri");

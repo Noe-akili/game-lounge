@@ -1,13 +1,29 @@
 // @ts-nocheck
-// Tauri-only API - best practice avec refresh token et retry
+// Tauri-only API - best practice avec refresh token et retry, évite localStorage critique
 import { handleRequest } from '@/lib/transport'
+import { secureGet, secureSet } from '@/lib/secureStore'
 
 let isRefreshing = false
 let refreshPromise: Promise<string | null> | null = null
 
+async function getSecureToken(): Promise<string | null> {
+  try {
+    const s = await secureGet('gl_token')
+    if (s) return s
+  } catch {}
+  try { return localStorage.getItem('gl_token') } catch { return null }
+}
+async function getSecureRefresh(): Promise<string | null> {
+  try {
+    const s = await secureGet('gl_refresh_token')
+    if (s) return s
+  } catch {}
+  try { return localStorage.getItem('gl_refresh_token') } catch { return null }
+}
+
 async function request(path: string, options: any = {}, retry = true) {
   let token: string | null = null
-  try { token = localStorage.getItem('gl_token') } catch { token = null }
+  try { token = await getSecureToken() } catch { token = null }
   let body: any = undefined
   try {
     body = options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined

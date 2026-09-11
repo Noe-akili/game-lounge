@@ -2,6 +2,7 @@
 
 pub mod auth;
 pub mod consoles;
+pub mod debug;
 pub mod factures;
 pub mod jetons;
 pub mod jeux;
@@ -17,6 +18,7 @@ pub mod users;
 
 pub use auth::*;
 pub use consoles::*;
+pub use debug::*;
 pub use factures::*;
 pub use jetons::*;
 pub use jeux::*;
@@ -47,33 +49,26 @@ use crate::AppState;
 use tauri::State;
 
 /// Vérifie le token JWT et renvoie les claims de l'utilisateur connecté.
-/// Mode diagnostic Android 14 : token debug-bypass permet de tester sans sécurité
+/// Mode diagnostic : token debug-bypass uniquement sur appareil de développement (vérifie /storage/.../tarif)
 pub fn claims(state: &State<'_, AppState>, token: &Option<String>) -> ApiResult<Claims> {
     if let Some(t) = token {
-        // Bypass sécurité pour diagnostic Android 14 (demandé utilisateur)
-        // Permet de tester Dashboard/Sessions sans blocage login
-        if t == "debug-bypass-android14" || t == "debug" {
-            eprintln!("[DEBUG_BYPASS] claims bypass for Android14 diagnostic");
-            return Ok(Claims {
-                id: 1,
-                email: "debug@gamelounge.com".into(),
-                role: "admin".into(),
-                nom: "Debug Android14".into(),
-                iat: 0,
-                exp: 0,
-            });
-        }
-        // Support Bearer prefix si frontend envoie "Bearer debug-bypass-android14"
-        if t.contains("debug-bypass-android14") {
-            eprintln!("[DEBUG_BYPASS] bearer debug bypass");
-            return Ok(Claims {
-                id: 1,
-                email: "debug@gamelounge.com".into(),
-                role: "admin".into(),
-                nom: "Debug Android14".into(),
-                iat: 0,
-                exp: 0,
-            });
+        let is_debug_token = t == "debug-bypass-android14" || t == "debug" || t.contains("debug-bypass-android14");
+        if is_debug_token {
+            // Debug uniquement sur cet appareil (présence du dossier tarif)
+            if crate::import::is_debug_device() {
+                eprintln!("[DEBUG_BYPASS] claims bypass autorisé sur cet appareil");
+                return Ok(Claims {
+                    id: 1,
+                    email: "debug@gamelounge.com".into(),
+                    role: "admin".into(),
+                    nom: "Debug Android14".into(),
+                    iat: 0,
+                    exp: 0,
+                });
+            } else {
+                eprintln!("[DEBUG_BYPASS] refusé : appareil non autorisé (tarif path absent)");
+                return Err(ApiError::forbidden("Mode diagnostic non autorisé sur cet appareil"));
+            }
         }
     }
     _require_auth(token.as_deref(), &state.jwt_secret)

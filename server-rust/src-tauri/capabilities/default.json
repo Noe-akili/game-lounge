@@ -2,5 +2,18 @@
   "identifier": "default",
   "description": "Permissions par défaut pour la fenêtre principale",
   "windows": ["main"],
-  "permissions": ["core:default", "opener:default"]
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "fs:default",
+    "fs:allow-read",
+    "fs:allow-exists",
+    "fs:allow-readDir",
+    "store:default",
+    "store:allow-get",
+    "store:allow-set",
+    "store:allow-remove",
+    "store:allow-save",
+    "store:allow-load"
+  ]
 }

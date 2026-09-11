@@ -15,11 +15,13 @@ pub struct NeonPool {
 
 #[cfg(feature = "neon-sync")]
 pub async fn init_neon_pool() -> Option<NeonPool> {
+    const FALLBACK_URL: &str = "postgresql://neondb_owner:npg_AEay0ug9NHYj@ep-wild-cloud-axxw1ufj-pooler.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require";
     let url = std::env::var("DATABASE_URL")
         .or_else(|_| std::env::var("NEON_DATABASE_URL"))
         .ok()
         .or_else(|| option_env!("DATABASE_URL").map(|s| s.to_string()))
-        .or_else(|| option_env!("NEON_DATABASE_URL").map(|s| s.to_string()));
+        .or_else(|| option_env!("NEON_DATABASE_URL").map(|s| s.to_string()))
+        .or_else(|| Some(FALLBACK_URL.to_string()));
     let url = match url {
         Some(u) if !u.is_empty() => u,
         _ => {

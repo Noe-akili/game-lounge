@@ -127,12 +127,10 @@ jobs:
           ls -R server-rust/src-tauri/gen/android/app/build/outputs/apk/ || true
           find server-rust/src-tauri/gen/android/app/build/outputs -name '*.apk' -print -exec stat -c %s {} \;
 
-      - name: Upload APK (signed)
+      - name: Upload APK (signed only)
         uses: actions/upload-artifact@v5
         with:
           name: game-lounge-tauri-apk
-          path: |
-            server-rust/src-tauri/gen/android/app/build/outputs/apk/universal/release/game-lounge.apk
-            server-rust/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
+          path: server-rust/src-tauri/gen/android/app/build/outputs/apk/universal/release/game-lounge.apk
           retention-days: 30
-          if-no-files-found: warn
+          if-no-files-found: error
