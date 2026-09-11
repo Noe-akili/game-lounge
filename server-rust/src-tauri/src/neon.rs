@@ -28,8 +28,8 @@ pub async fn init_neon_pool() -> Option<NeonPool> {
             return None;
         }
     };
-    // Tente avec rustls (pur Rust, pas besoin d'openssl, idéal Android)
-    let tls_result: Result<(Client, _), String> = async {
+    // Tente avec rustls (pur Rust, pas besoin d'openssl, idéal Android) - évite match avec types différents
+    let rustls_result = async {
         let mut root_store = rustls::RootCertStore::empty();
         root_store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
             rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
@@ -43,36 +43,49 @@ pub async fn init_neon_pool() -> Option<NeonPool> {
             .with_root_certificates(root_store)
             .with_no_client_auth();
         let tls = tokio_postgres_rustls::MakeRustlsConnect::new(config);
-        tokio_postgres::connect(&url, tls).await.map_err(|e| e.to_string())
+        tokio_postgres::connect(&url, tls).await
     }.await;
 
-    let (client, connection) = match tls_result {
-        Ok((c, conn)) => (c, conn),
-        Err(e) => {
-            eprintln!("[neon] rustls connect failed: {}, tente NoTls fallback", e);
-            match tokio_postgres::connect(&url, NoTls).await {
-                Ok((c, conn)) => (c, conn),
-                Err(e2) => {
-                    eprintln!("[neon] pool connect failed (offline): {}", e2);
-                    return None;
+    if let Ok((client, connection)) = rustls_result {
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("[neon] connection error (rustls): {}", e);
+            }
+        });
+        match client.query("SELECT 1", &[]).await {
+            Ok(_) => {
+                eprintln!("[neon] pool connecté (rustls)");
+                return Some(NeonPool { client: std::sync::Arc::new(client) });
+            }
+            Err(e) => {
+                eprintln!("[neon] rustls test query failed: {}, tente NoTls", e);
+            }
+        }
+    } else if let Err(e) = rustls_result {
+        eprintln!("[neon] rustls connect failed: {}, tente NoTls", e);
+    }
+
+    // Fallback NoTls
+    match tokio_postgres::connect(&url, NoTls).await {
+        Ok((client, connection)) => {
+            tokio::spawn(async move {
+                if let Err(e) = connection.await {
+                    eprintln!("[neon] connection error (NoTls): {}", e);
+                }
+            });
+            match client.query("SELECT 1", &[]).await {
+                Ok(_) => {
+                    eprintln!("[neon] pool connecté (NoTls)");
+                    Some(NeonPool { client: std::sync::Arc::new(client) })
+                }
+                Err(e) => {
+                    eprintln!("[neon] NoTls test query failed: {}, offline", e);
+                    None
                 }
             }
         }
-    };
-
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("[neon] connection error: {}", e);
-        }
-    });
-
-    match client.query("SELECT 1", &[]).await {
-        Ok(_) => {
-            eprintln!("[neon] pool connecté (tokio-postgres TLS)");
-            Some(NeonPool { client: std::sync::Arc::new(client) })
-        }
         Err(e) => {
-            eprintln!("[neon] test query failed: {}, offline", e);
+            eprintln!("[neon] pool connect failed (offline): {}", e);
             None
         }
     }
@@ -163,8 +176,13 @@ pub async fn pull_all(pool: &NeonPool) -> ApiResult<std::collections::HashMap<St
                 if let Ok(jrows) = json_rows {
                     let mut vec = Vec::new();
                     for r in jrows {
-                        if let Ok(v) = r.try_get::<_, Value>(0) {
+                        // row_to_json retourne json, on le récupère via Json<Value> ou String
+                        if let Ok(Json(v)) = r.try_get::<_, postgres_types::Json<Value>>(0) {
                             vec.push(v);
+                        } else if let Ok(s) = r.try_get::<_, String>(0) {
+                            if let Ok(v) = serde_json::from_str::<Value>(&s) {
+                                vec.push(v);
+                            }
                         }
                     }
                     all.insert(table.to_string(), vec);

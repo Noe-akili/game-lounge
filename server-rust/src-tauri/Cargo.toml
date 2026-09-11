@@ -46,8 +46,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "rt", "sync", 
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"], optional = true }
 postgres-types = { version = "0.2", optional = true }
 tokio-postgres-rustls = { version = "0.7", optional = true }
-rustls = { version = "0.21", optional = true }
-webpki-roots = { version = "0.25", optional = true }
+rustls = { version = "0.19", optional = true }
+webpki-roots = { version = "0.22", optional = true }
 dotenvy = { version = "0.15", optional = true }
 lopdf = "0.34"
 
