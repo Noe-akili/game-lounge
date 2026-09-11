@@ -8,11 +8,11 @@
     "fs:default",
     "fs:allow-read",
     "fs:allow-exists",
-    "fs:allow-readDir",
+    "fs:allow-read-dir",
     "store:default",
     "store:allow-get",
     "store:allow-set",
-    "store:allow-remove",
+    "store:allow-delete",
     "store:allow-save",
     "store:allow-load"
   ]
