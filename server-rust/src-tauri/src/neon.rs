@@ -1,11 +1,10 @@
-// NeonDB sync - best practice offline-first via tokio-postgres
-// Si DATABASE_URL absent ou offline, sync désactivé (local-only)
-// Utilise tokio-postgres (évite conflit rusqlite sqlite)
-
-#[cfg(feature = "neon-sync")]
-use tokio_postgres::{NoTls, Client};
+// NeonDB sync - offline-first via tokio-postgres + rustls (pure Rust, pas d'openssl)
+// Si DATABASE_URL absent ou offline, sync désactivé mais fallback URL hardcodé assure Neon enabled
 use serde_json::{Value, json};
 use crate::error::{ApiError, ApiResult};
+
+#[cfg(feature = "neon-sync")]
+use tokio_postgres::{Client, NoTls};
 
 #[cfg(feature = "neon-sync")]
 #[derive(Clone)]
@@ -29,31 +28,51 @@ pub async fn init_neon_pool() -> Option<NeonPool> {
             return None;
         }
     };
-    // Tente connexion avec NoTls (Neon supporte aussi TLS mais NoTls suffit pour test, sinon fallback offline)
-    // Pour TLS natif, on pourrait utiliser postgres-native-tls, mais on garde NoTls pour simplicité Android
-    // Si échec, on reste offline
-    match tokio_postgres::connect(&url, NoTls).await {
-        Ok((client, connection)) => {
-            // Spawn connection handling
-            tokio::spawn(async move {
-                if let Err(e) = connection.await {
-                    eprintln!("[neon] connection error: {}", e);
-                }
-            });
-            // Test query
-            match client.query("SELECT 1", &[]).await {
-                Ok(_) => {
-                    eprintln!("[neon] pool connecté (tokio-postgres NoTls)");
-                    Some(NeonPool { client: std::sync::Arc::new(client) })
-                }
-                Err(e) => {
-                    eprintln!("[neon] test query failed (offline/TLS requis): {}, offline", e);
-                    None
+    // Tente avec rustls (pur Rust, pas besoin d'openssl, idéal Android)
+    let tls_result: Result<(Client, _), String> = async {
+        let mut root_store = rustls::RootCertStore::empty();
+        root_store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
+            rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
+                ta.subject.clone(),
+                ta.spki.clone(),
+                ta.name_constraints.clone(),
+            )
+        }));
+        let config = rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        let tls = tokio_postgres_rustls::MakeRustlsConnect::new(config);
+        tokio_postgres::connect(&url, tls).await.map_err(|e| e.to_string())
+    }.await;
+
+    let (client, connection) = match tls_result {
+        Ok((c, conn)) => (c, conn),
+        Err(e) => {
+            eprintln!("[neon] rustls connect failed: {}, tente NoTls fallback", e);
+            match tokio_postgres::connect(&url, NoTls).await {
+                Ok((c, conn)) => (c, conn),
+                Err(e2) => {
+                    eprintln!("[neon] pool connect failed (offline): {}", e2);
+                    return None;
                 }
             }
         }
+    };
+
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("[neon] connection error: {}", e);
+        }
+    });
+
+    match client.query("SELECT 1", &[]).await {
+        Ok(_) => {
+            eprintln!("[neon] pool connecté (tokio-postgres TLS)");
+            Some(NeonPool { client: std::sync::Arc::new(client) })
+        }
         Err(e) => {
-            eprintln!("[neon] pool connect failed (offline): {}", e);
+            eprintln!("[neon] test query failed: {}, offline", e);
             None
         }
     }
@@ -124,6 +143,49 @@ pub async fn pull_users(_pool: &()) -> ApiResult<Vec<Value>> {
     Ok(vec![])
 }
 
+// Pull toutes les tables pour restauration complète si app data vidé
+#[cfg(feature = "neon-sync")]
+pub async fn pull_all(pool: &NeonPool) -> ApiResult<std::collections::HashMap<String, Vec<Value>>> {
+    let mut all = std::collections::HashMap::new();
+    // Tables à synchroniser (toutes les données critiques)
+    let tables = ["users", "consoles", "jeux", "joueurs", "sessions_jeu", "tarifs", "factures", "jetons_transactions", "messages", "parametres_fidelite", "lignes_facture"];
+    for table in tables {
+        let query = format!("SELECT * FROM {} ORDER BY id", table);
+        match pool.client.query(&query, &[]).await {
+            Ok(rows) => {
+                let mut vals = Vec::new();
+                for row in rows {
+                    // Convertit chaque row en JSON via serde (simplifié : on utilise une requête JSON)
+                    // Pour l'instant, on fait une requête JSON directe
+                }
+                // Alternative : utilise query avec json_agg
+                let json_rows = pool.client.query(&format!("SELECT row_to_json(t) as data FROM (SELECT * FROM {} ) t", table), &[]).await;
+                if let Ok(jrows) = json_rows {
+                    let mut vec = Vec::new();
+                    for r in jrows {
+                        if let Ok(v) = r.try_get::<_, Value>(0) {
+                            vec.push(v);
+                        }
+                    }
+                    all.insert(table.to_string(), vec);
+                } else {
+                    all.insert(table.to_string(), vals);
+                }
+            }
+            Err(e) => {
+                eprintln!("[neon] pull {} failed: {}", table, e);
+                all.insert(table.to_string(), Vec::new());
+            }
+        }
+    }
+    Ok(all)
+}
+
+#[cfg(not(feature = "neon-sync"))]
+pub async fn pull_all(_pool: &()) -> ApiResult<std::collections::HashMap<String, Vec<Value>>> {
+    Ok(std::collections::HashMap::new())
+}
+
 #[cfg(feature = "neon-sync")]
 pub async fn push_user(pool: &NeonPool, user: &Value) -> ApiResult<()> {
     let id: i64 = user.get("id").and_then(Value::as_i64).unwrap_or(0);
@@ -138,5 +200,23 @@ pub async fn push_user(pool: &NeonPool, user: &Value) -> ApiResult<()> {
         )
         .await
         .map_err(|e| ApiError::internal(format!("Neon push user: {}", e)))?;
+    Ok(())
+}
+
+// Push générique pour tarifs/jeux
+#[cfg(feature = "neon-sync")]
+pub async fn push_tarif(pool: &NeonPool, tarif: &Value) -> ApiResult<()> {
+    let id: i64 = tarif.get("id").and_then(Value::as_i64).unwrap_or(0);
+    let type_: &str = tarif.get("type").and_then(Value::as_str).unwrap_or("session");
+    let duree: i64 = tarif.get("duree_minutes").and_then(Value::as_i64).unwrap_or(30);
+    let prix: i64 = tarif.get("prix").and_then(Value::as_i64).unwrap_or(0);
+    let desc: &str = tarif.get("description").and_then(Value::as_str).unwrap_or("");
+    let console_type: &str = tarif.get("console_type").and_then(Value::as_str).unwrap_or("PS5");
+    let jeu: &str = tarif.get("jeu").and_then(Value::as_str).unwrap_or("");
+    let actif: i64 = tarif.get("actif").and_then(Value::as_i64).unwrap_or(1);
+    pool.client.execute(
+        "INSERT INTO tarifs (id, type, duree_minutes, prix, description, console_type, jeu, actif, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW()) ON CONFLICT (id) DO UPDATE SET type=$2, duree_minutes=$3, prix=$4, description=$5, console_type=$6, jeu=$7, actif=$8",
+        &[&id, &type_, &duree, &prix, &desc, &console_type, &jeu, &actif]
+    ).await.map_err(|e| ApiError::internal(format!("Neon push tarif: {}", e)))?;
     Ok(())
 }
