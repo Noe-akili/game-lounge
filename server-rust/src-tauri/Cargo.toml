@@ -21,7 +21,7 @@ tauri-build = { version = "2", features = [] }
 [features]
 default = ["neon-sync"]
 http-server = ["dep:axum"]
-neon-sync = ["dep:sqlx", "dep:dotenvy"]
+neon-sync = ["dep:tokio-postgres", "dep:postgres-types", "dep:dotenvy"]
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -41,7 +41,8 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 axum = { version = "0.7", features = ["json"], optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "rt", "sync", "time", "fs", "io-util"] }
-sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-rustls", "chrono", "json"], optional = true }
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"], optional = true }
+postgres-types = { version = "0.2", optional = true }
 dotenvy = { version = "0.15", optional = true }
 
 [profile.release]

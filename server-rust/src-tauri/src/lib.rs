@@ -18,9 +18,9 @@ pub struct AppState {
     pub jwt_secret: String,
     /// Journal des tentatives de connexion (rate limiting simple, par IP/app).
     pub login_attempts: Mutex<std::collections::HashMap<String, Vec<i64>>>,
-    /// Pool Neon Postgres (optionnel, offline-first)
+    /// Pool Neon Postgres (optionnel, offline-first) - via tokio-postgres
     #[cfg(feature = "neon-sync")]
-    pub neon_pool: Mutex<Option<sqlx::PgPool>>,
+    pub neon_pool: Mutex<Option<crate::neon::NeonPool>>,
     #[cfg(not(feature = "neon-sync"))]
     pub neon_pool: Mutex<Option<()>>,
 }
