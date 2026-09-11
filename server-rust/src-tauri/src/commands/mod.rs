@@ -47,7 +47,35 @@ use crate::AppState;
 use tauri::State;
 
 /// Vérifie le token JWT et renvoie les claims de l'utilisateur connecté.
+/// Mode diagnostic Android 14 : token debug-bypass permet de tester sans sécurité
 pub fn claims(state: &State<'_, AppState>, token: &Option<String>) -> ApiResult<Claims> {
+    if let Some(t) = token {
+        // Bypass sécurité pour diagnostic Android 14 (demandé utilisateur)
+        // Permet de tester Dashboard/Sessions sans blocage login
+        if t == "debug-bypass-android14" || t == "debug" {
+            eprintln!("[DEBUG_BYPASS] claims bypass for Android14 diagnostic");
+            return Ok(Claims {
+                id: 1,
+                email: "debug@gamelounge.com".into(),
+                role: "admin".into(),
+                nom: "Debug Android14".into(),
+                iat: 0,
+                exp: 0,
+            });
+        }
+        // Support Bearer prefix si frontend envoie "Bearer debug-bypass-android14"
+        if t.contains("debug-bypass-android14") {
+            eprintln!("[DEBUG_BYPASS] bearer debug bypass");
+            return Ok(Claims {
+                id: 1,
+                email: "debug@gamelounge.com".into(),
+                role: "admin".into(),
+                nom: "Debug Android14".into(),
+                iat: 0,
+                exp: 0,
+            });
+        }
+    }
     _require_auth(token.as_deref(), &state.jwt_secret)
 }
 

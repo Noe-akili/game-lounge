@@ -41,12 +41,32 @@ export const useAuthStore = defineStore('auth', () => {
     return data.user
   }
 
+  // Mode diagnostic Android 14 : bypass sécurité pour tester autres fonctionnalités
+  function debugBypassLogin() {
+    console.log('[DEBUG_BYPASS] activation mode diagnostic Android 14')
+    const debugUser = { id: 1, email: 'debug@gamelounge.com', role: 'admin', nom: 'Debug Android14' }
+    const debugToken = 'debug-bypass-android14'
+    token.value = debugToken
+    user.value = debugUser
+    safeSetItem('gl_token', debugToken)
+    safeSetItem('gl_user', JSON.stringify(debugUser))
+    // Flag pour router et autres checks
+    try { localStorage.setItem('gl_debug_bypass', '1') } catch {}
+    console.log('[DEBUG_BYPASS] token saved, isAuthenticated=', isAuthenticated.value)
+    return debugUser
+  }
+
+  function isDebugBypass() {
+    try { return localStorage.getItem('gl_token') === 'debug-bypass-android14' || localStorage.getItem('gl_debug_bypass') === '1' } catch { return false }
+  }
+
   async function logout() {
     try { await api.post('/auth/logout') } catch {}
     token.value = null
     user.value = null
     safeRemoveItem('gl_token')
     safeRemoveItem('gl_user')
+    try { localStorage.removeItem('gl_debug_bypass') } catch {}
   }
 
   async function fetchMe() {
@@ -59,5 +79,5 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  return { user, token, isAuthenticated, isAdmin, isEmploye, login, logout, fetchMe }
+  return { user, token, isAuthenticated, isAdmin, isEmploye, login, logout, fetchMe, debugBypassLogin, isDebugBypass }
 })

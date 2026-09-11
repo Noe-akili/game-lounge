@@ -64,6 +64,20 @@
         </button>
 
         <p v-if="error" class="text-center text-sm text-neon-red">{{ error }}</p>
+
+        <!-- Mode diagnostic Android 14 : bypass sécurité -->
+        <div class="mt-4 space-y-2">
+          <div class="relative flex items-center gap-2">
+            <div class="flex-1 h-px bg-white/10"></div>
+            <span class="text-xs text-txt-dim">ou diagnostic</span>
+            <div class="flex-1 h-px bg-white/10"></div>
+          </div>
+          <button type="button" @click="handleDebugBypass" class="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors text-sm font-medium">
+            <span>🔓</span>
+            <span>Mode diagnostic Android 14 (sans sécurité)</span>
+          </button>
+          <p class="text-xs text-txt-dim text-center">Bypass login pour tester Dashboard / Consoles / Sessions</p>
+        </div>
       </motion.form>
 
       <p class="text-center text-xs text-txt-dim mt-6">© 2024 Game Lounge — Tous droits réservés</p>
@@ -95,7 +109,28 @@ const form = reactive({
 
 onMounted(() => {
   console.log('[LOGIN_VIEW] mounted, auth.isAuthenticated=', auth.isAuthenticated)
+  console.log('[LOGIN_VIEW] userAgent=', navigator.userAgent)
+  console.log('[LOGIN_VIEW] is Android 14?', /Android\s*14/.test(navigator.userAgent) || navigator.userAgent.includes('Android 14'))
+  // Auto bypass si ?debug dans URL pour test rapide
+  if (typeof window !== 'undefined' && window.location.search.includes('debug')) {
+    console.log('[DEBUG_BYPASS] auto bypass via ?debug')
+    handleDebugBypass()
+  }
 })
+
+async function handleDebugBypass() {
+  console.log('[DEBUG_BYPASS] handleDebugBypass start')
+  try {
+    auth.debugBypassLogin()
+    toast.success('Mode diagnostic activé')
+    console.log('[DEBUG_BYPASS] navigating to /admin')
+    await router.push('/admin')
+    console.log('[DEBUG_BYPASS] navigation success')
+  } catch (e: any) {
+    console.error('[DEBUG_BYPASS] failed', e)
+    toast.error('Bypass échoué: ' + (e.message || 'erreur'))
+  }
+}
 
 async function handleLogin() {
   console.log('[LOGIN_SUBMIT] handleLogin start')
