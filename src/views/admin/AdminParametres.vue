@@ -57,7 +57,13 @@
       <div v-if="!syncStatus.neonEnabled" class="text-center py-6">
         <CloudOff class="w-10 h-10 text-txt-dim mx-auto mb-2" />
         <p class="text-txt-dim text-sm">Cloud Neon non configuré</p>
-        <p class="text-xs text-txt-dim mt-1">Configurez DATABASE_URL dans .env pour activer</p>
+        <p class="text-xs text-txt-dim mt-1">Vérifiez la connexion internet</p>
+      </div>
+      <div v-else-if="!syncStatus.neonAvailable" class="text-center py-6">
+        <CloudOff class="w-10 h-10 text-amber-400 mx-auto mb-2" />
+        <p class="text-amber-400 text-sm">Neon configuré (offline)</p>
+        <p class="text-xs text-txt-dim mt-1">Données locales synchronisées à la reconnexion — {{ syncStatus.mode }}</p>
+        <button @click="runSync" class="btn-neon-violet mt-3">Tester connexion</button>
       </div>
       <div v-else class="space-y-4 w-full max-w-full min-w-0 overflow-hidden">
         <div class="flex items-center justify-between p-3 bg-bg-surface rounded-xl">
