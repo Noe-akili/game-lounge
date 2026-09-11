@@ -1,12 +1,6 @@
 node_modules/
 dist/
-server/data/
-.env
+server-rust/dist/
 *.db
-server-dist/
-
-android/
-data/
-public/nodejs/server.js
-public/nodejs/node_modules/
-public/nodejs/public/
+.env
+.DS_Store

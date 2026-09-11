@@ -4,12 +4,15 @@ import { fileURLToPath, URL } from 'node:url'
 
 export default defineConfig({
   plugins: [vue()],
+  base: './',
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url))
     }
   },
   build: {
+    outDir: 'server-rust/dist',
+    emptyOutDir: true,
     cssCodeSplit: false,
     rollupOptions: {
       input: {

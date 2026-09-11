@@ -1,33 +1,8 @@
 // @ts-nocheck
-import { initClientDb, seedClientDb } from '@/lib/clientDb'
-import { handleRequest, isTauri } from '@/lib/transport'
-import { isHttpServerMode } from '@/lib/httpApi'
-
-let dbReady: Promise<void> | null = null
-
-async function ensureDb() {
-  // En mode Tauri (Android/backend Rust) ou HTTP, pas de DB navigateur.
-  // On vérifie avec le nouveau isTauri() robuste (qui gère le race au boot APK)
-  const { waitForTauri } = await import('@/lib/transport')
-  const isTauriMode = await waitForTauri(500).catch(() => false)
-  if (isTauriMode || isTauri() || isHttpServerMode()) return
-  if (!dbReady) {
-    dbReady = (async () => {
-      try {
-        await initClientDb()
-        await seedClientDb()
-      } catch (e) {
-        console.error('DB init fail (non-fatal)', e)
-      }
-    })()
-  }
-  return dbReady
-}
+// Tauri-only API - plus de fallback navigateur/Node
+import { handleRequest } from '@/lib/transport'
 
 async function request(path: string, options: any = {}) {
-  // Sur Android cold start, ensureDb peut prendre 200ms ; on ne bloque pas l'UI, on laisse handleRequest gérer le fallback
-  try { await ensureDb() } catch (e) { console.warn('[api] ensureDb non-fatal', e) }
-
   let token: string | null = null
   try { token = localStorage.getItem('gl_token') } catch { token = null }
   let body: any = undefined
@@ -42,7 +17,6 @@ async function request(path: string, options: any = {}) {
     result = await handleRequest(path, options.method || 'GET', body, token)
   } catch (e: any) {
     console.error('[api] handleRequest threw', e)
-    // Sur Android WebView, une exception non catchée = crash -> on wrappe
     const err: any = new Error(e?.message || 'Erreur réseau')
     err.status = 500
     err.data = { message: e?.message }
