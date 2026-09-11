@@ -170,37 +170,19 @@ pub async fn auth_login(state: State<'_, AppState>, email: String, password: Str
         .and_then(Value::as_str)
         .unwrap_or("");
 
-    // Upgrade transparent vers Argon2 si ancien hash (scrypt/bcrypt)
+    // Upgrade transparent vers Argon2 si ancien hash (scrypt/bcrypt) - best practice
     if auth_core::needs_rehash(stored) {
-        let pwd2 = password.clone();
-        // Ne bloque pas le login, fait en background
-        let db_clone = db(&state).query_all("users").is_ok(); // dummy to avoid borrow
-        if db_clone {
-            let pwd_for_hash = pwd2.clone();
-            let email_clone = email.clone();
-            let state_clone = state.inner().clone();
-            // On ne peut pas clone State, donc on fait simple : rehash synchrone mais spawn_blocking
-            if let Ok(upgraded) = tokio::task::spawn_blocking(move || auth_core::hash_password(&pwd_for_hash))
-                .await
-                .unwrap_or_else(|_| Err(ApiError::internal("hash failed")))
-            {
-                let mut upd = jmap();
-                upd.insert("password_hash".into(), json!(upgraded));
-                if let Some(id) = user.get("id").and_then(Value::as_i64) {
-                    let _ = db.update("users", id, &upd);
-                    // Push vers Neon en background si possible
-                    #[cfg(feature = "neon-sync")]
-                    {
-                        let id_clone = id;
-                        let email_c = email_clone.clone();
-                        tokio::spawn(async move {
-                            // Récupère pool
-                            // Note: on ne peut pas utiliser state_clone ici (moved), on ré-essaie via try
-                            // Simplifié : pas de push Neon ici, sera sync au prochain sync_run
-                            eprintln!("[auth] rehash Argon2 pour {} id {}", email_c, id_clone);
-                        });
-                    }
-                }
+        let pwd_for_hash = password.clone();
+        if let Ok(upgraded) = tokio::task::spawn_blocking(move || auth_core::hash_password(&pwd_for_hash))
+            .await
+            .unwrap_or_else(|_| Err(ApiError::internal("hash failed")))
+        {
+            let mut upd = jmap();
+            upd.insert("password_hash".into(), json!(upgraded));
+            if let Some(id) = user.get("id").and_then(Value::as_i64) {
+                let _ = db.update("users", id, &upd);
+                #[cfg(feature = "neon-sync")]
+                eprintln!("[auth] rehash Argon2 pour {} id {}", email, id);
             }
         }
     }
