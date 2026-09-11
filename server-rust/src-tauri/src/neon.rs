@@ -28,21 +28,14 @@ pub async fn init_neon_pool() -> Option<NeonPool> {
         }
     };
     eprintln!("[neon] DATABASE_URL présent ({} chars), tentative rustls", url.len());
-    // Tente rustls (tokio-postgres-rustls 0.7 attend rustls 0.19)
+    // Tente rustls 0.19 (tokio-postgres-rustls 0.7) - API 0.19 utilise from_trust_anchor
     let rustls_result = async {
         let mut root_store = rustls::RootCertStore::empty();
-        // webpki-roots 0.22 : TLS_SERVER_ROOTS.0
         root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
-            rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
-                ta.subject,
-                ta.spki,
-                ta.name_constraints,
-            )
+            rustls::OwnedTrustAnchor::from_trust_anchor(ta)
         }));
-        // rustls 0.19 : ClientConfig::new() puis set root_store
         let mut config = rustls::ClientConfig::new();
         config.root_store = root_store;
-        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         let tls = tokio_postgres_rustls::MakeRustlsConnect::new(config);
         tokio_postgres::connect(&url, tls).await
     }.await;
