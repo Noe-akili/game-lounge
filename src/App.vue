@@ -38,8 +38,10 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { motion } from 'motion-v'
 import { Toaster } from 'vue-sonner'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const auth = useAuthStore()
 const routeLoading = ref(false)
 const isMobile = typeof window !== 'undefined' && window.innerWidth < 640
 
@@ -51,9 +53,25 @@ router.beforeEach(() => {
 router.afterEach(() => {
   timeout = setTimeout(() => (routeLoading.value = false), 300)
 })
-onMounted(() => {
-  // hide initial loader after mount
+onMounted(async () => {
   setTimeout(() => (routeLoading.value = false), 400)
+  // Auto bypass pour appareil debug : si backend détecte ce téléphone, on l'envoie direct sur l'accueil
+  if (!auth.isAuthenticated) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const allowed = await invoke('debug_is_allowed')
+      if (allowed) {
+        console.log('[AUTO_DEBUG] appareil debug détecté, bypass automatique')
+        auth.debugBypassLogin()
+        // Import tarifs en arrière-plan
+        try {
+          const { importDefaultTarifs } = await import('@/lib/debug')
+          importDefaultTarifs().catch(() => {})
+        } catch {}
+        await router.push('/admin')
+      }
+    } catch {}
+  }
 })
 </script>
 

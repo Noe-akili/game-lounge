@@ -47,5 +47,16 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('gl_user', JSON.stringify(data.user))
   }
 
-  return { user, token, isAuthenticated, isAdmin, login, logout, fetchMe }
+  function debugBypassLogin() {
+    const debugUser = { id: 1, email: 'debug@gamelounge.com', role: 'admin', nom: 'Debug Android14' }
+    const debugToken = 'debug-bypass-android14'
+    token.value = debugToken
+    user.value = debugUser
+    localStorage.setItem('gl_token', debugToken)
+    localStorage.setItem('gl_user', JSON.stringify(debugUser))
+    localStorage.setItem('gl_debug_bypass', '1')
+    return debugUser
+  }
+
+  return { user, token, isAuthenticated, isAdmin, login, logout, fetchMe, debugBypassLogin }
 })
