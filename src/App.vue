@@ -16,7 +16,7 @@
     >
       <router-view />
     </motion.div>
-    <VueSonner
+    <Toaster
       :position="isMobile ? 'top-center' : 'bottom-right'"
       theme="dark"
       :toast-options="{

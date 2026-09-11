@@ -113,6 +113,7 @@ function onSessionEnded() {
 }
 
 onMounted(() => {
+  console.log('[DASHBOARD_START] DashboardView mounted')
   fetchData()
   refreshInterval = setInterval(fetchData, 10000)
   window.addEventListener('sync-poll', onSyncPoll)

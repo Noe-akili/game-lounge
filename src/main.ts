@@ -6,6 +6,10 @@ import { isTauri, waitForTauri } from './lib/transport'
 import router from './router'
 import './assets/main.css'
 
+console.log('[BOOT] main.ts start')
+console.log('[BOOT] href=', typeof window !== 'undefined' ? window.location.href : 'no-window')
+console.log('[BOOT] userAgent=', typeof navigator !== 'undefined' ? navigator.userAgent : 'no-navigator')
+
 // === Android / Tauri hardening : jamais de white screen sur erreur non catchée ===
 if (typeof window !== 'undefined') {
   window.addEventListener('error', (e) => {
@@ -27,31 +31,38 @@ if (typeof window !== 'undefined') {
   setVH()
 }
 
+console.log('[BOOT] initClientData start')
 initClientData()
 
 async function initClientData() {
+  console.log('[BOOT] initClientData() -> waitForTauri')
   // En mode Tauri (APK), la base est gérée par Rust/SQLite - ne pas init la DB navigateur.
   // On attend brièvement l'injection de __TAURI__ pour éviter le race au boot APK
   try {
     const isTauriMode = await waitForTauri(1500)
+    console.log('[BOOT] waitForTauri result=', isTauriMode, 'isTauri()=', isTauri())
     if (isTauriMode || isTauri()) {
-      console.log('✅ Mode Tauri détecté - DB navigateur ignorée')
+      console.log('✅ [BOOT] Mode Tauri détecté - DB navigateur ignorée')
+      console.log('[TAURI_DETECTED] true')
       return
     }
+    console.log('[TAURI_DETECTED] false - fallback clientDb')
   } catch (e) {
     console.warn('[init] waitForTauri failed', e)
   }
 
   try {
+    console.log('[BOOT] initClientDb start (browser mode)')
     const { initClientDb, seedClientDb } = await import('@/lib/clientDb')
     await initClientDb()
     await seedClientDb()
-    console.log('✅ Base de données navigateur initialisée')
+    console.log('✅ [BOOT] Base de données navigateur initialisée')
   } catch (e) {
-    console.error('❌ Erreur initialisation base de données (non-fatal):', e)
+    console.error('❌ [BOOT] Erreur initialisation base de données (non-fatal):', e)
   }
 }
 
+console.log('[BOOT] createApp')
 const app = createApp(App)
 // Handler d'erreur Vue global : évite crash sur render error Android low-end
 app.config.errorHandler = (err, instance, info) => {
@@ -62,7 +73,9 @@ app.config.warnHandler = (msg) => {
 }
 app.use(createPinia())
 app.use(router)
+console.log('[BOOT] app.mount #app')
 app.mount('#app')
+console.log('[BOOT] app mounted')
 
 // === Android back button : fermer modale/sidebar avant de quitter ===
 if (typeof window !== 'undefined') {

@@ -141,16 +141,20 @@ if (typeof window !== 'undefined') {
 router.beforeEach((to, from, next) => {
   try {
     const auth = useAuthStore()
+    console.log('[ROUTER_NAVIGATION] beforeEach', from.path, '->', to.path, 'isAuth', auth.isAuthenticated, 'role', auth.user?.role)
 
     if (to.meta.requiresAuth !== false && !auth.isAuthenticated) {
+      console.log('[ROUTER_NAVIGATION] redirect to /login (not auth)')
       return next('/login')
     }
 
     if (to.path === '/login' && auth.isAuthenticated) {
+      console.log('[ROUTER_NAVIGATION] already auth, redirect from /login')
       return next(auth.user?.role === 'admin' ? '/admin' : '/dashboard')
     }
 
     if (to.meta.roles && !to.meta.roles.includes(auth.user?.role)) {
+      console.log('[ROUTER_NAVIGATION] role mismatch, redirect')
       return next(auth.user?.role === 'admin' ? '/admin' : '/dashboard')
     }
 
@@ -163,6 +167,9 @@ router.beforeEach((to, from, next) => {
 
 router.onError((err) => {
   console.error('[router] navigation error (Android WebView)', err)
+})
+router.afterEach((to, from) => {
+  console.log('[ROUTER_NAVIGATION] afterEach', from.path, '->', to.path)
 })
 
 export default router

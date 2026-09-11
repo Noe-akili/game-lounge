@@ -72,7 +72,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { motion } from 'motion-v'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
@@ -93,7 +93,12 @@ const form = reactive({
   password: 'admin123',
 })
 
+onMounted(() => {
+  console.log('[LOGIN_VIEW] mounted, auth.isAuthenticated=', auth.isAuthenticated)
+})
+
 async function handleLogin() {
+  console.log('[LOGIN_SUBMIT] handleLogin start')
   // Anti double-clic (important sur APK où le scrypt prend 1-2s)
   if (loading.value) return
   if (!isValidEmail(form.email)) return toast.error('Email invalide')
@@ -103,12 +108,17 @@ async function handleLogin() {
   // Normalise les entrées (évite espace invisible sur clavier Android)
   const email = form.email.trim().toLowerCase()
   const password = form.password.trim()
+  console.log('[AUTH_START] email=', email)
   try {
     await auth.login(email, password)
+    console.log('[AUTH_SUCCESS] login done, role=', auth.user?.role)
     toast.success('Connexion réussie !')
     // Petit délai pour laisser le temps au toast avant navigation sur WebView lente
     await new Promise(r => setTimeout(r, 100))
-    await router.push(auth.user?.role === 'admin' ? '/admin' : '/dashboard')
+    const target = auth.user?.role === 'admin' ? '/admin' : '/dashboard'
+    console.log('[ROUTER_NAVIGATION] push to', target)
+    await router.push(target)
+    console.log('[ROUTER_NAVIGATION] push success')
   } catch (e: any) {
     // Extraction robuste du message (Tauri renvoie parfois {message,status} en JSON)
     let msg = e?.message || e?.data?.message || 'Identifiants incorrects'

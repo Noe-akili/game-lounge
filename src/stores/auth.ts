@@ -28,11 +28,16 @@ export const useAuthStore = defineStore('auth', () => {
   const isEmploye = computed(() => user.value?.role === 'employe')
 
   async function login(email, password) {
+    console.log('[AUTH_START] login attempt for', email)
+    console.log('[AUTH_STATE_UPDATE] before login, isAuthenticated=', isAuthenticated.value)
     const data = await api.post('/auth/login', { email, password })
+    console.log('[AUTH_SUCCESS] login success, user role', data.user?.role)
     token.value = data.token
     user.value = data.user
     safeSetItem('gl_token', data.token)
+    console.log('[TOKEN_SAVE] token saved length', data.token?.length)
     safeSetItem('gl_user', JSON.stringify(data.user))
+    console.log('[AUTH_STATE_UPDATE] after login, isAuthenticated=', !!token.value && !!user.value)
     return data.user
   }
 

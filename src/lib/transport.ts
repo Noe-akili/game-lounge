@@ -40,9 +40,12 @@ export async function handleRequest(
   body?: any,
   authToken?: string
 ): Promise<{ status: number; body: any }> {
+  console.log('[TRANSPORT_START]', method, path)
+  console.log('[TAURI_DETECTED] isTauri=', isTauri(), 'api path', path)
   // Sur Android, isHttpServerMode est toujours false, mais on garde la branche pour debug
   try {
     if (isHttpServerMode()) {
+      console.log('[TRANSPORT] httpServer mode')
       return await handleHttpServerRequest(path, method, body, authToken)
     }
   } catch (e) {

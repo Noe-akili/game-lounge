@@ -112,7 +112,9 @@ pub fn consoles_create(
         "etat".into(),
         json!(etat.unwrap_or_else(|| "disponible".into())),
     );
-    row.insert("created_at".into(), json!(now_iso()));
+    let now = now_iso();
+    row.insert("created_at".into(), json!(now.clone()));
+    row.insert("date_ajout".into(), json!(now));
     db(&state).insert("consoles", &row)
 }
 

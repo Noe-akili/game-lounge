@@ -27,10 +27,10 @@ pub const TABLES: [&str; 11] = [
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, nom TEXT, role TEXT DEFAULT 'employe', created_at TEXT);
-CREATE TABLE IF NOT EXISTS consoles (id INTEGER PRIMARY KEY, nom TEXT, type TEXT, etat TEXT DEFAULT 'disponible', poste_numero INTEGER, date_ajout TEXT);
+CREATE TABLE IF NOT EXISTS consoles (id INTEGER PRIMARY KEY, nom TEXT, type TEXT, etat TEXT DEFAULT 'disponible', poste_numero INTEGER, date_ajout TEXT, created_at TEXT);
 CREATE TABLE IF NOT EXISTS jeux (id INTEGER PRIMARY KEY, titre TEXT, genre TEXT, console_id INTEGER, actif INTEGER DEFAULT 1, jaquette_url TEXT, created_at TEXT);
-CREATE TABLE IF NOT EXISTS joueurs (id INTEGER PRIMARY KEY, nom TEXT, telephone TEXT, email TEXT, jetons_solde INTEGER DEFAULT 0, date_inscription TEXT);
-CREATE TABLE IF NOT EXISTS sessions_jeu (id INTEGER PRIMARY KEY, console_id INTEGER, joueur_id INTEGER, jeu_id INTEGER, employe_id INTEGER, debut TEXT, fin TEXT, duree_minutes INTEGER, montant INTEGER, tarif_prix INTEGER, jetons_gagnes INTEGER DEFAULT 0, statut TEXT, created_at TEXT);
+CREATE TABLE IF NOT EXISTS joueurs (id INTEGER PRIMARY KEY, nom TEXT, telephone TEXT, email TEXT, jetons_solde INTEGER DEFAULT 0, date_inscription TEXT, derniere_visite TEXT);
+CREATE TABLE IF NOT EXISTS sessions_jeu (id INTEGER PRIMARY KEY, console_id INTEGER, joueur_id INTEGER, jeu_id INTEGER, employe_id INTEGER, tarif_id INTEGER, debut TEXT, fin TEXT, duree_minutes INTEGER, montant INTEGER, tarif_prix INTEGER, jetons_gagnes INTEGER DEFAULT 0, statut TEXT, created_at TEXT);
 CREATE TABLE IF NOT EXISTS tarifs (id INTEGER PRIMARY KEY, nom TEXT, type TEXT, prix INTEGER, duree_minutes INTEGER, description TEXT, actif INTEGER DEFAULT 1, console_type TEXT, jeu TEXT, created_at TEXT);
 CREATE TABLE IF NOT EXISTS factures (id INTEGER PRIMARY KEY, numero_facture TEXT UNIQUE, session_id INTEGER, joueur_id INTEGER, montant_ht REAL, taux_tva REAL DEFAULT 20, montant_tva REAL, montant_ttc REAL, mode_paiement TEXT, statut TEXT, date_paiement TEXT, created_at TEXT);
 CREATE TABLE IF NOT EXISTS jetons_transactions (id INTEGER PRIMARY KEY, joueur_id INTEGER, quantite INTEGER, type TEXT, raison TEXT, session_id INTEGER, created_at TEXT);
@@ -137,6 +137,13 @@ impl Db {
         }
         conn.execute_batch(SCHEMA)
             .map_err(|e| ApiError::internal(format!("Init schéma: {e}")))?;
+        // Migration pour bases existantes créées avant ajout colonnes (évite crash "no such column" après update APK)
+        let _ = conn.execute_batch(
+            "ALTER TABLE consoles ADD COLUMN created_at TEXT; \
+             ALTER TABLE consoles ADD COLUMN date_ajout TEXT; \
+             ALTER TABLE joueurs ADD COLUMN derniere_visite TEXT; \
+             ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER;",
+        );
         apply_pragmas(&conn);
         // Test écriture immédiate pour détecter disque plein / permission early
         let _ = conn.execute_batch("CREATE TABLE IF NOT EXISTS __healthcheck (id INTEGER PRIMARY KEY); DROP TABLE IF EXISTS __healthcheck;");
@@ -150,6 +157,12 @@ impl Db {
             .map_err(|e| ApiError::internal(format!("Ouverture SQLite mémoire: {e}")))?;
         conn.execute_batch(SCHEMA)
             .map_err(|e| ApiError::internal(format!("Init schéma mémoire: {e}")))?;
+        let _ = conn.execute_batch(
+            "ALTER TABLE consoles ADD COLUMN created_at TEXT; \
+             ALTER TABLE consoles ADD COLUMN date_ajout TEXT; \
+             ALTER TABLE joueurs ADD COLUMN derniere_visite TEXT; \
+             ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER;",
+        );
         apply_pragmas(&conn);
         Ok(Db(Mutex::new(conn)))
     }
