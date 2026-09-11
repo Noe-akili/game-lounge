@@ -14,16 +14,15 @@ pub struct NeonPool {
 #[cfg(feature = "neon-sync")]
 pub async fn init_neon_pool() -> Option<NeonPool> {
     const FALLBACK_URL: &str = "postgresql://neondb_owner:npg_AEay0ug9NHYj@ep-wild-cloud-axxw1ufj-pooler.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require";
-    let url = std::env::var("DATABASE_URL")
-        .or_else(|_| std::env::var("NEON_DATABASE_URL"))
-        .ok()
-        .or_else(|| option_env!("DATABASE_URL").map(|s| s.to_string()))
-        .or_else(|| option_env!("NEON_DATABASE_URL").map(|s| s.to_string()))
+    let url = std::env::var("DATABASE_URL").ok().filter(|s| !s.trim().is_empty())
+        .or_else(|| std::env::var("NEON_DATABASE_URL").ok().filter(|s| !s.trim().is_empty()))
+        .or_else(|| option_env!("DATABASE_URL").map(|s| s.to_string()).filter(|s| !s.trim().is_empty()))
+        .or_else(|| option_env!("NEON_DATABASE_URL").map(|s| s.to_string()).filter(|s| !s.trim().is_empty()))
         .or_else(|| Some(FALLBACK_URL.to_string()));
     let url = match url {
-        Some(u) if !u.is_empty() => u,
+        Some(u) if !u.trim().is_empty() => u,
         _ => {
-            crate::logger::log_neon("DATABASE_URL absent, mode offline");
+            crate::logger::log_neon("DATABASE_URL absent et fallback vide, mode offline");
             return None;
         }
     };
