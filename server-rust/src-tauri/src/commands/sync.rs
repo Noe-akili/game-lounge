@@ -136,17 +136,15 @@ pub async fn sync_run(state: State<'_, AppState>, token: Option<String>) -> ApiR
 #[tauri::command]
 pub fn sync_poll(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
     claims(&state, &token)?;
-    // Pour l'instant, pas de changes réels, mais structure prête pour push/pull incrémental
+    #[cfg(feature = "neon-sync")]
+    let neon_enabled = state.neon_pool.lock().ok().and_then(|g| g.clone()).is_some();
+    #[cfg(not(feature = "neon-sync"))]
+    let neon_enabled = false;
     Ok(json!({
         "changes": {},
         "timestamp": now_iso(),
         "neon": {
-            "enabled": {
-                #[cfg(feature = "neon-sync")]
-                { let p = state.neon_pool.lock().ok().and_then(|g| g.clone()); p.is_some() },
-                #[cfg(not(feature = "neon-sync"))]
-                { false }
-            }
+            "enabled": neon_enabled
         }
     }))
 }
