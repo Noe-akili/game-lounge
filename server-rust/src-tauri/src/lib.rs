@@ -8,6 +8,7 @@ pub mod pdf;
 pub mod validators;
 
 use std::sync::Mutex;
+use serde_json::json;
 use tauri::Manager;
 
 use db::Db;
