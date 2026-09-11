@@ -46,10 +46,16 @@
     </div>
 
     <div class="card">
-      <h4 class="font-bold mb-3 flex items-center gap-2"><Server class="w-4 h-4" /> Logs Backend (Rust)</h4>
-      <p class="text-xs text-txt-dim mb-2">Logs Rust visibles via <code>adb logcat | grep -E "BOOT|neon|auth|import"</code> ou ci-dessous via invoke</p>
-      <button @click="fetchBackendLogs" class="btn-neon-outline w-full">Rafraîchir statut backend</button>
-      <div v-if="backendStatus" class="mt-3 p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap">{{ backendStatus }}</div>
+      <h4 class="font-bold mb-3 flex items-center gap-2"><Server class="w-4 h-4" /> Logs Backend (Rust) - 1.log</h4>
+      <p class="text-xs text-txt-dim mb-2">Tous les logs Rust capturés dans <code>1.log</code> (aucun logcat nécessaire)</p>
+      <div class="flex gap-2">
+        <button @click="fetchBackendLogs" class="btn-neon-outline flex-1">Statut Neon</button>
+        <button @click="fetchRustLogs" class="btn-neon-violet flex-1">Voir 1.log (Rust)</button>
+      </div>
+      <div v-if="backendStatus" class="mt-3 p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap max-h-32 overflow-auto">{{ backendStatus }}</div>
+      <div v-if="rustLogs" class="mt-3 p-3 rounded-xl bg-black/50 text-xs font-mono whitespace-pre-wrap max-h-64 overflow-auto">{{ rustLogs }}</div>
+      <button @click="testNeonConnection" class="btn-neon-outline w-full mt-3">Tester connexion Neon (où ça bloque)</button>
+      <div v-if="neonTestResult" class="mt-2 p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap">{{ neonTestResult }}</div>
     </div>
 
     <div class="card">
@@ -75,6 +81,8 @@ const loadingNeon = ref(false)
 const neonResult = ref('')
 const logs = ref<string[]>([])
 const backendStatus = ref('')
+const rustLogs = ref('')
+const neonTestResult = ref('')
 
 function logColor(l: string) {
   if (l.includes('[BOOT]') || l.includes('[DASHBOARD_START]')) return 'text-neon-green'
@@ -154,6 +162,27 @@ async function fetchBackendLogs() {
     backendStatus.value = JSON.stringify(s, null, 2)
   } catch (e: any) {
     backendStatus.value = `Erreur: ${e.message}`
+  }
+}
+async function fetchRustLogs() {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    rustLogs.value = await invoke('get_rust_logs')
+    if (!rustLogs.value) rustLogs.value = await invoke('get_memory_logs').then((a: string[]) => a.join('\n'))
+  } catch (e: any) {
+    rustLogs.value = `Erreur get_rust_logs: ${e.message}`
+  }
+}
+async function testNeonConnection() {
+  neonTestResult.value = 'Test en cours...'
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const res = await invoke('test_neon_connection')
+    neonTestResult.value = JSON.stringify(res, null, 2)
+    // Rafraîchit aussi les logs Rust
+    fetchRustLogs()
+  } catch (e: any) {
+    neonTestResult.value = `❌ Erreur: ${e.message}`
   }
 }
 

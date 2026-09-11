@@ -3,6 +3,7 @@ pub mod commands;
 pub mod db;
 pub mod error;
 pub mod import;
+pub mod logger;
 pub mod neon;
 pub mod pdf;
 pub mod validators;
@@ -268,6 +269,8 @@ fn seed_jeux_from_pdfs(db: &Db) -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    crate::logger::init();
+    crate::logger::log("BOOT", "App démarrage");
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
@@ -474,6 +477,9 @@ pub fn run() {
             commands::debug_is_allowed,
             commands::import_default_tarifs,
             commands::neon_status,
+            commands::get_rust_logs,
+            commands::get_memory_logs,
+            commands::test_neon_connection,
         ])
         .run(tauri::generate_context!())
         .expect("erreur lors de l'exécution de Tauri");

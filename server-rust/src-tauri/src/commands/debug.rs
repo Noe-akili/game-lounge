@@ -69,3 +69,67 @@ pub fn neon_status(state: State<'_, AppState>) -> ApiResult<Value> {
         "fallbackUsed": !url_present
     }))
 }
+
+/// Récupère les logs Rust (1.log) - tout est capturé, rien ne nous échappe
+#[tauri::command]
+pub fn get_rust_logs() -> String {
+    crate::logger::read_log_file()
+}
+
+/// Récupère les logs en mémoire (derniers 200)
+#[tauri::command]
+pub fn get_memory_logs() -> Vec<String> {
+    crate::logger::get_logs(200)
+}
+
+/// Teste la connexion Neon et retourne le diagnostic précis où ça bloque
+#[tauri::command(async)]
+pub async fn test_neon_connection(state: State<'_, AppState>) -> ApiResult<Value> {
+    crate::logger::log("neon", "test_neon_connection demandé");
+    #[cfg(feature = "neon-sync")]
+    {
+        let url = std::env::var("DATABASE_URL")
+            .or_else(|_| std::env::var("NEON_DATABASE_URL"))
+            .ok()
+            .or_else(|| option_env!("DATABASE_URL").map(|s| s.to_string()))
+            .unwrap_or_else(|| "postgresql://neondb_owner:npg_AEay0ug9NHYj@ep-wild-cloud-axxw1ufj-pooler.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require".to_string());
+        crate::logger::log("neon", &format!("URL len {} chars, host {}", url.len(), url.split('@').last().unwrap_or("").split('/').next().unwrap_or("")));
+        // Teste pool existant
+        let pool_opt = state.neon_pool.lock().ok().and_then(|g| g.clone());
+        if let Some(pool) = pool_opt {
+            crate::logger::log("neon", "pool déjà disponible, test query SELECT 1");
+            match pool.client.query("SELECT 1", &[]).await {
+                Ok(_) => {
+                    crate::logger::log("neon", "SELECT 1 OK - Neon joignable");
+                    return Ok(json!({"success": true, "message": "Neon joignable (pool existant)", "url_host": url.split('@').last().unwrap_or("").split('/').next().unwrap_or("").to_string()}));
+                }
+                Err(e) => {
+                    crate::logger::log_neon_error("SELECT 1 pool existant", &e.to_string());
+                    return Ok(json!({"success": false, "message": format!("Pool existant mais query failed: {}", e), "error": e.to_string()}));
+                }
+            }
+        }
+        // Tente nouvelle connexion
+        crate::logger::log("neon", "pool non disponible, tentative init_neon_pool");
+        match crate::neon::init_neon_pool().await {
+            Some(pool) => {
+                crate::logger::log("neon", "init_neon_pool OK, test query");
+                match pool.client.query("SELECT 1", &[]).await {
+                    Ok(_) => Ok(json!({"success": true, "message": "Neon connecté avec succès (nouveau pool)", "url_host": url.split('@').last().unwrap_or("").split('/').next().unwrap_or("").to_string()})),
+                    Err(e) => {
+                        crate::logger::log_neon_error("SELECT 1 nouveau pool", &e.to_string());
+                        Ok(json!({"success": false, "message": format!("Nouveau pool mais query failed: {}", e), "error": e.to_string()}))
+                    }
+                }
+            }
+            None => {
+                crate::logger::log("neon", "init_neon_pool returned None (offline)");
+                Ok(json!({"success": false, "message": "Neon pool non disponible (offline) - vérifiez DATABASE_URL et internet", "url_host": url.split('@').last().unwrap_or("").split('/').next().unwrap_or("").to_string()}))
+            }
+        }
+    }
+    #[cfg(not(feature = "neon-sync"))]
+    {
+        Ok(json!({"success": false, "message": "Feature neon-sync désactivée"}))
+    }
+}

@@ -4,3 +4,4 @@ server-rust/dist/
 *.db
 .env
 .DS_Store
+1.log

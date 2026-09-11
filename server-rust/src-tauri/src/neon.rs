@@ -23,11 +23,11 @@ pub async fn init_neon_pool() -> Option<NeonPool> {
     let url = match url {
         Some(u) if !u.is_empty() => u,
         _ => {
-            eprintln!("[neon] DATABASE_URL absent, mode offline");
+            crate::logger::log_neon("DATABASE_URL absent, mode offline");
             return None;
         }
     };
-    eprintln!("[neon] DATABASE_URL présent ({} chars), tentative rustls", url.len());
+    crate::logger::log_neon(&format!("DATABASE_URL présent ({} chars), tentative rustls", url.len()));
     // Tente rustls 0.19 - webpki-roots 0.21 fournit TLS_SERVER_ROOTS directement compatible
     let rustls_result = async {
         let mut root_store = rustls::RootCertStore::empty();
