@@ -132,9 +132,10 @@ fn seed_default_users(db: &Db) -> Result<(), Box<dyn std::error::Error>> {
     }
     if db.query_all("consoles")?.is_empty() {
         for i in 1..=6 {
+            let console_type = if i <= 3 { "PS5" } else { "PS4" };
             let mut c = serde_json::Map::new();
-            c.insert("nom".into(), json!(format!("Poste {}", i)));
-            c.insert("type".into(), json!(if i <= 3 { "PS5" } else { "PS4" }));
+            c.insert("nom".into(), json!(format!("{} poste-{}", console_type, i)));
+            c.insert("type".into(), json!(console_type));
             c.insert("poste_numero".into(), json!(i));
             c.insert("etat".into(), json!("disponible"));
             let now2 = db::now_iso();
@@ -229,17 +230,35 @@ fn seed_tarifs_from_pdfs(db: &Db) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn seed_jeux_from_pdfs(db: &Db) -> Result<(), Box<dyn std::error::Error>> {
-    let jeux = vec![
-        ("FIFA 26", "Sport"), ("Mortal Kombat 1", "Combat"), ("Tekken 8", "Combat"), ("Gran Turismo 7", "Course"),
-        ("Need for Speed", "Course"), ("WWE 2K25", "Combat"), ("NBA 2K25", "Sport"), ("GTA V", "Action"),
-        ("God of War", "Action"), ("Call of Duty", "Action"), ("Fortnite", "Action"), ("Spider-Man 2", "Action"),
-        ("Red Dead Redemption 2", "Action"), ("Uncharted 4", "Aventure"), ("Resident Evil 4", "Horreur"),
-        ("Undisputed", "Combat"), ("EA Sports UFC 5", "Combat"), ("Naruto Storm 4", "Combat"),
+    // Récupère consoles pour associer jeux à leur console respective (best practice)
+    let consoles = db.query_all("consoles")?;
+    let find_console = |poste_numero: i64| consoles.iter().find(|c| c.get("poste_numero").and_then(|v| v.as_i64()) == Some(poste_numero)).and_then(|c| c.get("id").and_then(|v| v.as_i64()));
+    let c1 = find_console(1); // PS5 poste-1
+    let c2 = find_console(2); // PS5 poste-2
+    let c3 = find_console(3); // PS5 poste-3
+    let c4 = find_console(4); // PS4 poste-4
+    let c5 = find_console(5); // PS4 poste-5
+    let c6 = find_console(6); // PS4 poste-6
+
+    // Jeux associés à leur console (comme dans les PDFs et clientDb.ts)
+    let jeux_data = vec![
+        ("FIFA 26", "Sport", c1), ("FIFA 26", "Sport", c4),
+        ("Mortal Kombat 1", "Combat", c1), ("Mortal Kombat 11", "Combat", c4),
+        ("Tekken 8", "Combat", c2), ("Need for Speed", "Course", c1), ("Need for Speed", "Course", c4),
+        ("WWE 2K25", "Combat", c2), ("NBA 2K25", "Sport", c1), ("NBA 2K25", "Sport", c4),
+        ("Gran Turismo 7", "Course", c3), ("GTA V", "Action", c1), ("GTA V", "Action", c4),
+        ("God of War", "Action", c2), ("God of War", "Action", c4),
+        ("Call of Duty", "Action", c3), ("Call of Duty", "Action", c6),
+        ("Fortnite", "Action", c3), ("Spider-Man 2", "Action", c2),
+        ("Red Dead Redemption 2", "Action", c4), ("Resident Evil 4", "Horreur", c6),
+        ("Undisputed", "Combat", c6), ("EA Sports UFC 5", "Combat", c1), ("Naruto Storm 4", "Combat", c4),
+        ("Uncharted 4", "Aventure", c4),
     ];
-    for (titre, genre) in jeux {
+    for (titre, genre, console_id) in jeux_data {
         let mut m = serde_json::Map::new();
         m.insert("titre".into(), json!(titre));
         m.insert("genre".into(), json!(genre));
+        m.insert("console_id".into(), json!(console_id));
         m.insert("actif".into(), json!(1));
         m.insert("created_at".into(), json!(db::now_iso()));
         let _ = db.insert("jeux", &m);
