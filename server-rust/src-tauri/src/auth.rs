@@ -1,6 +1,10 @@
-// Auth : hachage de mot de passe compatible Node (scrypt$v1$) + JWT HS256.
-// Port de server/utils/native.ts + server/server.ts.
+// Auth : hachage best-practice (Argon2id) + JWT HS256 + compat scrypt/bcrypt
+// Reorg : login moderne avec Neon sync, rate-limit, refresh token
 
+use argon2::{
+    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    Argon2,
+};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use rand::RngCore;
@@ -14,17 +18,30 @@ const SCRYPT_LOG_N: u8 = 14; // N = 16384 (identique à node:crypto)
 const SCRYPT_R: u32 = 8;
 const SCRYPT_P: u32 = 1;
 
-/// Hache un mot de passe au format `scrypt$v1$<salt>$<hash>` (base64url), comme native.ts.
+/// Best-practice : Argon2id (OWASP recommandé). Nouveau hash par défaut.
+/// Garde scrypt pour compat ascendante (anciens comptes).
 pub fn hash_password(password: &str) -> ApiResult<String> {
+    // Validation OWASP : min 8 chars, au moins 1 lettre (déjà validé en amont)
+    if password.len() < 6 || password.len() > 128 {
+        return Err(ApiError::bad_request("Mot de passe invalide"));
+    }
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::default();
+    Ok(argon2
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|e| ApiError::internal(format!("Erreur Argon2: {e}")))?
+        .to_string())
+}
+
+/// Ancien hash scrypt$v1 pour compat (utilisé au seed initial)
+pub fn hash_password_scrypt(password: &str) -> ApiResult<String> {
     let mut salt = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut salt);
-
     let params = ScryptParams::new(SCRYPT_LOG_N, SCRYPT_R, SCRYPT_P, SCRYPT_KEYLEN)
         .map_err(|e| ApiError::internal(format!("Erreur scrypt: {e}")))?;
     let mut dk = [0u8; SCRYPT_KEYLEN];
     scrypt(password.as_bytes(), &salt, &params, &mut dk)
         .map_err(|e| ApiError::internal(format!("Erreur scrypt: {e}")))?;
-
     Ok(format!(
         "{}${}${}",
         SCRYPT_PREFIX,
@@ -36,22 +53,38 @@ pub fn hash_password(password: &str) -> ApiResult<String> {
 pub fn is_scrypt_hash(hash: &str) -> bool {
     hash.starts_with(SCRYPT_PREFIX)
 }
+pub fn is_argon2_hash(hash: &str) -> bool {
+    hash.starts_with("$argon2")
+}
+pub fn is_bcrypt_hash(hash: &str) -> bool {
+    hash.starts_with("$2")
+}
 
-/// Compare un mot de passe avec un hash stocké.
-/// - hash `scrypt$v1$...` : vérifié avec scrypt (paramètres Node).
-/// - hash bcrypt `$2a/$2b/$2y` : vérifié avec la crate `bcrypt` (rétrocompatibilité).
-/// Ne panic jamais, catch les erreurs scrypt (OOM sur low-end Android 1GB)
+/// Compare avec support multi-algo : Argon2id (best), scrypt$v1 (legacy), bcrypt (legacy)
+/// Ne panic jamais, catch OOM sur Android 512MB
 pub fn compare_password(password: &str, stored: &str) -> bool {
     if password.is_empty() || stored.is_empty() {
         return false;
     }
-    // Limite taille pour éviter DoS / OOM sur Android (scrypt alloue 16MB)
-    if password.len() > 128 || stored.len() > 512 {
+    if password.len() > 128 || stored.len() > 1024 {
         return false;
     }
+    // 1. Argon2id (nouveau best-practice)
+    if is_argon2_hash(stored) {
+        return std::panic::catch_unwind(|| {
+            if let Ok(parsed) = PasswordHash::new(stored) {
+                Argon2::default()
+                    .verify_password(password.as_bytes(), &parsed)
+                    .is_ok()
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false);
+    }
+    // 2. scrypt$v1 legacy
     if is_scrypt_hash(stored) {
         let parts: Vec<&str> = stored.split('$').collect();
-        // format : scrypt , v1 , salt , hash
         if parts.len() != 4 {
             return false;
         }
@@ -59,7 +92,6 @@ pub fn compare_password(password: &str, stored: &str) -> bool {
             Ok(s) => s,
             Err(_) => return false,
         };
-        // Vérifie que le salt a une taille raisonnable (16 bytes attendu)
         if salt.is_empty() || salt.len() > 64 {
             return false;
         }
@@ -71,7 +103,6 @@ pub fn compare_password(password: &str, stored: &str) -> bool {
             Err(_) => return false,
         };
         let mut dk = [0u8; SCRYPT_KEYLEN];
-        // scrypt peut panic/oom sur device 512MB ; on catch avec std::panic::catch_unwind
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             scrypt(password.as_bytes(), &salt, &params, &mut dk)
         }));
@@ -81,16 +112,20 @@ pub fn compare_password(password: &str, stored: &str) -> bool {
                 constant_time_eq(actual.as_bytes(), parts[3].as_bytes())
             }
             _ => {
-                eprintln!("scrypt compare failed (oom or error) on Android");
+                eprintln!("scrypt compare failed (oom) on Android");
                 false
             }
         }
-    } else if stored.starts_with("$2") {
-        // bcrypt peut aussi panic sur hash malformé
+    } else if is_bcrypt_hash(stored) {
         std::panic::catch_unwind(|| bcrypt::verify(password, stored).unwrap_or(false)).unwrap_or(false)
     } else {
         false
     }
+}
+
+/// Indique si le hash doit être migré vers Argon2 (upgrade transparent au login)
+pub fn needs_rehash(stored: &str) -> bool {
+    is_scrypt_hash(stored) || is_bcrypt_hash(stored)
 }
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
@@ -121,18 +156,32 @@ impl Claims {
     }
 }
 
-/// Signe un JWT HS256 avec expiration de 24h (comme Express).
+/// Signe un JWT HS256 avec expiration de 24h (comme Express). Best-practice: access 15min + refresh 7j
+/// Pour compat, garde 24h pour access (offline-first), refresh 7j en plus
 pub fn sign_token(claims: &Claims, secret: &str) -> ApiResult<String> {
+    sign_token_with_exp(claims, secret, 24 * 3600)
+}
+pub fn sign_token_with_exp(claims: &Claims, secret: &str, exp_secs: i64) -> ApiResult<String> {
     let now = chrono::Utc::now().timestamp();
     let c = Claims {
         iat: now,
-        exp: now + 24 * 3600,
+        exp: now + exp_secs,
         ..claims.clone()
     };
     let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256);
     let token = jsonwebtoken::encode(&header, &c, &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()))
         .map_err(|e| ApiError::internal(format!("Erreur JWT: {e}")))?;
     Ok(token)
+}
+pub fn sign_refresh_token(claims: &Claims, secret: &str) -> ApiResult<String> {
+    // Refresh 7 jours, même payload mais exp plus long
+    sign_token_with_exp(claims, secret, 7 * 24 * 3600)
+}
+/// Génère paire access (24h) + refresh (7j) - best practice offline-first
+pub fn generate_token_pair(claims: &Claims, secret: &str) -> ApiResult<(String, String)> {
+    let access = sign_token(claims, secret)?;
+    let refresh = sign_refresh_token(claims, secret)?;
+    Ok((access, refresh))
 }
 
 /// Vérifie un JWT et renvoie les claims. 401 si invalide/expiré.
@@ -196,9 +245,13 @@ mod tests {
     #[test]
     fn hash_roundtrip() {
         let h = hash_password("admin123").unwrap();
-        assert!(is_scrypt_hash(&h));
+        assert!(is_argon2_hash(&h));
         assert!(compare_password("admin123", &h));
         assert!(!compare_password("wrong", &h));
+        // compat scrypt
+        let h2 = hash_password_scrypt("admin123").unwrap();
+        assert!(is_scrypt_hash(&h2));
+        assert!(compare_password("admin123", &h2));
     }
 
     #[test]

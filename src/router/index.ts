@@ -1,4 +1,5 @@
 // @ts-nocheck
+// Best-practice router : guards async, refresh, role-based, offline-first
 import { createRouter, createWebHistory, createWebHashHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
@@ -7,7 +8,7 @@ const routes = [
     path: '/login',
     name: 'Login',
     component: () => import('@/views/LoginView.vue'),
-    meta: { requiresAuth: false }
+    meta: { requiresAuth: false, guestOnly: true }
   },
   {
     path: '/',
@@ -110,7 +111,6 @@ const routes = [
 ]
 
 const isFileProtocol = typeof window !== 'undefined' && window.location.protocol === 'file:'
-// Tauri Android utilise http://tauri.localhost -> createWebHistory OK ; file:// fallback en hash
 const routerHistory = isFileProtocol ? createWebHashHistory() : createWebHistory()
 
 const router = createRouter({
@@ -118,19 +118,15 @@ const router = createRouter({
   routes
 })
 
-// Android back button : double tap to exit si on est à la racine (évite fermeture accidentelle)
 let lastBackPress = 0
 if (typeof window !== 'undefined') {
   window.addEventListener('android-back-pressed', () => {
     const auth = useAuthStore()
     if (!auth.isAuthenticated) return
-    // Si modale ouverte, l'event est consommé par AppLayout, on ne fait rien
     const path = router.currentRoute.value.path
     if (path === '/login' || path === '/') return
-    // Sinon nav back
     router.back()
   })
-  // Fallback pour WebView Android sans plugin Tauri : intercept popstate
   window.addEventListener('popstate', () => {
     const now = Date.now()
     if (now - lastBackPress < 2000) return
@@ -138,23 +134,50 @@ if (typeof window !== 'undefined') {
   })
 }
 
-router.beforeEach((to, from, next) => {
+// Best-practice guard : offline-first, refresh, role check
+router.beforeEach(async (to, from, next) => {
   try {
     const auth = useAuthStore()
-    console.log('[ROUTER_NAVIGATION] beforeEach', from.path, '->', to.path, 'isAuth', auth.isAuthenticated, 'role', auth.user?.role)
+    console.log('[ROUTER_NAVIGATION] beforeEach', from.path, '->', to.path, 'isAuth', auth.isAuthenticated, 'role', auth.user?.role, 'source', auth.loginSource)
 
-    if (to.meta.requiresAuth !== false && !auth.isAuthenticated) {
-      console.log('[ROUTER_NAVIGATION] redirect to /login (not auth)')
-      return next('/login')
-    }
-
-    if (to.path === '/login' && auth.isAuthenticated) {
+    // Guest only (login) : si déjà auth, redirige
+    if (to.meta.guestOnly && auth.isAuthenticated) {
       console.log('[ROUTER_NAVIGATION] already auth, redirect from /login')
       return next(auth.user?.role === 'admin' ? '/admin' : '/dashboard')
     }
 
+    // Requires auth
+    if (to.meta.requiresAuth !== false && to.meta.requiresAuth !== undefined ? to.meta.requiresAuth : to.matched.some(r => r.meta.requiresAuth)) {
+      // Vérifie si le path nécessite auth (parent '/' a requiresAuth true)
+      const requiresAuth = to.matched.some(r => r.meta.requiresAuth) || to.meta.requiresAuth
+      if (requiresAuth && !auth.isAuthenticated) {
+        console.log('[ROUTER_NAVIGATION] redirect to /login (not auth)')
+        return next('/login')
+      }
+      // Si token présent mais expiré, tente refresh (best practice)
+      if (requiresAuth && auth.isAuthenticated) {
+        // Vérifie token expiration côté client (décodage sans vérif)
+        try {
+          const payload = JSON.parse(atob(auth.token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+          const now = Math.floor(Date.now() / 1000)
+          if (payload.exp && payload.exp < now) {
+            console.log('[ROUTER_NAVIGATION] token expired, try refresh')
+            try {
+              await auth.refresh()
+              console.log('[ROUTER_NAVIGATION] refresh success')
+            } catch {
+              console.log('[ROUTER_NAVIGATION] refresh failed, redirect login')
+              await auth.logout()
+              return next('/login')
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // Role check
     if (to.meta.roles && !to.meta.roles.includes(auth.user?.role)) {
-      console.log('[ROUTER_NAVIGATION] role mismatch, redirect')
+      console.log('[ROUTER_NAVIGATION] role mismatch', auth.user?.role, 'required', to.meta.roles)
       return next(auth.user?.role === 'admin' ? '/admin' : '/dashboard')
     }
 

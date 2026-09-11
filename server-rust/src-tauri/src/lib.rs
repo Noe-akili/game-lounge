@@ -2,6 +2,7 @@ pub mod auth;
 pub mod commands;
 pub mod db;
 pub mod error;
+pub mod neon;
 pub mod pdf;
 pub mod validators;
 
@@ -17,6 +18,11 @@ pub struct AppState {
     pub jwt_secret: String,
     /// Journal des tentatives de connexion (rate limiting simple, par IP/app).
     pub login_attempts: Mutex<std::collections::HashMap<String, Vec<i64>>>,
+    /// Pool Neon Postgres (optionnel, offline-first)
+    #[cfg(feature = "neon-sync")]
+    pub neon_pool: Mutex<Option<sqlx::PgPool>>,
+    #[cfg(not(feature = "neon-sync"))]
+    pub neon_pool: Mutex<Option<()>>,
 }
 
 fn open_db(app: &tauri::AppHandle) -> Result<Db, Box<dyn std::error::Error>> {
@@ -184,13 +190,57 @@ pub fn run() {
             });
             let jwt_secret =
                 std::env::var("JWT_SECRET").unwrap_or_else(|_| "game-lounge-secret-2024".into());
+            // Charge .env si présent (pour DATABASE_URL Neon)
+            #[cfg(feature = "neon-sync")]
+            let _ = dotenvy::dotenv();
             app.manage(AppState {
                 db,
                 jwt_secret,
                 login_attempts: Mutex::new(std::collections::HashMap::new()),
+                neon_pool: Mutex::new(None),
             });
+            // Init Neon pool en arrière-plan (non bloquant, best practice offline-first)
+            #[cfg(feature = "neon-sync")]
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    // Petit délai pour laisser WebView démarrer
+                    tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+                    match crate::neon::init_neon_pool().await {
+                        Some(pool) => {
+                            eprintln!("[neon] pool initialisé en background");
+                            if let Some(state) = handle.try_state::<AppState>() {
+                                if let Ok(mut guard) = state.neon_pool.lock() {
+                                    *guard = Some(pool);
+                                }
+                            }
+                            // Pull initial users en background (cache)
+                            if let Some(state) = handle.try_state::<AppState>() {
+                                let pool_opt = state.neon_pool.lock().ok().and_then(|g| g.clone());
+                                if let Some(pool) = pool_opt {
+                                    match crate::neon::pull_users(&pool).await {
+                                        Ok(users) => {
+                                            eprintln!("[neon] pull {} users en background", users.len());
+                                            // Cache local : upsert
+                                            for u in users {
+                                                let mut map = serde_json::Map::new();
+                                                for (k,v) in u.as_object().unwrap() {
+                                                    map.insert(k.clone(), v.clone());
+                                                }
+                                                let _ = state.db.insert("users", &map);
+                                            }
+                                        }
+                                        Err(e) => eprintln!("[neon] pull users failed: {}", e.message),
+                                    }
+                                }
+                            }
+                        }
+                        None => eprintln!("[neon] pool non disponible (offline)"),
+                    }
+                });
+            }
             #[cfg(target_os = "android")]
-            eprintln!("Android setup complete, AppState managed");
+            eprintln!("Android setup complete, AppState managed (neon bg init)");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -200,6 +250,7 @@ pub fn run() {
             commands::auth_login,
             commands::auth_logout,
             commands::auth_me,
+            commands::auth_refresh,
             // ==== CONSOLES ====
             commands::consoles_list,
             commands::consoles_get,

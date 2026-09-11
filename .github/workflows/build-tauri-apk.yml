@@ -20,6 +20,9 @@ jobs:
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       NDK_VERSION: 27.1.12297006
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      NEON_DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
     steps:
       - name: Checkout
