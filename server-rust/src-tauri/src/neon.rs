@@ -215,7 +215,10 @@ fn pg_col_to_string(row: &tokio_postgres::Row, idx: usize) -> Option<String> {
 
 #[cfg(feature = "neon-sync")]
 pub async fn fetch_neon_user(pool: &NeonPool, email: &str) -> ApiResult<Option<NeonUser>> {
-    let rows = neon_query(pool, "SELECT id, email, password_hash, role, nom, created_at FROM users WHERE email = $1 LIMIT 1", &[&email])
+    // Email en dur (échappé) : les requêtes avec paramètres ($1) passent par le protocole
+    // étendu (prepared statements) que le pooler Neon ne supporte pas -> login cassé
+    let sql = format!("SELECT id, email, password_hash, role, nom, created_at FROM users WHERE email = '{}' LIMIT 1", escape_sql(email));
+    let rows = neon_query(pool, &sql, &[])
         .await
         .map_err(|e| ApiError::internal(format!("Neon query user: {}", e)))?;
     if rows.is_empty() {
@@ -282,6 +285,25 @@ pub async fn pull_users(_pool: &()) -> ApiResult<Vec<Value>> {
     Ok(vec![])
 }
 
+/// Échappe une valeur pour insertion SQL en dur (protocole simple) : ' -> ''
+#[cfg(feature = "neon-sync")]
+fn escape_sql(s: &str) -> String {
+    s.split("'").collect::<Vec<_>>().join("''")
+}
+
+/// Exécution en protocole SIMPLE (batch_execute) : PAS de prepared statement.
+/// Le pooler Neon (PgBouncer) ne supporte pas les prepared statements persistants
+/// de tokio-postgres ("prepared statement PGBOUNCER_N does not exist") — le protocole
+/// simple les évite totalement.
+#[cfg(feature = "neon-sync")]
+async fn neon_batch_execute(pool: &NeonPool, sql: &str) -> Result<(), String> {
+    match tokio::time::timeout(NEON_QUERY_TIMEOUT, pool.client.batch_execute(sql)).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(neon_error_str(e)),
+        Err(_) => Err(format!("timeout après {}s (connexion morte ?)", NEON_QUERY_TIMEOUT.as_secs())),
+    }
+}
+
 /// Ajoute la colonne soft-delete `deleted` sur les tables Neon (idempotent).
 /// Rien n'est JAMAIS supprimé physiquement sur Neon : une ligne supprimée passe
 /// deleted=1 et est simplement cachée (pull exclut deleted=true).
@@ -289,8 +311,8 @@ pub async fn pull_users(_pool: &()) -> ApiResult<Vec<Value>> {
 pub async fn ensure_deleted_columns(pool: &NeonPool) {
     let tables = ["users", "consoles", "jeux", "joueurs", "sessions_jeu", "tarifs", "factures", "jetons_transactions", "messages", "parametres_fidelite", "lignes_facture"];
     for table in tables {
-        let sql = format!("ALTER TABLE \"{table}\" ADD COLUMN IF NOT EXISTS deleted INTEGER NOT NULL DEFAULT 0");
-        match neon_execute(pool, &sql, &[]).await {
+        let sql = format!("ALTER TABLE \"{}\" ADD COLUMN IF NOT EXISTS deleted INTEGER NOT NULL DEFAULT 0", table);
+        match neon_batch_execute(pool, &sql).await {
             Ok(_) => {}
             Err(e) => eprintln!("[neon] ensure deleted {} failed: {}", table, e),
         }
@@ -366,49 +388,18 @@ pub async fn pull_all(_pool: &()) -> ApiResult<std::collections::HashMap<String,
     Ok(std::collections::HashMap::new())
 }
 
-#[cfg(feature = "neon-sync")]
-pub async fn push_user(pool: &NeonPool, user: &Value) -> ApiResult<()> {
-    let id: i64 = user.get("id").and_then(Value::as_i64).unwrap_or(0);
-    let email: &str = user.get("email").and_then(Value::as_str).unwrap_or("");
-    let password_hash: &str = user.get("password_hash").and_then(Value::as_str).unwrap_or("");
-    let role: &str = user.get("role").and_then(Value::as_str).unwrap_or("employe");
-    let nom: &str = user.get("nom").and_then(Value::as_str).unwrap_or("");
-    neon_execute(pool,
-            "INSERT INTO users (id, email, password_hash, role, nom, created_at) VALUES ($1,$2,$3,$4,$5,NOW()) ON CONFLICT (id) DO UPDATE SET email=$2, password_hash=$3, role=$4, nom=$5",
-            &[&id, &email, &password_hash, &role, &nom],
-        )
-        .await
-        .map_err(|e| ApiError::internal(format!("Neon push user: {}", e)))?;
-    Ok(())
-}
 
-#[cfg(feature = "neon-sync")]
-pub async fn push_tarif(pool: &NeonPool, tarif: &Value) -> ApiResult<()> {
-    let id: i64 = tarif.get("id").and_then(Value::as_i64).unwrap_or(0);
-    let type_: &str = tarif.get("type").and_then(Value::as_str).unwrap_or("session");
-    let duree: i64 = tarif.get("duree_minutes").and_then(Value::as_i64).unwrap_or(30);
-    let prix: i64 = tarif.get("prix").and_then(Value::as_i64).unwrap_or(0);
-    let desc: &str = tarif.get("description").and_then(Value::as_str).unwrap_or("");
-    let console_type: &str = tarif.get("console_type").and_then(Value::as_str).unwrap_or("PS5");
-    let jeu: &str = tarif.get("jeu").and_then(Value::as_str).unwrap_or("");
-    let actif: i64 = tarif.get("actif").and_then(Value::as_i64).unwrap_or(1);
-    neon_execute(pool,
-        "INSERT INTO tarifs (id, type, duree_minutes, prix, description, console_type, jeu, actif, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW()) ON CONFLICT (id) DO UPDATE SET type=$2, duree_minutes=$3, prix=$4, description=$5, console_type=$6, jeu=$7, actif=$8",
-        &[&id, &type_, &duree, &prix, &desc, &console_type, &jeu, &actif]
-    ).await.map_err(|e| ApiError::internal(format!("Neon push tarif: {}", e)))?;
-    Ok(())
-}
 
 /// Colonnes d'une table Neon via information_schema (standard Postgres).
 /// Utilisé pour ne jamais envoyer vers Neon une colonne qui n'existe pas côté cloud
 /// (sinon erreur SQL silencieuse -> "l'envoi ne fonctionne pas").
+/// SANS paramètre ($1) : les requêtes avec paramètres utilisent le protocole étendu
+/// (prepared statements) que le pooler Neon ne supporte pas — le nom de table est
+/// mis en dur (échappé par le format).
 #[cfg(feature = "neon-sync")]
 pub async fn neon_table_columns(pool: &NeonPool, table: &str) -> Result<Vec<String>, String> {
-    let rows = neon_query(
-        pool,
-        "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position",
-        &[&table],
-    ).await;
+    let sql = format!("SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '{}' ORDER BY ordinal_position", table);
+    let rows = neon_query(pool, &sql, &[]).await;
     match rows {
         Ok(rs) => {
             let mut out = Vec::new();
@@ -447,12 +438,18 @@ fn val_to_text(v: &Value) -> String {
 /// Push générique d'une table locale vers Neon : upsert par id, colonnes filtrées
 /// sur le schéma Neon (information_schema). C'est ce qui rend l'ENVOI possible :
 /// avant, sync_run ne faisait que pull, push_user/push_tarif n'étaient jamais appelés.
+///
+/// IMPORTANT : les valeurs sont insérées ÉCHAPPÉES EN DUR dans le SQL et exécutées en
+/// protocole SIMPLE (batch_execute). Pourquoi pas de placeholders/prepared statements ?
+/// 1) tokio-postgres attend $1,$2 (pas ?) -> "syntax error at or near ','" avec ?
+/// 2) le pooler Neon (PgBouncer) oublie les prepared statements -> "prepared statement
+///    PGBOUNCER_N does not exist". Le protocole simple évite les deux.
 #[cfg(feature = "neon-sync")]
 pub async fn push_table(pool: &NeonPool, table: &str, rows: &Vec<Value>) -> ApiResult<usize> {
     // Garantit que ON CONFLICT (id) fonctionne : si id n'est pas unique côté Neon,
     // l'upsert devient un simple INSERT -> DOUBLONS à chaque sync. Best-effort :
     // si des doublons existent déjà, l'index échoue et on log (non fatal).
-    match neon_execute(pool, &format!("CREATE UNIQUE INDEX IF NOT EXISTS uq_{}_id ON \"{table}\" (id)", table), &[]).await {
+    match neon_batch_execute(pool, &format!("CREATE UNIQUE INDEX IF NOT EXISTS uq_{}_id ON \"{}\" (id)", table, table)).await {
         Ok(_) => {}
         Err(e) => eprintln!("[neon] unique index {} failed (doublons existants ?): {}", table, e),
     }
@@ -473,25 +470,24 @@ pub async fn push_table(pool: &NeonPool, table: &str, rows: &Vec<Value>) -> ApiR
             keys.push(k.to_string());
         }
         if keys.is_empty() { continue; }
-        let placeholders: Vec<&str> = keys.iter().map(|k| "?").collect();
-        let updates: Vec<String> = keys.iter().map(|k| format!("{}=EXCLUDED.{}", k, k)).collect();
+        // SQL en dur : colonnes + valeurs échappées (protocole simple, pas de ?/$n)
+        let mut cols_sql: Vec<String> = Vec::with_capacity(keys.len() + 1);
+        let mut vals_sql: Vec<String> = Vec::with_capacity(keys.len() + 1);
+        cols_sql.push("id".to_string());
+        vals_sql.push(format!("'{}'", escape_sql(&format!("{}", id))));
+        for k in keys.iter() {
+            cols_sql.push(k.clone());
+            vals_sql.push(format!("'{}'", escape_sql(&val_to_text(&obj[k]))));
+        }
+        let updates_sql: Vec<String> = keys.iter().map(|k| format!("{}=EXCLUDED.{}", k, k)).collect();
         let sql = format!(
-            "INSERT INTO \"{table}\" (id,{}) VALUES (?,{}) ON CONFLICT (id) DO UPDATE SET {}",
-            keys.join(","),
-            placeholders.join(","),
-            updates.join(",")
+            "INSERT INTO \"{}\" ({}) VALUES ({}) ON CONFLICT (id) DO UPDATE SET {}",
+            table,
+            cols_sql.join(","),
+            vals_sql.join(","),
+            updates_sql.join(",")
         );
-        // Tous les params en texte : Postgres caste text -> type de la colonne à l'insert
-        let mut text_params: Vec<String> = Vec::with_capacity(keys.len() + 1);
-        text_params.push(format!("{}", id));
-        for k in keys {
-            text_params.push(val_to_text(&obj[&k]));
-        }
-        let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::with_capacity(text_params.len());
-        for i in 0..text_params.len() {
-            params.push(&text_params[i]);
-        }
-        match neon_execute(pool, &sql, &params).await {
+        match neon_batch_execute(pool, &sql).await {
             Ok(_) => pushed += 1,
             Err(e) => {
                 eprintln!("[neon] push {} #{} failed: {}", table, id, e);
