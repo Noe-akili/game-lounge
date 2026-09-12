@@ -148,7 +148,7 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
     let local_user = database.find_one("users", |r| r.get("email").and_then(Value::as_str) == Some(email.as_str()))?;
     crate::logger::log_auth(&format!("lookup local: {} ms, trouvé={}", t_find - t0, local_user.is_some()));
 
-    let mut user: Option<Value> = None;
+    let user: Option<Value>;
     let mut was_neon = false;
 
     if let Some(lu) = local_user {

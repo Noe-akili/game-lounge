@@ -7,6 +7,7 @@ use std::sync::Mutex;
 
 use rusqlite::Connection;
 use serde_json::{Map, Value, json};
+use rand::RngCore;
 
 use crate::error::{ApiError, ApiResult};
 
@@ -39,6 +40,15 @@ CREATE TABLE IF NOT EXISTS parametres_fidelite (id INTEGER PRIMARY KEY, regle_ty
 CREATE TABLE IF NOT EXISTS lignes_facture (id INTEGER PRIMARY KEY, facture_id INTEGER, description TEXT, quantite INTEGER, prix_unitaire INTEGER, total_ligne INTEGER, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS hangouts (id INTEGER PRIMARY KEY, titre TEXT, activite TEXT, prix INTEGER, actif INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT);
+
+-- Moteur de sync offline-first (spec mod.md) — tables LOCALES, jamais synchronisées.
+-- sync_outbox : journal des changements locaux en attente d'envoi vers Supabase.
+CREATE TABLE IF NOT EXISTS sync_outbox (change_id TEXT PRIMARY KEY, device_id TEXT, device_sequence INTEGER, operation TEXT, table_name TEXT, record_id INTEGER, payload TEXT, status TEXT DEFAULT 'PENDING', created_at TEXT);
+CREATE INDEX IF NOT EXISTS idx_outbox_status ON sync_outbox(status);
+-- sync_state : position de sync de CET appareil (curseurs last_uploaded / last_received).
+CREATE TABLE IF NOT EXISTS sync_state (device_id TEXT PRIMARY KEY, device_sequence INTEGER DEFAULT 0, last_uploaded TEXT, last_received TEXT, last_sync_at TEXT);
+-- sync_conflicts : journal des conflits détectés pendant le pull delta (audit, spec §9).
+CREATE TABLE IF NOT EXISTS sync_conflicts (id INTEGER PRIMARY KEY, change_id TEXT, entity TEXT, record_id INTEGER, reason TEXT, remote_payload TEXT, resolved INTEGER DEFAULT 0, created_at TEXT);
 "#;
 
 /// Migration soft-delete : ajoute la colonne `deleted` aux bases existantes.
@@ -58,7 +68,9 @@ ALTER TABLE parametres_fidelite ADD COLUMN deleted INTEGER DEFAULT 0; \
 ALTER TABLE lignes_facture ADD COLUMN deleted INTEGER DEFAULT 0; \
 ALTER TABLE hangouts ADD COLUMN deleted INTEGER DEFAULT 0;";
 
-pub struct Db(pub Mutex<Connection>);
+/// Base SQLite partagée + dirty set des tables modifiées localement.
+/// Une table ABSENTE du dirty set est considérée dirty (première sync = push complet).
+pub struct Db(pub Mutex<Connection>, pub Mutex<std::collections::HashMap<String, bool>>);
 
 /// Horodatage ISO 8601 avec millisecondes, comme `new Date().toISOString()` en JS.
 pub fn now_iso() -> String {
@@ -68,6 +80,65 @@ pub fn now_iso() -> String {
 /// Date du jour au format YYYYMMDD (pour les numéros de facture).
 pub fn today_str() -> String {
     chrono::Utc::now().format("%Y%m%d").to_string()
+}
+
+// Alphabet Crockford base32 (ULID) : pas de I, L, O, U pour éviter les confusions.
+const CROCKFORD: &str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/// Tables dont les données sont protégées contre l'écrasement silencieux :
+/// en cas de conflit local/distant, l'appareil LOCAL gagne toujours (spec §9).
+const PROTECTED_TABLES: [&str; 3] = ["sessions_jeu", "factures", "jetons_transactions"];
+
+fn is_protected(table: &str) -> bool {
+    PROTECTED_TABLES.contains(&table)
+}
+
+/// True si la valeur `deleted` d'une ligne indique une suppression.
+/// Gère les DEUX types : boolean (true/false) et integer (1/0).
+fn is_deleted_value(v: &Value) -> bool {
+    match v {
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_i64().unwrap_or(0) == 1,
+        _ => false,
+    }
+}
+
+/// ULID maison : 48 bits de timestamp (ms) + 80 bits aléatoires, encodés en
+/// base32 Crockford (26 caractères). Triable chronologiquement et unique par
+/// appareil — aucun identifiant centralisé, aucune dépendance ajoutée
+/// (rand est déjà utilisé par auth.rs pour les sels).
+pub fn ulid() -> String {
+    let ts = chrono::Utc::now().timestamp_millis() as u64;
+    let mut rnd = [0u8; 10];
+    rand::thread_rng().fill_bytes(&mut rnd);
+    let mut b = [0u8; 16];
+    b[0] = (ts >> 40) as u8;
+    b[1] = (ts >> 32) as u8;
+    b[2] = (ts >> 24) as u8;
+    b[3] = (ts >> 16) as u8;
+    b[4] = (ts >> 8) as u8;
+    b[5] = ts as u8;
+    for i in 0..10 {
+        b[6 + i] = rnd[i];
+    }
+    let mut out = String::with_capacity(26);
+    let mut val: u64 = 0;
+    let mut nbits = 0;
+    let mut idx = 0;
+    for _ in 0..26 {
+        while nbits < 5 {
+            // 128 bits utiles + 2 bits de padding (comportement ULID standard)
+            let byte = if idx < 16 { b[idx] as u64 } else { 0u64 };
+            val = (val << 8) | byte;
+            nbits += 8;
+            idx += 1;
+        }
+        let shift = nbits - 5;
+        out.push(CROCKFORD.as_bytes()[(val >> shift) as usize & 31] as char);
+        nbits -= 5;
+        val = val & ((1 << nbits) - 1);
+    }
+    out
 }
 
 fn row_to_value(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
@@ -167,7 +238,7 @@ impl Db {
         apply_pragmas(&conn);
         // Test écriture immédiate pour détecter disque plein / permission early
         let _ = conn.execute_batch("CREATE TABLE IF NOT EXISTS __healthcheck (id INTEGER PRIMARY KEY); DROP TABLE IF EXISTS __healthcheck;");
-        Ok(Db(Mutex::new(conn)))
+        Ok(Db(Mutex::new(conn), Mutex::new(std::collections::HashMap::new())))
     }
 
     /// Fallback en mémoire si le fichier est inaccessible (permissions Android, disque plein).
@@ -185,7 +256,7 @@ impl Db {
         );
         let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
         apply_pragmas(&conn);
-        Ok(Db(Mutex::new(conn)))
+        Ok(Db(Mutex::new(conn), Mutex::new(std::collections::HashMap::new())))
     }
 
     /// `SELECT * FROM {table}` avec filtre WHERE optionnel (comme le backend JS).
@@ -283,6 +354,397 @@ impl Db {
         Ok(())
     }
 
+    /// Marque une table comme modifiée localement -> à re-pousser vers Supabase.
+    /// Appelé par insert/update/remove : aucune écriture locale ne doit être oubliée.
+    pub fn mark_dirty(&self, table: &str) {
+        if let Ok(mut guard) = self.1.lock() {
+            guard.insert(table.to_string(), true);
+        }
+    }
+
+    /// Une table est-elle à re-pousser ? Absente du set = dirty (première sync complète).
+    pub fn is_dirty(&self, table: &str) -> bool {
+        let guard = match self.1.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        guard.get(table).map(|b| *b).unwrap_or(true)
+    }
+
+    /// Après push réussi d'une table, on efface son flag (prochaine écriture le remettra).
+    pub fn clear_dirty(&self, table: &str) {
+        if let Ok(mut guard) = self.1.lock() {
+            guard.insert(table.to_string(), false);
+        }
+    }
+
+    /// Nombre de changements locaux en attente d'envoi (statut PENDING).
+    /// Sert de badge de sync dans l'UI et de garde-fou pour le worker.
+    pub fn outbox_pending_count(&self) -> ApiResult<usize> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let mut stmt = conn
+            .prepare("SELECT COUNT(*) FROM sync_outbox WHERE status = 'PENDING'")
+            .map_err(|e| ApiError::internal(format!("outbox count: {e}")))?;
+        let n = stmt
+            .query_row([], |r| r.get::<_, i64>(0))
+            .map_err(|e| ApiError::internal(format!("outbox count: {e}")))?;
+        Ok(n as usize)
+    }
+
+    /// Événements en attente, triés par device_sequence croissant (ordre FIFO).
+    /// Consommé par le worker d'envoi (étape 2) et par le test.
+    pub fn outbox_pending(&self, limit: usize) -> ApiResult<Vec<Value>> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let mut stmt = conn
+            .prepare(
+                "SELECT change_id, device_id, device_sequence, operation, table_name, record_id, payload, status, created_at FROM sync_outbox WHERE status = 'PENDING' ORDER BY device_sequence ASC LIMIT ?",
+            )
+            .map_err(|e| ApiError::internal(format!("outbox: {e}")))?;
+        let rows = stmt
+            .query_map([limit as i64], |r| row_to_value(r))
+            .map_err(|e| ApiError::internal(format!("outbox: {e}")))?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| ApiError::internal(format!("outbox: {e}")))?;
+        Ok(rows)
+    }
+
+    // ===== MOTEUR DELTA SYNC (étapes 2-4 de ~/mod.md) =====
+
+    /// device_id stable de l'appareil (généré une fois, persisté).
+    pub fn device_id(&self) -> ApiResult<String> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        self.device_id_conn(&*conn)
+    }
+
+    /// Reprise après coupure/crash : les événements SENDING sans ACK repassent
+    /// PENDING (rejoués au cycle suivant — l'upsert cloud est idempotent, §6-7).
+    pub fn outbox_reset_stale(&self) -> ApiResult<()> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        conn.execute_batch("UPDATE sync_outbox SET status='PENDING' WHERE status='SENDING'")
+            .map_err(|e| ApiError::internal(format!("outbox reset: {e}")))?;
+        Ok(())
+    }
+
+    /// Marque des événements comme ACKED (confirmés par Supabase) ou FAILED.
+    pub fn outbox_mark(&self, ids: &Vec<String>, status: &str) -> ApiResult<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let placeholders: Vec<&str> = vec!["?"; ids.len()];
+        let q = format!(
+            "UPDATE sync_outbox SET status=? WHERE change_id IN ({})",
+            placeholders.join(",")
+        );
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::with_capacity(ids.len() + 1);
+        params.push(Box::new(status));
+        for id in ids {
+            params.push(Box::new(id.clone()));
+        }
+        conn.execute(&q, rusqlite::params_from_iter(params))
+            .map_err(|e| ApiError::internal(format!("outbox mark: {e}")))?;
+        Ok(())
+    }
+
+    /// Purge : ne garde que les 500 derniers ACKED — l'historique complet reste
+    /// dans sync_changes côté Supabase, l'outbox locale n'en a plus besoin (§12).
+    pub fn outbox_cleanup(&self) -> ApiResult<()> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        conn.execute_batch(
+            "DELETE FROM sync_outbox WHERE status='ACKED' AND change_id NOT IN (SELECT change_id FROM sync_outbox WHERE status='ACKED' ORDER BY device_sequence DESC LIMIT 500)",
+        )
+        .map_err(|e| ApiError::internal(format!("outbox cleanup: {e}")))?;
+        Ok(())
+    }
+
+    /// Seed initial : journalise TOUTES les lignes locales existantes dans
+    /// l'outbox (première sync d'une base pré-existante — ces données n'ont
+    /// jamais été journalisées). Idempotent côté Supabase (upsert + ON CONFLICT).
+    pub fn outbox_seed(&self) -> ApiResult<usize> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let tx = rusqlite::Transaction::new_unchecked(
+            &*conn,
+            rusqlite::TransactionBehavior::Deferred,
+        )
+        .map_err(|e| ApiError::internal(format!("BEGIN seed: {e}")))?;
+        let mut total = 0;
+        for table in TABLES {
+            let mut stmt = tx
+                .prepare(&format!("SELECT * FROM \"{table}\""))
+                .map_err(|e| ApiError::internal(format!("seed {table}: {e}")))?;
+            let rows = stmt
+                .query_map([], |r| row_to_value(r))
+                .map_err(|e| ApiError::internal(format!("seed {table}: {e}")))?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(|e| ApiError::internal(format!("seed {table}: {e}")))?;
+            drop(stmt);
+            for row in rows {
+                let Some(obj) = row.as_object() else { continue };
+                let Some(id_v) = obj.get("id") else { continue };
+                let id = id_v.as_i64().unwrap_or(0);
+                if id == 0 {
+                    continue;
+                }
+                self.enqueue_outbox(&*tx, "INSERT", table, id, &row)?;
+                total += 1;
+            }
+        }
+        tx.commit()
+            .map_err(|e| ApiError::internal(format!("Commit seed: {e}")))?;
+        Ok(total)
+    }
+
+    /// Curseur de réception : dernière séquence reçue du cloud (0 = jamais syncé).
+    pub fn sync_cursor_get(&self) -> ApiResult<i64> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let mut stmt = conn
+            .prepare("SELECT COALESCE(MAX(last_received), 0) FROM sync_state")
+            .map_err(|e| ApiError::internal(format!("cursor get: {e}")))?;
+        let n = stmt
+            .query_row([], |r| r.get::<_, i64>(0))
+            .map_err(|e| ApiError::internal(format!("cursor get: {e}")))?;
+        Ok(n)
+    }
+
+    pub fn sync_cursor_set(&self, n: i64) -> ApiResult<()> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let device = self.device_id_conn(&*conn)?;
+        let params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(n), Box::new(device)];
+        conn.execute("UPDATE sync_state SET last_received = ? WHERE device_id = ?", rusqlite::params_from_iter(params))
+            .map_err(|e| ApiError::internal(format!("cursor set: {e}")))?;
+        Ok(())
+    }
+
+    pub fn sync_uploaded_set(&self, n: i64) -> ApiResult<()> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let device = self.device_id_conn(&*conn)?;
+        let params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(n), Box::new(device)];
+        conn.execute("UPDATE sync_state SET last_uploaded = ? WHERE device_id = ?", rusqlite::params_from_iter(params))
+            .map_err(|e| ApiError::internal(format!("uploaded set: {e}")))?;
+        Ok(())
+    }
+
+    /// Un changement local PENDING existe-t-il pour cette entité ? (détection conflit)
+    fn outbox_pending_for_conn(&self, conn: &Connection, table: &str, id: i64) -> ApiResult<bool> {
+        let mut stmt = conn
+            .prepare("SELECT COUNT(*) FROM sync_outbox WHERE status='PENDING' AND table_name=? AND record_id=?")
+            .map_err(|e| ApiError::internal(format!("pending for: {e}")))?;
+        let params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(table), Box::new(id)];
+        let n = stmt
+            .query_row(rusqlite::params_from_iter(params), |r| r.get::<_, i64>(0))
+            .map_err(|e| ApiError::internal(format!("pending for: {e}")))?;
+        Ok(n > 0)
+    }
+
+    /// Journalise un conflit pour audit (table sync_conflicts, spec §9).
+    pub fn conflict_log(
+        &self,
+        change_id: &str,
+        entity: &str,
+        record_id: i64,
+        reason: &str,
+        remote_payload: &str,
+    ) -> ApiResult<()> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        self.conflict_log_conn(&*conn, change_id, entity, record_id, reason, remote_payload)
+    }
+
+    /// Variante sans re-lock : à utiliser quand la connexion est DÉJÀ verrouillée
+    /// (à l'intérieur de apply_remote_change, sinon deadlock).
+    fn conflict_log_conn(
+        &self,
+        conn: &Connection,
+        change_id: &str,
+        entity: &str,
+        record_id: i64,
+        reason: &str,
+        remote_payload: &str,
+    ) -> ApiResult<()> {
+        let params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
+            Box::new(change_id),
+            Box::new(entity),
+            Box::new(record_id),
+            Box::new(reason),
+            Box::new(remote_payload),
+            Box::new(now_iso()),
+        ];
+        conn.execute(
+            "INSERT INTO sync_conflicts (change_id, entity, record_id, reason, remote_payload, resolved, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)",
+            rusqlite::params_from_iter(params),
+        )
+        .map_err(|e| ApiError::internal(format!("conflict log: {e}")))?;
+        Ok(())
+    }
+
+    /// Colonnes locales (PRAGMA) — variante sans re-lock (appelable en transaction).
+    fn columns_conn(&self, conn: &Connection, table: &str) -> ApiResult<Vec<String>> {
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info(\"{table}\")"))
+            .map_err(|e| ApiError::internal(format!("Colonnes {table}: {e}")))?;
+        let cols = stmt
+            .query_map([], |r| r.get::<_, String>(1))
+            .map_err(|e| ApiError::internal(format!("Colonnes {table}: {e}")))?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| ApiError::internal(format!("Colonnes {table}: {e}")))?;
+        Ok(cols)
+    }
+
+    /// Applique un changement VENU DU CLOUD (pull delta) SANS journaliser dans
+    /// l'outbox (sinon boucle infinie) ni marquer la table dirty.
+    /// Retourne : "applied" | "skipped" (identique) | "tombstone" | "conflict" | "ignored".
+    pub fn apply_remote_change(
+        &self,
+        entity: &str,
+        record_id: i64,
+        payload: &Map<String, Value>,
+        remote_change_id: &str,
+        remote_created_at: &str,
+    ) -> ApiResult<&str> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        // 1) CONFLIT : un changement local non envoyé existe pour cette entité ?
+        if self.outbox_pending_for_conn(&*conn, entity, record_id).unwrap_or(false) {
+            // Règle par type de donnée (spec §9) : les données protégées gardent
+            // TOUJOURS le local ; les autres comparent l'horodatage (plus récent gagne).
+            let local_wins = is_protected(entity)
+                || payload
+                    .get("created_at")
+                    .and_then(Value::as_str)
+                    .map(|c| remote_created_at.to_string() < c.to_string())
+                    .unwrap_or(false);
+            let reason = if local_wins { "local_wins" } else { "remote_wins" };
+            self.conflict_log_conn(
+                &*conn,
+                remote_change_id,
+                entity,
+                record_id,
+                reason,
+                &serde_json::to_string(payload).unwrap_or_default(),
+            )
+            .map_err(|e| ApiError::internal(format!("conflict log: {e}")))?;
+            if local_wins {
+                return Ok("conflict");
+            }
+            // sinon : le distant est plus récent -> on applique
+        }
+        // 2) TOMBSTONE : suppression distante (spec §8)
+        if payload.get("deleted").map(is_deleted_value).unwrap_or(false) {
+            conn.execute(&format!("UPDATE \"{entity}\" SET deleted=1 WHERE id=?"), [record_id])
+                .map_err(|e| ApiError::internal(format!("tombstone {entity}: {e}")))?;
+            return Ok("tombstone");
+        }
+        // 3) INSERT/UPDATE avec skip-si-identique (zéro fsync inutile)
+        let local_cols = self.columns_conn(&*conn, entity).unwrap_or_default();
+        let mut map = serde_json::Map::new();
+        let mut upd = serde_json::Map::new();
+        for (k, v) in payload {
+            if *k == "id" || !local_cols.contains(k) {
+                continue;
+            }
+            // Le hash local reste LA référence pour le login (algos incompatibles)
+            if entity == "users" && *k == "password_hash" {
+                continue;
+            }
+            map.insert(k.clone(), v.clone());
+            upd.insert(k.clone(), v.clone());
+        }
+        if map.is_empty() {
+            return Ok("ignored");
+        }
+        let mut stmt = conn
+            .prepare(&format!("SELECT * FROM \"{entity}\" WHERE id=?"))
+            .map_err(|e| ApiError::internal(format!("apply get {entity}: {e}")))?;
+        let mut rows = stmt
+            .query_map([record_id], |r| row_to_value(r))
+            .map_err(|e| ApiError::internal(format!("apply get {entity}: {e}")))?;
+        match rows.next() {
+            Some(Ok(local)) => {
+                // Jamais ressusciter une ligne soft-deleted localement
+                if local.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1 {
+                    return Ok("ignored");
+                }
+                let mut same = true;
+                for (k, v) in &upd {
+                    let lv = local.get(k.as_str());
+                    if lv.is_none()
+                        || serde_json::to_string(&lv.unwrap()).unwrap_or_default()
+                            != serde_json::to_string(v).unwrap_or_default()
+                    {
+                        same = false;
+                        break;
+                    }
+                }
+                if same {
+                    return Ok("skipped");
+                }
+                let sets: Vec<String> = upd.keys().map(|k| format!("{k}=?")).collect();
+                let q = format!("UPDATE \"{entity}\" SET {} WHERE id=?", sets.join(","));
+                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::with_capacity(upd.len() + 1);
+                for v in upd.values() {
+                    bind_value(&mut params, v);
+                }
+                params.push(Box::new(record_id));
+                conn.execute(&q, rusqlite::params_from_iter(params))
+                    .map_err(|e| ApiError::internal(format!("apply update {entity}: {e}")))?;
+                Ok("applied")
+            }
+            Some(Err(e)) => Err(ApiError::internal(format!("apply get {entity}: {e}"))),
+            None => {
+                map.insert("id".into(), json!(record_id));
+                let keys: Vec<&String> = map.keys().collect();
+                let cols: Vec<&str> = keys.iter().map(|k| k.as_str()).collect();
+                let placeholders: Vec<&str> = vec!["?"; cols.len()];
+                let q = format!(
+                    "INSERT OR REPLACE INTO \"{entity}\" ({}) VALUES ({})",
+                    cols.join(","),
+                    placeholders.join(",")
+                );
+                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::with_capacity(cols.len());
+                for k in keys {
+                    bind_value(&mut params, &map[k]);
+                }
+                conn.execute(&q, rusqlite::params_from_iter(params))
+                    .map_err(|e| ApiError::internal(format!("apply insert {entity}: {e}")))?;
+                Ok("applied")
+            }
+        }
+    }
+
     pub fn find_one(&self, table: &str, pred: impl Fn(&Value) -> bool) -> ApiResult<Option<Value>> {
         Ok(self.query_all(table)?.into_iter().find(pred))
     }
@@ -292,7 +754,80 @@ impl Db {
         Ok(self.query_all_all(table)?.into_iter().find(pred))
     }
 
+    /// device_id stable de l'appareil : généré une fois (ULID), persisté dans
+    /// sync_state. Variante prenant la connexion déjà verrouillée pour être
+    /// appelable DANS une transaction (l'écriture est alors atomique avec elle).
+    fn device_id_conn(&self, conn: &Connection) -> ApiResult<String> {
+        let mut stmt = conn
+            .prepare("SELECT device_id FROM sync_state LIMIT 1")
+            .map_err(|e| ApiError::internal(format!("device_id: {e}")))?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| ApiError::internal(format!("device_id: {e}")))?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| ApiError::internal(format!("device_id: {e}")))?;
+        match rows.iter().next() {
+            Some(s) => Ok(s.to_string()),
+            None => {
+                let id = ulid();
+                conn.execute(
+                    "INSERT INTO sync_state (device_id, device_sequence, last_uploaded, last_received, last_sync_at) VALUES (?, 0, '', '', '')",
+                    [id.clone()],
+                )
+                .map_err(|e| ApiError::internal(format!("device_id insert: {e}")))?;
+                Ok(id)
+            }
+        }
+    }
+
+    /// Journalise un changement local dans sync_outbox. À appeler DANS la même
+    /// transaction que l'écriture de la donnée : si l'une échoue, l'autre aussi
+    /// (atomicité donnée + événement de sync, exigée par la spec ~/mod.md).
+    /// Le change_id est "{device_id}:{sequence}" : il identifie de façon unique
+    /// et ordonnée chaque changement de cet appareil, même hors ligne.
+    fn enqueue_outbox(
+        &self,
+        conn: &Connection,
+        operation: &str,
+        table: &str,
+        record_id: i64,
+        payload: &Value,
+    ) -> ApiResult<()> {
+        let device = self.device_id_conn(conn)?;
+        conn.execute(
+            "UPDATE sync_state SET device_sequence = device_sequence + 1 WHERE device_id = ?",
+            [device.clone()],
+        )
+        .map_err(|e| ApiError::internal(format!("seq outbox: {e}")))?;
+        let mut stmt = conn
+            .prepare("SELECT device_sequence FROM sync_state WHERE device_id = ?")
+            .map_err(|e| ApiError::internal(format!("seq outbox: {e}")))?;
+        let seq = stmt
+            .query_row([device.clone()], |r| r.get::<_, i64>(0))
+            .map_err(|e| ApiError::internal(format!("seq outbox: {e}")))?;
+        let change_id = format!("{device}:{seq}");
+        let payload_str = serde_json::to_string(payload)?;
+        let params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
+            Box::new(change_id),
+            Box::new(device),
+            Box::new(seq),
+            Box::new(operation),
+            Box::new(table),
+            Box::new(record_id),
+            Box::new(payload_str),
+            Box::new(now_iso()),
+        ];
+        conn.execute(
+            "INSERT INTO sync_outbox (change_id, device_id, device_sequence, operation, table_name, record_id, payload, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)",
+            rusqlite::params_from_iter(params),
+        )
+        .map_err(|e| ApiError::internal(format!("enqueue {table}: {e}")))?;
+        Ok(())
+    }
+
     /// Insère un enregistrement. Si un `id` est fourni, INSERT OR REPLACE (comme db.ts).
+    /// L'écriture de la donnée ET l'événement sync_outbox sont dans la même
+    /// transaction : aucune modification locale ne peut être perdue par la sync.
     pub fn insert(&self, table: &str, data: &Map<String, Value>) -> ApiResult<Value> {
         let conn = match self.0.lock() {
             Ok(g) => g,
@@ -319,13 +854,20 @@ impl Db {
         for k in keys {
             bind_value(&mut params, &data[k]);
         }
-        conn.execute(&q, rusqlite::params_from_iter(params))
+        let tx = rusqlite::Transaction::new_unchecked(
+            &*conn,
+            rusqlite::TransactionBehavior::Deferred,
+        )
+        .map_err(|e| ApiError::internal(format!("BEGIN insert {table}: {e}")))?;
+        tx.execute(&q, rusqlite::params_from_iter(params))
             .map_err(|e| ApiError::internal(format!("Insert {table}: {e}")))?;
-        let row_id = conn.last_insert_rowid();
-        drop(conn);
-
+        let row_id = tx.last_insert_rowid();
         let mut out = data.clone();
         out.insert("id".into(), json!(row_id));
+        self.enqueue_outbox(&*tx, "INSERT", table, row_id, &Value::Object(out.clone()))?;
+        tx.commit()
+            .map_err(|e| ApiError::internal(format!("Commit insert {table}: {e}")))?;
+        self.mark_dirty(table);
         Ok(Value::Object(out))
     }
 
@@ -345,10 +887,33 @@ impl Db {
             bind_value(&mut params, v);
         }
         params.push(Box::new(id));
-        conn.execute(&q, rusqlite::params_from_iter(params))
+        let tx = rusqlite::Transaction::new_unchecked(
+            &*conn,
+            rusqlite::TransactionBehavior::Deferred,
+        )
+        .map_err(|e| ApiError::internal(format!("BEGIN update {table}: {e}")))?;
+        tx.execute(&q, rusqlite::params_from_iter(params))
             .map_err(|e| ApiError::internal(format!("Update {table}: {e}")))?;
-        drop(conn);
-        self.get(table, id)
+        // Relit la ligne complète DANS la transaction : le payload journalisé est
+        // l'état final exact, pas seulement les colonnes modifiées.
+        let mut stmt = tx
+            .prepare(&format!("SELECT * FROM \"{table}\" WHERE id=?"))
+            .map_err(|e| ApiError::internal(format!("Get {table}: {e}")))?;
+        let mut rows = stmt
+            .query_map([id], |r| row_to_value(r))
+            .map_err(|e| ApiError::internal(format!("Get {table}: {e}")))?;
+        let row = match rows.next() {
+            Some(Ok(r)) => Ok(r),
+            Some(Err(e)) => Err(ApiError::internal(format!("Get {table}: {e}"))),
+            None => Err(ApiError::not_found(format!("Ligne {table} introuvable"))),
+        }?;
+        self.enqueue_outbox(&*tx, "UPDATE", table, id, &row)?;
+        drop(rows);
+        drop(stmt);
+        tx.commit()
+            .map_err(|e| ApiError::internal(format!("Commit update {table}: {e}")))?;
+        self.mark_dirty(table);
+        Ok(row)
     }
 
     /// SOFT-DELETE : rien n'est supprimé physiquement, la ligne passe deleted=1.
@@ -359,8 +924,23 @@ impl Db {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        conn.execute(&format!("UPDATE \"{table}\" SET deleted=1 WHERE id=?"), [id])
+        let tx = rusqlite::Transaction::new_unchecked(
+            &*conn,
+            rusqlite::TransactionBehavior::Deferred,
+        )
+        .map_err(|e| ApiError::internal(format!("BEGIN delete {table}: {e}")))?;
+        tx.execute(&format!("UPDATE \"{table}\" SET deleted=1 WHERE id=?"), [id])
             .map_err(|e| ApiError::internal(format!("Delete {table}: {e}")))?;
+        // Tombstone : la suppression est journalisée avec le payload minimal.
+        // C'est ce qui permettra au serveur de propager la suppression sans
+        // jamais réapparaître au pull (spec ~/mod.md).
+        let mut payload = Map::new();
+        payload.insert("id".into(), json!(id));
+        payload.insert("deleted".into(), json!(1));
+        self.enqueue_outbox(&*tx, "DELETE", table, id, &Value::Object(payload))?;
+        tx.commit()
+            .map_err(|e| ApiError::internal(format!("Commit delete {table}: {e}")))?;
+        self.mark_dirty(table);
         Ok(())
     }
 
@@ -417,5 +997,106 @@ mod tests {
         let soft = db.get_opt("consoles", id).unwrap().unwrap();
         assert_eq!(soft["deleted"], json!(1));
         assert!(db.query_all("consoles").unwrap().is_empty());
+    }
+
+    #[test]
+    fn outbox() {
+        std::fs::remove_file("/tmp/gl_test_outbox.db").ok();
+        let db = Db::open(Path::new("/tmp/gl_test_outbox.db")).unwrap();
+        assert_eq!(db.outbox_pending_count().unwrap(), 0);
+
+        // INSERT -> 1 événement journalisé
+        let mut row = Map::new();
+        row.insert("nom".into(), json!("PS5 - Poste 1"));
+        row.insert("type".into(), json!("PS5"));
+        let created = db.insert("consoles", &row).unwrap();
+        assert_eq!(db.outbox_pending_count().unwrap(), 1);
+        let id = created["id"].as_i64().unwrap();
+
+        // UPDATE -> 2
+        let mut upd = Map::new();
+        upd.insert("etat".into(), json!("occupee"));
+        db.update("consoles", id, &upd).unwrap();
+        assert_eq!(db.outbox_pending_count().unwrap(), 2);
+
+        // DELETE -> 3 (tombstone)
+        db.remove("consoles", id).unwrap();
+        assert_eq!(db.outbox_pending_count().unwrap(), 3);
+
+        let pending = db.outbox_pending(10).unwrap();
+        assert_eq!(pending.len(), 3);
+        assert_eq!(pending[0]["operation"], json!("INSERT"));
+        assert_eq!(pending[1]["operation"], json!("UPDATE"));
+        assert_eq!(pending[2]["operation"], json!("DELETE"));
+        assert_eq!(pending[0]["table_name"], json!("consoles"));
+        assert_eq!(pending[0]["record_id"], json!(id));
+        assert_eq!(pending[0]["status"], json!("PENDING"));
+
+        // device_id : ULID de 26 chars, stable, séquence strictement croissante
+        let did0 = pending[0]["device_id"].as_str().unwrap();
+        let did2 = pending[2]["device_id"].as_str().unwrap();
+        assert_eq!(did0.len(), 26);
+        assert_eq!(did0, did2);
+        let seq0 = pending[0]["device_sequence"].as_i64().unwrap();
+        let seq2 = pending[2]["device_sequence"].as_i64().unwrap();
+        assert!(seq2 > seq0);
+        // change_id = device:sequence, unique
+        assert_eq!(pending[0]["change_id"].as_str().unwrap(), format!("{did0}:1"));
+    }
+
+    #[test]
+    fn delta_apply() {
+        std::fs::remove_file("/tmp/gl_test_delta.db").ok();
+        let db = Db::open(Path::new("/tmp/gl_test_delta.db")).unwrap();
+
+        // Insertion distante (sessions_jeu = protégée) : appliquée SANS journal outbox
+        let mut row = Map::new();
+        row.insert("id".into(), json!(42));
+        row.insert("statut".into(), json!("en_cours"));
+        row.insert("debut".into(), json!("2026-09-12T10:00:00"));
+        let r = db
+            .apply_remote_change("sessions_jeu", 42, &row, "remote:1", "2026-09-12T10:00:00")
+            .unwrap();
+        assert_eq!(r, "applied");
+        assert_eq!(db.outbox_pending_count().unwrap(), 0); // pas de re-push
+
+        // Conflit : modification locale PENDING puis changement distant -> local gagne
+        let mut upd = Map::new();
+        upd.insert("statut".into(), json!("terminee"));
+        db.update("sessions_jeu", 42, &upd).unwrap();
+        assert_eq!(db.outbox_pending_count().unwrap(), 1);
+        let mut row2 = Map::new();
+        row2.insert("id".into(), json!(42));
+        row2.insert("statut".into(), json!("annulee"));
+        row2.insert("debut".into(), json!("2026-09-12T10:00:00"));
+        let r2 = db
+            .apply_remote_change("sessions_jeu", 42, &row2, "remote:2", "2026-09-12T11:00:00")
+            .unwrap();
+        assert_eq!(r2, "conflict"); // protégée -> local gagne
+        let got = db.get("sessions_jeu", 42).unwrap();
+        assert_eq!(got["statut"], json!("terminee"));
+
+        // Table non protégée + distant plus récent -> distant gagne (last-write-wins horodaté)
+        let mut c = Map::new();
+        c.insert("id".into(), json!(7));
+        c.insert("nom".into(), json!("PS5"));
+        db.insert("consoles", &c).unwrap();
+        let mut c2 = Map::new();
+        c2.insert("id".into(), json!(7));
+        c2.insert("nom".into(), json!("PS5 Pro"));
+        let r3 = db
+            .apply_remote_change("consoles", 7, &c2, "remote:3", "2026-09-12T12:00:00")
+            .unwrap();
+        assert_eq!(r3, "applied");
+        let got2 = db.get("consoles", 7).unwrap();
+        assert_eq!(got2["nom"], json!("PS5 Pro"));
+
+        // Tombstone distant : la ligne passe deleted=1
+        let mut del = Map::new();
+        del.insert("id".into(), json!(7));
+        del.insert("deleted".into(), json!(1));
+        let r4 = db.apply_remote_change("consoles", 7, &del, "remote:4", "").unwrap();
+        assert_eq!(r4, "tombstone");
+        assert_eq!(db.get_opt("consoles", 7).unwrap().unwrap()["deleted"], json!(1));
     }
 }

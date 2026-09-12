@@ -177,7 +177,7 @@ fn extract_pdf_text(path: &Path) -> ApiResult<String> {
 fn import_text_content(db: &Db, text: &str, path: &Path) -> ApiResult<usize> {
     // Détecte console depuis nom de fichier ou contenu
     let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_uppercase();
-    let mut console_type = if filename.contains("PS5") || text.contains("JEUX PS5") {
+    let console_type = if filename.contains("PS5") || text.contains("JEUX PS5") {
         "PS5"
     } else if filename.contains("PS4") || text.contains("JEUX PS4") {
         "PS4"
@@ -271,7 +271,7 @@ fn import_text_content(db: &Db, text: &str, path: &Path) -> ApiResult<usize> {
                         map.insert("prix".into(), json!(prix));
                         map.insert("description".into(), json!(description));
                         map.insert("console_type".into(), json!(current_console.clone()));
-                        map.insert("jeu".into(), json!(jeu.clone()));
+                        map.insert("jeu".into(), json!(jeu));
                         map.insert("actif".into(), json!(1));
                         map.insert("created_at".into(), json!(crate::db::now_iso()));
                         if db.insert("tarifs", &map).is_ok() {

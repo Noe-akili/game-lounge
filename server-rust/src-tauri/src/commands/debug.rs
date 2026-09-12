@@ -30,7 +30,7 @@ pub async fn import_default_tarifs(state: State<'_, AppState>) -> ApiResult<Valu
             let guard = state.neon_pool.lock().map_err(|_| ApiError::internal("neon lock"))?;
             guard.clone()
         };
-        if let Some(pool) = pool_opt {
+        if pool_opt.is_some() {
             // Récupère tous les tarifs/jeux locaux et pousse vers Neon (simplifié : on push les nouveaux)
             // Pour l'instant, on log seulement - le sync complet est fait via sync_run
             eprintln!("[import] Neon sync disponible, {} items à synchroniser", count);

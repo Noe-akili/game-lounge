@@ -243,7 +243,6 @@ fn seed_jeux_from_pdfs(db: &Db) -> Result<(), Box<dyn std::error::Error>> {
     let c2 = find_console(2); // PS5 poste-2
     let c3 = find_console(3); // PS5 poste-3
     let c4 = find_console(4); // PS4 poste-4
-    let c5 = find_console(5); // PS4 poste-5
     let c6 = find_console(6); // PS4 poste-6
 
     // Jeux associés à leur console (comme dans les PDFs et clientDb.ts)
@@ -540,7 +539,8 @@ pub fn run() {
 
 /// Boucle de sync automatique (récursive async) : déclenche run_sync_impl si le toggle
 /// sync_enabled est actif et qu'aucune sync n'est déjà en cours. Premier tir ~10s après
-/// le boot, puis toutes les 3 minutes.
+/// le boot, puis une sync légère toutes les 60s (1 pull + push des seules tables
+/// modifiées -> coût réseau quasi nul quand rien ne change).
 #[cfg(feature = "neon-sync")]
 fn auto_sync_loop(handle: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
@@ -558,6 +558,8 @@ fn auto_sync_loop(handle: tauri::AppHandle) {
                 let _ = crate::commands::sync::run_sync_impl(&handle, &state).await;
             }
         }
+        // Prochain cycle dans 60s (la sync elle-même est maintenant très rapide)
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         auto_sync_loop(handle);
     });
 }

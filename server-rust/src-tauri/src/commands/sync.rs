@@ -158,6 +158,34 @@ pub async fn sync_run(app: tauri::AppHandle, state: State<'_, AppState>, token: 
 /// Travail réel de la sync (pull + push), exécuté en arrière-plan.
 /// Pub : utilisé aussi par la sync automatique (boucle du setup).
 #[cfg(feature = "neon-sync")]
+/// Applique un pull complet (tables -> local) SANS journaliser dans l'outbox
+/// (les données viennent du cloud, les renvoyer serait un aller-retour inutile)
+/// et SANS écraser un changement local non envoyé (conflits gérés par Db).
+fn apply_pull_all(db: &crate::db::Db, all: &std::collections::HashMap<String, Vec<Value>>) -> usize {
+    let mut total = 0;
+    for (table, rows) in all {
+        let mut applied = 0;
+        for row in rows {
+            let Some(obj) = row.as_object() else { continue };
+            let id = obj.get("id").and_then(Value::as_i64).unwrap_or(0);
+            if id == 0 {
+                continue;
+            }
+            match db.apply_remote_change(table, id, obj, "", "") {
+                Ok(status) => {
+                    if status == "applied" || status == "tombstone" {
+                        applied += 1;
+                    }
+                }
+                Err(e) => eprintln!("[sync] pull {} #{} failed: {}", table, id, e.message),
+            }
+        }
+        eprintln!("[sync] pull {}: {} rows écrites", table, applied);
+        total += applied;
+    }
+    total
+}
+
 pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) -> ApiResult<Value> {
     let pool_opt = {
         let guard = state.neon_pool.lock().map_err(|_| crate::error::ApiError::internal("neon lock"))?;
@@ -172,119 +200,182 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
         }));
     };
 
-    // 0) Migration du schéma cloud (tables si base neuve, idempotent) puis
-    //    colonne deleted (soft-delete) + index unique id (anti-doublons)
+    // 0) Migrations du schéma cloud (idempotentes). La colonne deleted + les index
+    //    uniques id ne partent qu'UNE FOIS (flag persistant).
     match crate::neon::ensure_cloud_schema(&pool).await {
         Ok(_) => {}
         Err(e) => eprintln!("[sync] migration schéma cloud failed: {}", e),
     }
-    crate::neon::ensure_deleted_columns(&pool).await;
-
-    // 1) PULL Neon -> local (toutes tables, colonnes filtrées sur le schéma SQLite local)
-    set_sync_state(state, json!({ "running": true, "step": "pull", "message": "Réception des données Neon..." }));
-    match crate::neon::pull_all(&pool).await {
-        Ok(all) => {
-            let db = db(state);
-            let mut total_pulled = 0;
-            let mut pulled_map = serde_json::Map::new();
-            for (table, rows) in &all {
-                let local_cols = db.columns(table).unwrap_or_default();
-                let mut pulled = 0;
-                for row in rows {
-                    let Some(obj) = row.as_object() else { continue };
-                    // ANTI-DOUBLON : sans id entier pas d'upsert possible -> chaque sync
-                    // créerait une nouvelle ligne. On ignore et on log.
-                    let id_opt = obj.get("id").and_then(Value::as_i64);
-                    if id_opt.is_none() || id_opt.unwrap_or(0) == 0 {
-                        eprintln!("[sync] pull {}: ligne sans id entier, ignorée (anti-doublon)", table);
-                        continue;
-                    }
-                    let id = id_opt.unwrap_or(0);
-                    // Filtre sur les colonnes locales : une colonne Neon inconnue
-                    // ne fait plus échouer l'insert (avant : "no such column" avalé)
-                    let mut map = serde_json::Map::new();
-                    let mut upd = serde_json::Map::new();
-                    for (k, v) in obj {
-                        if !local_cols.contains(k) { continue; }
-                        // Le hash local est LA référence pour le login : on ne
-                        // l'écrase jamais avec le hash Neon (algos possiblement
-                        // incompatibles -> "Identifiants incorrects" après sync)
-                        if table == "users" && k == "password_hash" { continue; }
-                        map.insert(k.clone(), v.clone());
-                        if *k != "id" { upd.insert(k.clone(), v.clone()); }
-                    }
-                    if map.is_empty() { continue; }
-                    match db.get_opt(table, id) {
-                        Ok(Some(local)) => {
-                            // Soft-deleted localement : on ne ressuscite JAMAIS la ligne
-                            if local.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1 {
-                                eprintln!("[sync] pull {} #{}: supprimée localement, ignorée", table, id);
-                                continue;
-                            }
-                            match db.update(table, id, &upd) {
-                                Ok(_) => pulled += 1,
-                                Err(e) => eprintln!("[sync] update {} #{} failed: {}", table, id, e.message),
-                            }
-                        }
-                        Ok(None) => match db.insert(table, &map) {
-                            Ok(_) => pulled += 1,
-                            Err(e) => eprintln!("[sync] insert {} failed: {}", table, e.message),
-                        },
-                        Err(e) => eprintln!("[sync] get {} #{} failed: {}", table, id, e.message),
-                    }
-                }
-                eprintln!("[sync] pull {}: {} rows écrites", table, pulled);
-                pulled_map.insert(table.to_string(), json!(pulled));
-                total_pulled += pulled;
-            }
-            set_sync_state(state, json!({
-                "running": true,
-                "step": "push",
-                "message": format!("{} lignes reçues, envoi des données locales...", total_pulled)
-            }));
-
-            // 2) PUSH local -> Neon : toutes les lignes, Y COMPRIS les soft-deleted
-            //    (query_all_all) pour propager les suppressions vers Neon.
-            let mut total_pushed = 0;
-            let mut pushed_map = serde_json::Map::new();
-            for table in crate::db::TABLES {
-                let rows = db.query_all_all(table).unwrap_or_default();
-                if rows.is_empty() { continue; }
-                match crate::neon::push_table(&pool, table, &rows).await {
-                    Ok(n) => {
-                        eprintln!("[sync] push {}: {} rows", table, n);
-                        pushed_map.insert(table.to_string(), json!(n));
-                        total_pushed += n;
-                    }
-                    Err(e) => {
-                        eprintln!("[sync] push {} failed: {}", table, e.message);
-                        crate::logger::log_neon(&format!("sync_run: push {} failed: {}", table, e.message));
-                    }
-                }
-            }
-            return Ok(json!({
-                "success": true,
-                "step": "terminé",
-                "message": format!("Sync terminée: {} reçues, {} envoyées", total_pulled, total_pushed),
-                "pulled": Value::Object(pulled_map),
-                "pushed": Value::Object(pushed_map),
-                "pulled_total": total_pulled,
-                "pushed_total": total_pushed,
-                "timestamp": now_iso()
-            }));
+    match crate::neon::ensure_sync_schema(&pool).await {
+        Ok(_) => {}
+        Err(e) => eprintln!("[sync] migration delta sync failed: {}", e),
+    }
+    let migrated = db(state).get_setting("cloud_migration_v2").ok().and_then(|o| o).unwrap_or_default();
+    if migrated != "1" {
+        crate::neon::ensure_deleted_columns(&pool).await;
+        for table in crate::db::TABLES {
+            let _ = crate::neon::ensure_table_unique_id(&pool, table).await;
         }
-        Err(e) => {
-            eprintln!("[sync] pull_all failed: {}", e.message);
-            crate::logger::log_neon(&format!("sync_run: pull_all failed: {} -> reconnexion", e.message));
-            crate::neon::schedule_reconnect(app);
-            return Ok(json!({
-                "success": false,
-                "step": "erreur",
-                "message": format!("Sync cloud échouée (connexion perdue): {}. Reconnexion en arrière-plan, réessayez.", e.message),
-                "timestamp": now_iso()
-            }));
+        let _ = db(state).set_setting("cloud_migration_v2", "1");
+        eprintln!("[sync] migration v2 cloud appliquée (deleted + index uniques)");
+    }
+
+    // 1) Reprise : les événements SENDING sans ACK (coupure/crash) repassent PENDING.
+    db(state).outbox_reset_stale().ok();
+
+    // 2) UPLOAD delta : batches de 100 PENDING -> Supabase -> ACK.
+    //    Si le réseau coupe au milieu, les non-ACKés restent PENDING : le prochain
+    //    cycle reprend exactement où il s'est arrêté (spec §6) et l'upsert cloud est
+    //    idempotent (spec §7) : un changement renvoyé est simplement re-ACKé.
+    set_sync_state(state, json!({ "running": true, "step": "upload", "message": "Envoi des changements locaux..." }));
+    let mut uploaded = 0;
+    loop {
+        let batch = db(state).outbox_pending(100).unwrap_or_default();
+        if batch.is_empty() {
+            break;
+        }
+        match crate::neon::push_outbox_batch(&pool, &batch).await {
+            Ok((acked, failed)) => {
+                db(state).outbox_mark(&acked, "ACKED").ok();
+                db(state).outbox_mark(&failed, "FAILED").ok();
+                uploaded += acked.len();
+                eprintln!("[sync] upload lot: {} ACKed, {} FAILED", acked.len(), failed.len());
+                if acked.is_empty() {
+                    break; // échec réseau/applicatif : reprise au prochain cycle
+                }
+            }
+            Err(e) => {
+                eprintln!("[sync] upload failed: {} (reprise au prochain cycle)", e);
+                crate::logger::log_neon(&format!("sync_run: upload failed: {}", e));
+                break;
+            }
         }
     }
+    db(state).sync_uploaded_set(uploaded as i64).ok();
+
+    // 3) DOWNLOAD delta : uniquement les changements après le curseur (spec §4).
+    let mut cursor = db(state).sync_cursor_get().unwrap_or(0);
+    let mut downloaded = 0;
+    if cursor == 0 {
+        // PREMIÈRE SYNC : pull complet (restauration) puis seed de l'outbox avec
+        // les données locales pré-existantes (elles n'ont jamais été journalisées).
+        set_sync_state(state, json!({ "running": true, "step": "pull", "message": "Première synchronisation (restauration complète)..." }));
+        match crate::neon::pull_all(&pool).await {
+            Ok(all) => {
+                downloaded = apply_pull_all(db(state), &all);
+                let seeded = db(state).outbox_seed().unwrap_or(0);
+                eprintln!("[sync] première sync: {} reçues, {} événements seedés", downloaded, seeded);
+                let max_seq = crate::neon::sync_max_sequence(&pool).await.unwrap_or(0);
+                db(state).sync_cursor_set(max_seq).ok();
+            }
+            Err(e) => {
+                eprintln!("[sync] pull_all failed: {}", e.message);
+                crate::logger::log_neon(&format!("sync_run: pull_all failed: {} -> reconnexion", e.message));
+                crate::neon::schedule_reconnect(app);
+                return Ok(json!({
+                    "success": false,
+                    "step": "erreur",
+                    "message": format!("Sync cloud échouée (connexion perdue): {}. Reconnexion en arrière-plan, réessayez.", e.message),
+                    "timestamp": now_iso()
+                }));
+            }
+        }
+    } else {
+        // SYNC DELTA : boucle de batches de 500 changements.
+        set_sync_state(state, json!({ "running": true, "step": "pull", "message": "Réception des nouveaux changements..." }));
+        loop {
+            let batch = crate::neon::pull_delta(&pool, cursor, 500).await.unwrap_or_default();
+            if batch.is_empty() {
+                break;
+            }
+            let first_seq = batch[0].get("sequence").and_then(Value::as_i64).unwrap_or(0);
+            // SNAPSHOT_REQUIRED (spec §11) : trou de séquence -> le journal a été
+            // nettoyé ou l'appareil est resté trop longtemps hors ligne -> on
+            // restaure un snapshot complet puis on reprend en delta.
+            if first_seq > cursor + 1 {
+                eprintln!("[sync] trou de séquence (curseur {}, reçu {}) -> SNAPSHOT_REQUIRED", cursor, first_seq);
+                match crate::neon::pull_all(&pool).await {
+                    Ok(all) => {
+                        downloaded += apply_pull_all(db(state), &all);
+                        let max_seq = crate::neon::sync_max_sequence(&pool).await.unwrap_or(0);
+                        db(state).sync_cursor_set(max_seq).ok();
+                        eprintln!("[sync] snapshot appliqué, curseur remis à {}", max_seq);
+                    }
+                    Err(e) => {
+                        eprintln!("[sync] snapshot pull failed: {}", e.message);
+                        crate::neon::schedule_reconnect(app);
+                    }
+                }
+                break;
+            }
+            let mut last_seq = cursor;
+            let batch_len = batch.len();
+            for change in &batch {
+                let seq = change.get("sequence").and_then(Value::as_i64).unwrap_or(0);
+                let entity = change.get("entity").and_then(Value::as_str).unwrap_or_default();
+                let record_id = change.get("record_id").and_then(Value::as_i64).unwrap_or(0);
+                let change_id = change.get("change_id").and_then(Value::as_str).unwrap_or_default();
+                let created_at = change.get("created_at").and_then(Value::as_str).unwrap_or_default();
+                let payload_opt = change.get("payload").and_then(Value::as_object);
+                if entity.is_empty() || record_id == 0 || payload_opt.is_none() {
+                    last_seq = seq;
+                    continue;
+                }
+                let payload = payload_opt.unwrap();
+                match db(state).apply_remote_change(entity, record_id, payload, change_id, created_at) {
+                    Ok(status) => {
+                        if status == "applied" || status == "tombstone" {
+                            downloaded += 1;
+                        } else if status == "conflict" {
+                            eprintln!("[sync] conflit {} #{}: local gagne", entity, record_id);
+                        }
+                    }
+                    Err(e) => eprintln!("[sync] apply {} #{} failed: {}", entity, record_id, e.message),
+                }
+                last_seq = seq;
+            }
+            db(state).sync_cursor_set(last_seq).ok();
+            cursor = last_seq;
+            if batch_len < 500 {
+                break;
+            }
+        }
+    }
+
+    // 4) Registre appareil (pour le nettoyage du journal §12) + nettoyages.
+    let device = db(state).device_id().unwrap_or_default();
+    let cur = db(state).sync_cursor_get().unwrap_or(0);
+    let _ = crate::neon::peer_register(&pool, &device, cur, uploaded as i64).await;
+    db(state).outbox_cleanup().ok();
+    let _ = crate::neon::sync_changes_cleanup(&pool).await;
+
+    // 5) Statut final.
+    let pending = db(state).outbox_pending_count().unwrap_or(0);
+    let msg = if pending > 0 {
+        format!("Sync terminée: {} reçues, {} envoyées ({} restent en attente)", downloaded, uploaded, pending)
+    } else {
+        format!("Sync terminée: {} reçues, {} envoyées", downloaded, uploaded)
+    };
+    set_sync_state(state, json!({
+        "running": false,
+        "step": "terminé",
+        "message": msg,
+        "pulled_total": downloaded,
+        "pushed_total": uploaded,
+        "cursor": cur,
+        "pending": pending,
+        "timestamp": now_iso()
+    }));
+    Ok(json!({
+        "success": true,
+        "step": "terminé",
+        "message": msg,
+        "pulled_total": downloaded,
+        "pushed_total": uploaded,
+        "cursor": cur,
+        "pending": pending,
+        "timestamp": now_iso()
+    }))
 }
 
 /// GET /api/sync/poll - Best practice : retourne l'état de la sync en arrière-plan
