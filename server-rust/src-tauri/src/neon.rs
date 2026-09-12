@@ -101,6 +101,17 @@ pub struct NeonUser {
     pub created_at: Option<String>,
 }
 
+/// Lecture d'une colonne texte tolérante aux pannes : N'UTILISE PAS row.get (panique si type
+/// Postgres inattendu, ex: TIMESTAMPTZ décodé en String) — un panic ici tue l'app Android.
+#[cfg(feature = "neon-sync")]
+fn pg_col_to_string(row: &tokio_postgres::Row, idx: usize) -> Option<String> {
+    match row.try_get::<_, Option<String>>(idx) {
+        Ok(Some(s)) => Some(s),
+        Ok(None) => None,
+        Err(_) => None, // type inattendu (timestamp, etc.) -> on ignore la colonne, pas de panic
+    }
+}
+
 #[cfg(feature = "neon-sync")]
 pub async fn fetch_neon_user(pool: &NeonPool, email: &str) -> ApiResult<Option<NeonUser>> {
     let rows = pool.client
@@ -111,14 +122,24 @@ pub async fn fetch_neon_user(pool: &NeonPool, email: &str) -> ApiResult<Option<N
         return Ok(None);
     }
     let row = &rows[0];
-    Ok(Some(NeonUser {
-        id: row.get::<_, i64>(0),
-        email: row.get::<_, String>(1),
-        password_hash: row.get::<_, String>(2),
-        role: row.get::<_, String>(3),
-        nom: row.get::<_, String>(4),
-        created_at: row.get::<_, Option<chrono::NaiveDateTime>>(5).map(|dt| dt.and_utc().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
-    }))
+    // Décodage défensif : tout panic potentiel est contenu (catch_unwind), jamais propagé
+    let decode = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        NeonUser {
+            id: row.try_get::<_, i64>(0).unwrap_or(0),
+            email: pg_col_to_string(row, 1).unwrap_or_default(),
+            password_hash: pg_col_to_string(row, 2).unwrap_or_default(),
+            role: pg_col_to_string(row, 3).unwrap_or_else(|| "employe".to_string()),
+            nom: pg_col_to_string(row, 4).unwrap_or_default(),
+            created_at: pg_col_to_string(row, 5),
+        }
+    }));
+    match decode {
+        Ok(u) => Ok(Some(u)),
+        Err(_) => {
+            crate::logger::log_neon("fetch_neon_user: décodage row paniqué, user ignoré");
+            Ok(None)
+        }
+    }
 }
 
 #[cfg(not(feature = "neon-sync"))]
@@ -132,17 +153,29 @@ pub async fn pull_users(pool: &NeonPool) -> ApiResult<Vec<Value>> {
         .query("SELECT id, email, password_hash, role, nom, created_at FROM users ORDER BY id", &[])
         .await
         .map_err(|e| ApiError::internal(format!("Neon pull users: {}", e)))?;
-    Ok(rows.iter().map(|row| {
-        let created_at: Option<chrono::NaiveDateTime> = row.get(5);
-        json!({
-            "id": row.get::<_, i64>(0),
-            "email": row.get::<_, String>(1),
-            "password_hash": row.get::<_, String>(2),
-            "role": row.get::<_, String>(3),
-            "nom": row.get::<_, String>(4),
-            "created_at": created_at.map(|dt| dt.and_utc().to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
-        })
-    }).collect())
+    // Décodage défensif : try_get + String partout (pas de chrono), catch_unwind par ligne.
+    // Avant : row.get::<_, Option<chrono::NaiveDateTime>>(5) PANIQUAIT si la colonne Postgres
+    // est TIMESTAMPTZ (déjà mappé chrono) mais type inattendu -> app tuée en background.
+    let mut out = Vec::new();
+    for row in rows.iter() {
+        let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            json!({
+                "id": row.try_get::<_, i64>(0).unwrap_or(0),
+                "email": pg_col_to_string(row, 1).unwrap_or_default(),
+                "password_hash": pg_col_to_string(row, 2).unwrap_or_default(),
+                "role": pg_col_to_string(row, 3).unwrap_or_else(|| "employe".to_string()),
+                "nom": pg_col_to_string(row, 4).unwrap_or_default(),
+                "created_at": pg_col_to_string(row, 5),
+            })
+        }));
+        match decoded {
+            Ok(v) => out.push(v),
+            Err(_) => {
+                crate::logger::log_neon("pull_users: ligne paniquée au décodage, ignorée");
+            }
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(not(feature = "neon-sync"))]

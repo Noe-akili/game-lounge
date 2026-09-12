@@ -366,13 +366,12 @@ pub fn run() {
                                     match crate::neon::pull_users(&pool).await {
                                         Ok(users) => {
                                             eprintln!("[neon] pull {} users en background", users.len());
-                                            // Cache local : upsert
+                                            // Cache local : upsert (sans unwrap : un panic ici tue l'app)
                                             for u in users {
-                                                let mut map = serde_json::Map::new();
-                                                for (k,v) in u.as_object().unwrap() {
-                                                    map.insert(k.clone(), v.clone());
+                                                if let Some(obj) = u.as_object() {
+                                                    let map = obj.clone();
+                                                    let _ = state.db.insert("users", &map);
                                                 }
-                                                let _ = state.db.insert("users", &map);
                                             }
                                         }
                                         Err(e) => eprintln!("[neon] pull users failed: {}", e.message),

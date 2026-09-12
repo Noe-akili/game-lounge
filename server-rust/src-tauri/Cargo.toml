@@ -51,12 +51,12 @@ webpki-roots = { version = "0.21", optional = true }
 dotenvy = { version = "0.15", optional = true }
 lopdf = "0.34"
 
+# panic = unwind (PAS abort) : un panic dans une tâche background (Neon pull, import PDF)
+# ne doit JAMAIS tuer tout le processus Android. Avec abort, tout panic = app qui se ferme
+# brutalement quelques secondes après l'entrée. Avec unwind, la tâche fautive meurt seule,
+# les catch_unwind existants fonctionnent, et l'invoke renvoie une erreur au JS.
 [profile.release]
-panic = "abort"
 codegen-units = 1
 lto = true
 opt-level = "s"
 strip = true
-
-[profile.dev]
-panic = "abort"

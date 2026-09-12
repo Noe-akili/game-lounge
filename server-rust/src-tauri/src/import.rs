@@ -155,10 +155,17 @@ fn extract_pdf_text(path: &Path) -> ApiResult<String> {
         }
     }
     if text.trim().is_empty() {
-        // Tentative via objets si extract_text échoue
+        // Tentative via objets si extract_text échoue — LIMITÉ : le debug format de tous les
+        // objets d'un PDF peut représenter des centaines de Mo -> OOM kill sur Android
+        // (l'app se ferme toute seule). On plafonne à 200 Ko de texte.
+        const MAX_DUMP: usize = 200_000;
+        let mut dumped = 0usize;
         for (_, obj) in doc.objects.iter() {
-            text.push_str(&format!("{:?}", obj));
+            let s = format!("{:?}", obj);
+            if dumped + s.len() > MAX_DUMP { break; }
+            text.push_str(&s);
             text.push('\n');
+            dumped += s.len() + 1;
         }
     }
     if text.trim().is_empty() {
