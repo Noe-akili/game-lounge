@@ -19,11 +19,22 @@ const NEON_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 #[cfg(feature = "neon-sync")]
 const NEON_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(6);
 
+/// Message d'erreur Neon LISIBLE : le Display générique des erreurs serveur est
+/// "db error" (Kind::Db) — le VRAI message SQL (ex: "column deleted does not exist",
+/// "COALESCE types integer and boolean cannot be matched") est dans la cause (DbError).
+#[cfg(feature = "neon-sync")]
+fn neon_error_str(e: tokio_postgres::Error) -> String {
+    match e.into_source() {
+        Some(src) => format!("{}", src),
+        None => "erreur serveur (cause inconnue)".to_string(),
+    }
+}
+
 #[cfg(feature = "neon-sync")]
 pub async fn neon_query(pool: &NeonPool, sql: &str, params: &[&(dyn tokio_postgres::types::ToSql + Sync)]) -> Result<Vec<tokio_postgres::Row>, String> {
     match tokio::time::timeout(NEON_QUERY_TIMEOUT, pool.client.query(sql, params)).await {
         Ok(Ok(rows)) => Ok(rows),
-        Ok(Err(e)) => Err(e.to_string()),
+        Ok(Err(e)) => Err(neon_error_str(e)),
         Err(_) => Err(format!("timeout après {}s (connexion morte ?)", NEON_QUERY_TIMEOUT.as_secs())),
     }
 }
@@ -32,7 +43,7 @@ pub async fn neon_query(pool: &NeonPool, sql: &str, params: &[&(dyn tokio_postgr
 async fn neon_execute(pool: &NeonPool, sql: &str, params: &[&(dyn tokio_postgres::types::ToSql + Sync)]) -> Result<u64, String> {
     match tokio::time::timeout(NEON_QUERY_TIMEOUT, pool.client.execute(sql, params)).await {
         Ok(Ok(n)) => Ok(n),
-        Ok(Err(e)) => Err(e.to_string()),
+        Ok(Err(e)) => Err(neon_error_str(e)),
         Err(_) => Err(format!("timeout après {}s (connexion morte ?)", NEON_QUERY_TIMEOUT.as_secs())),
     }
 }
@@ -294,29 +305,24 @@ pub async fn ensure_deleted_columns(pool: &NeonPool) {
 // supprimée ne réapparaît pas après sync.
 // Une table absente du schéma Neon est ignorée (log + continue) ; seule une erreur
 // de connexion est propagée (déclenche la reconnexion en arrière-plan).
+/// True si la valeur `deleted` d'une ligne pullée indique une suppression.
+/// Gère les DEUX types possibles côté Neon : boolean (true/false) et integer (1/0).
+#[cfg(feature = "neon-sync")]
+fn is_deleted_value(v: &Value) -> bool {
+    v.as_bool().unwrap_or(false) || v.as_i64().unwrap_or(0) == 1
+}
+
 #[cfg(feature = "neon-sync")]
 pub async fn pull_all(pool: &NeonPool) -> ApiResult<std::collections::HashMap<String, Vec<Value>>> {
-    // Tables Neon ayant la colonne deleted (soft-delete) — une seule requête batch
-    let mut deleted_tables: Vec<String> = Vec::new();
-    match neon_query(pool, "SELECT table_name FROM information_schema.columns WHERE table_schema = 'public' AND column_name = 'deleted'", &[]).await {
-        Ok(rows) => {
-            for r in rows {
-                if let Some(s) = pg_col_to_string_pub(&r, 0) {
-                    deleted_tables.push(s);
-                }
-            }
-        }
-        Err(_) => {}
-    }
     let mut all = std::collections::HashMap::new();
     let tables = ["users", "consoles", "jeux", "joueurs", "sessions_jeu", "tarifs", "factures", "jetons_transactions", "messages", "parametres_fidelite", "lignes_facture"];
+    let mut errors = 0;
     for table in tables {
-        let has_deleted = deleted_tables.contains(&table.to_string());
-        let sql = if has_deleted {
-            format!("SELECT COALESCE(json_agg(t)::text, '[]') FROM (SELECT * FROM \"{}\" WHERE COALESCE(deleted, false) = false) t", table)
-        } else {
-            format!("SELECT COALESCE(json_agg(t)::text, '[]') FROM (SELECT * FROM \"{}\") t", table)
-        };
+        // PAS de filtre SQL sur `deleted` : le type de la colonne (boolean OU integer
+        // selon comment elle a été créée sur Neon) casse COALESCE/deleted = false
+        // ("COALESCE types integer and boolean cannot be matched" -> "db error" ->
+        // toute la sync bloquée). On pull tout et on filtre les lignes supprimées EN RUST.
+        let sql = format!("SELECT COALESCE(json_agg(t)::text, '[]') FROM (SELECT * FROM \"{}\") t", table);
         let json_rows = neon_query(pool, &sql, &[]).await;
         match json_rows {
             Ok(jrows) => {
@@ -326,6 +332,9 @@ pub async fn pull_all(pool: &NeonPool) -> ApiResult<std::collections::HashMap<St
                         if let Ok(v) = serde_json::from_str::<Value>(&s) {
                             if let Some(arr) = v.as_array() {
                                 for item in arr {
+                                    // Soft-delete : on ne repull JAMAIS une ligne supprimée
+                                    let deleted = item.get("deleted").map(is_deleted_value).unwrap_or(false);
+                                    if deleted { continue; }
                                     vec.push(item.clone());
                                 }
                             }
@@ -336,17 +345,18 @@ pub async fn pull_all(pool: &NeonPool) -> ApiResult<std::collections::HashMap<St
                 all.insert(table.to_string(), vec);
             }
             Err(e) => {
-                // Table absente / colonne manquante -> on ignore la table (offline-first).
-                // Erreur de connexion -> on propage pour déclencher la reconnexion.
-                if e.to_lowercase().contains("does not exist") || e.to_lowercase().contains("undefined") {
-                    eprintln!("[neon] pull {} ignorée (schéma Neon): {}", table, e);
-                    crate::logger::log_neon(&format!("pull {} ignorée (schéma): {}", table, e));
-                    all.insert(table.to_string(), Vec::new());
-                } else {
-                    return Err(ApiError::internal(format!("Neon pull {}: {}", table, e)));
-                }
+                // Résilience : une table en erreur (absente, colonne spéciale, ...) ne
+                // bloque PAS toute la sync — les autres tables se synchronisent quand même.
+                // Seule une erreur sur TOUTES les tables (connexion morte) est fatale.
+                eprintln!("[neon] pull {} failed: {}", table, e);
+                crate::logger::log_neon(&format!("pull {} failed: {}", table, e));
+                errors += 1;
+                all.insert(table.to_string(), Vec::new());
             }
         }
+    }
+    if errors == tables.len() && !tables.is_empty() {
+        return Err(ApiError::internal("Neon pull: toutes les tables en erreur (connexion morte ?)"));
     }
     Ok(all)
 }
