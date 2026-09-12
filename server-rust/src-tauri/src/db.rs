@@ -200,6 +200,28 @@ impl Db {
         Ok(rows)
     }
 
+    /// Colonnes de la table locale (PRAGMA table_info) pour filtrer les données venues
+    /// de Neon : si Neon a des colonnes en plus (ou des noms différents), l'insert
+    /// échouait silencieusement avec "no such column" -> sync "OK" mais rien d'écrit.
+    pub fn columns(&self, table: &str) -> ApiResult<Vec<String>> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        if !TABLES.contains(&table) {
+            return Err(ApiError::internal(format!("Table inconnue: {table}")));
+        }
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info(\"{table}\")"))
+            .map_err(|e| ApiError::internal(format!("Colonnes {table}: {e}")))?;
+        let cols = stmt
+            .query_map([], |r| r.get::<_, String>(1))
+            .map_err(|e| ApiError::internal(format!("Colonnes {table}: {e}")))?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| ApiError::internal(format!("Colonnes {table}: {e}")))?;
+        Ok(cols)
+    }
+
     pub fn find_one(&self, table: &str, pred: impl Fn(&Value) -> bool) -> ApiResult<Option<Value>> {
         Ok(self.query_all(table)?.into_iter().find(pred))
     }

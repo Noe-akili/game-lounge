@@ -271,21 +271,30 @@ pub async fn pull_users(_pool: &()) -> ApiResult<Vec<Value>> {
     Ok(vec![])
 }
 
-// Pull toutes les tables pour restauration complète si app data vidé
+// Pull toutes les tables pour restauration complète si app data vidé.
+// IMPORTANT : on utilise json_agg (fonction STANDARD Postgres) au lieu de
+// row_to_json (fonction custom qui n'existe pas forcément sur Neon -> la requête
+// échouait -> sync_run abort -> AUCUNE donnée écrite localement).
+// Une table absente du schéma Neon est ignorée (log + continue) ; seule une erreur
+// de connexion est propagée (déclenche la reconnexion en arrière-plan).
 #[cfg(feature = "neon-sync")]
 pub async fn pull_all(pool: &NeonPool) -> ApiResult<std::collections::HashMap<String, Vec<Value>>> {
     let mut all = std::collections::HashMap::new();
     let tables = ["users", "consoles", "jeux", "joueurs", "sessions_jeu", "tarifs", "factures", "jetons_transactions", "messages", "parametres_fidelite", "lignes_facture"];
     for table in tables {
-        let sql = format!("SELECT row_to_json(t) as data FROM (SELECT * FROM {} ) t", table);
+        let sql = format!("SELECT COALESCE(json_agg(t)::text, '[]') FROM (SELECT * FROM \"{}\") t", table);
         let json_rows = neon_query(pool, &sql, &[]).await;
         match json_rows {
             Ok(jrows) => {
                 let mut vec = Vec::new();
-                for r in jrows {
-                    if let Ok(s) = r.try_get::<_, String>(0) {
+                if !jrows.is_empty() {
+                    if let Ok(s) = jrows[0].try_get::<_, String>(0) {
                         if let Ok(v) = serde_json::from_str::<Value>(&s) {
-                            vec.push(v);
+                            if let Some(arr) = v.as_array() {
+                                for item in arr {
+                                    vec.push(item.clone());
+                                }
+                            }
                         }
                     }
                 }
@@ -293,9 +302,15 @@ pub async fn pull_all(pool: &NeonPool) -> ApiResult<std::collections::HashMap<St
                 all.insert(table.to_string(), vec);
             }
             Err(e) => {
-                eprintln!("[neon] pull {} failed: {}", table, e);
-                all.insert(table.to_string(), Vec::new());
-                return Err(ApiError::internal(format!("Neon pull {}: {}", table, e)));
+                // Table absente / colonne manquante -> on ignore la table (offline-first).
+                // Erreur de connexion -> on propage pour déclencher la reconnexion.
+                if e.to_lowercase().contains("does not exist") || e.to_lowercase().contains("undefined") {
+                    eprintln!("[neon] pull {} ignorée (schéma Neon): {}", table, e);
+                    crate::logger::log_neon(&format!("pull {} ignorée (schéma): {}", table, e));
+                    all.insert(table.to_string(), Vec::new());
+                } else {
+                    return Err(ApiError::internal(format!("Neon pull {}: {}", table, e)));
+                }
             }
         }
     }
@@ -338,4 +353,100 @@ pub async fn push_tarif(pool: &NeonPool, tarif: &Value) -> ApiResult<()> {
         &[&id, &type_, &duree, &prix, &desc, &console_type, &jeu, &actif]
     ).await.map_err(|e| ApiError::internal(format!("Neon push tarif: {}", e)))?;
     Ok(())
+}
+
+/// Colonnes d'une table Neon via information_schema (standard Postgres).
+/// Utilisé pour ne jamais envoyer vers Neon une colonne qui n'existe pas côté cloud
+/// (sinon erreur SQL silencieuse -> "l'envoi ne fonctionne pas").
+#[cfg(feature = "neon-sync")]
+pub async fn neon_table_columns(pool: &NeonPool, table: &str) -> Result<Vec<String>, String> {
+    let rows = neon_query(
+        pool,
+        "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position",
+        &[&table],
+    ).await;
+    match rows {
+        Ok(rs) => {
+            let mut out = Vec::new();
+            for r in rs {
+                if let Some(s) = pg_col_to_string_pub(&r, 0) {
+                    out.push(s);
+                }
+            }
+            Ok(out)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+#[cfg(feature = "neon-sync")]
+/// Convertit une valeur sérialisée en texte : Postgres caste text -> type de la colonne
+/// cible à l'insert (int, numeric, timestamptz, ...). Évite de devoir construire des
+/// paramètres typés dynamiquement (le protocole tokio-postgres exige des références).
+fn val_to_text(v: &Value) -> String {
+    match v {
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                format!("{}", i)
+            } else if let Some(f) = n.as_f64() {
+                format!("{}", f)
+            } else {
+                "".to_string()
+            }
+        }
+        Value::String(s) => s.clone(),
+        Value::Bool(b) => format!("{}", *b),
+        _ => "".to_string(),
+    }
+}
+
+/// Push générique d'une table locale vers Neon : upsert par id, colonnes filtrées
+/// sur le schéma Neon (information_schema). C'est ce qui rend l'ENVOI possible :
+/// avant, sync_run ne faisait que pull, push_user/push_tarif n'étaient jamais appelés.
+#[cfg(feature = "neon-sync")]
+pub async fn push_table(pool: &NeonPool, table: &str, rows: &Vec<Value>) -> ApiResult<usize> {
+    let cols = neon_table_columns(pool, table)
+        .await
+        .map_err(|e| ApiError::internal(format!("Neon colonnes {}: {}", table, e)))?;
+    let mut pushed = 0;
+    for row in rows {
+        let Some(obj) = row.as_object() else { continue };
+        let Some(id_v) = obj.get("id") else { continue };
+        let id = id_v.as_i64().unwrap_or(0);
+        if id == 0 { continue; }
+        // Colonnes présentes dans la ligne ET dans Neon, valeurs non nulles
+        let mut keys: Vec<String> = Vec::new();
+        for k in obj.keys() {
+            if *k == "id" || !cols.contains(k) { continue; }
+            if obj[k].is_null() { continue; }
+            keys.push(k.to_string());
+        }
+        if keys.is_empty() { continue; }
+        let placeholders: Vec<&str> = keys.iter().map(|k| "?").collect();
+        let updates: Vec<String> = keys.iter().map(|k| format!("{}=EXCLUDED.{}", k, k)).collect();
+        let sql = format!(
+            "INSERT INTO \"{table}\" (id,{}) VALUES (?,{}) ON CONFLICT (id) DO UPDATE SET {}",
+            keys.join(","),
+            placeholders.join(","),
+            updates.join(",")
+        );
+        // Tous les params en texte : Postgres caste text -> type de la colonne à l'insert
+        let mut text_params: Vec<String> = Vec::with_capacity(keys.len() + 1);
+        text_params.push(format!("{}", id));
+        for k in keys {
+            text_params.push(val_to_text(&obj[&k]));
+        }
+        let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::with_capacity(text_params.len());
+        for i in 0..text_params.len() {
+            params.push(&text_params[i]);
+        }
+        match neon_execute(pool, &sql, &params).await {
+            Ok(_) => pushed += 1,
+            Err(e) => {
+                eprintln!("[neon] push {} #{} failed: {}", table, id, e);
+                crate::logger::log_neon(&format!("push {} #{}: {}", table, id, e));
+            }
+        }
+    }
+    Ok(pushed)
 }

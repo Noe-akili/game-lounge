@@ -71,38 +71,75 @@ pub async fn sync_run(app: tauri::AppHandle, state: State<'_, AppState>, token: 
             guard.clone()
         };
         if let Some(pool) = pool_opt {
-            // Pull toutes les tables depuis Neon (offline-first, restauration complète si app data vidé)
+            // 1) PULL Neon -> local (toutes tables, colonnes filtrées sur le schéma SQLite local)
             match crate::neon::pull_all(&pool).await {
                 Ok(all) => {
                     eprintln!("[sync] pull all tables depuis Neon: {:?}", all.keys().collect::<Vec<_>>());
                     let db = db(&state);
                     let mut total_pulled = 0;
                     for (table, rows) in &all {
+                        let local_cols = db.columns(table).unwrap_or_default();
                         let mut pulled = 0;
                         for row in rows {
-                            if let Some(obj) = row.as_object() {
-                                let mut map = serde_json::Map::new();
-                                for (k,v) in obj { map.insert(k.clone(), v.clone()); }
-                                // Upsert local : tente update si id existe, sinon insert
-                                if let Some(id) = map.get("id").and_then(Value::as_i64) {
-                                    match db.get_opt(table, id) {
-                                        Ok(Some(_)) => { let _ = db.update(table, id, &map); pulled += 1; },
-                                        Ok(None) => { let _ = db.insert(table, &map); pulled += 1; },
-                                        _ => {}
-                                    }
-                                } else {
-                                    let _ = db.insert(table, &map);
-                                    pulled += 1;
-                                }
+                            let Some(obj) = row.as_object() else { continue };
+                            // Filtre sur les colonnes locales : une colonne Neon inconnue
+                            // ne fait plus échouer l'insert (avant : "no such column" avalé)
+                            let mut map = serde_json::Map::new();
+                            let mut upd = serde_json::Map::new();
+                            for (k, v) in obj {
+                                if !local_cols.contains(k) { continue; }
+                                // Le hash local est LA référence pour le login : on ne
+                                // l'écrase jamais avec le hash Neon (algos possiblement
+                                // incompatibles -> "Identifiants incorrects" après sync)
+                                if table == "users" && k == "password_hash" { continue; }
+                                map.insert(k.clone(), v.clone());
+                                if *k != "id" { upd.insert(k.clone(), v.clone()); }
+                            }
+                            if map.is_empty() { continue; }
+                            match map.get("id").and_then(Value::as_i64) {
+                                Some(id) => match db.get_opt(table, id) {
+                                    Ok(Some(_)) => match db.update(table, id, &upd) {
+                                        Ok(_) => pulled += 1,
+                                        Err(e) => eprintln!("[sync] update {} #{} failed: {}", table, id, e.message),
+                                    },
+                                    Ok(None) => match db.insert(table, &map) {
+                                        Ok(_) => pulled += 1,
+                                        Err(e) => eprintln!("[sync] insert {} failed: {}", table, e.message),
+                                    },
+                                    Err(e) => eprintln!("[sync] get {} #{} failed: {}", table, id, e.message),
+                                },
+                                None => match db.insert(table, &map) {
+                                    Ok(_) => pulled += 1,
+                                    Err(e) => eprintln!("[sync] insert {} (sans id) failed: {}", table, e.message),
+                                },
                             }
                         }
-                        eprintln!("[sync] pull {}: {} rows", table, pulled);
+                        eprintln!("[sync] pull {}: {} rows écrites", table, pulled);
                         total_pulled += pulled;
+                    }
+                    // 2) PUSH local -> Neon : lignes créées/modifiées en local (offline-first).
+                    //    Avant, ce push n'existait pas du tout (push_user/push_tarif jamais appelés)
+                    //    -> "l'envoi ne fonctionne pas". Colonnes filtrées sur le schéma Neon.
+                    let mut total_pushed = 0;
+                    for table in crate::db::TABLES {
+                        let rows = db.query_all(table).unwrap_or_default();
+                        if rows.is_empty() { continue; }
+                        match crate::neon::push_table(&pool, table, &rows).await {
+                            Ok(n) => {
+                                eprintln!("[sync] push {}: {} rows", table, n);
+                                total_pushed += n;
+                            }
+                            Err(e) => {
+                                eprintln!("[sync] push {} failed: {}", table, e.message);
+                                crate::logger::log_neon(&format!("sync_run: push {} failed: {}", table, e.message));
+                            }
+                        }
                     }
                     return Ok(json!({
                         "success": true,
-                        "message": format!("Sync Neon terminée: {} lignes synchronisées (toutes tables)", total_pulled),
+                        "message": format!("Sync Neon terminée: {} lignes reçues, {} lignes envoyées", total_pulled, total_pushed),
                         "pulled": total_pulled,
+                        "pushed": total_pushed,
                         "tables": all.keys().collect::<Vec<_>>(),
                         "timestamp": now_iso()
                     }));
