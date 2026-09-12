@@ -172,7 +172,12 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
         }));
     };
 
-    // 0) Migration Neon : colonne deleted (soft-delete) + index unique id (anti-doublons)
+    // 0) Migration du schéma cloud (tables si base neuve, idempotent) puis
+    //    colonne deleted (soft-delete) + index unique id (anti-doublons)
+    match crate::neon::ensure_cloud_schema(&pool).await {
+        Ok(_) => {}
+        Err(e) => eprintln!("[sync] migration schéma cloud failed: {}", e),
+    }
     crate::neon::ensure_deleted_columns(&pool).await;
 
     // 1) PULL Neon -> local (toutes tables, colonnes filtrées sur le schéma SQLite local)

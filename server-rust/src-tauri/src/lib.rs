@@ -361,6 +361,13 @@ pub fn run() {
                     match crate::neon::init_neon_pool().await {
                         Some(pool) => {
                             eprintln!("[neon] pool initialisé en background");
+                            // MIGRATION DU SCHÉMA CLOUD : crée toutes les tables si la base
+                            // cloud est neuve (Supabase vide = aucune table -> pull ET push
+                            // échoueraient). Idempotent, exécuté aussi à chaque sync.
+                            match crate::neon::ensure_cloud_schema(&pool).await {
+                                Ok(_) => eprintln!("[neon] schéma cloud prêt"),
+                                Err(e) => eprintln!("[neon] schéma cloud failed (sera réessayé à la sync): {}", e),
+                            }
                             if let Some(state) = handle.try_state::<AppState>() {
                                 if let Ok(mut guard) = state.neon_pool.lock() {
                                     *guard = Some(pool);

@@ -53,7 +53,7 @@ pub fn neon_status(state: State<'_, AppState>) -> ApiResult<Value> {
     #[cfg(feature = "neon-sync")]
     let (enabled, available, url_present) = {
         let pool_opt = state.neon_pool.lock().ok().and_then(|g| g.clone());
-        let url_present = std::env::var("DATABASE_URL").is_ok() || option_env!("DATABASE_URL").is_some() || std::env::var("NEON_DATABASE_URL").is_ok();
+        let url_present = std::env::var("DATABASE_URL").map(|u| !u.trim().is_empty()).unwrap_or(false) || std::env::var("NEON_DATABASE_URL").map(|u| !u.trim().is_empty()).unwrap_or(false);
         let enabled = url_present || true; // fallback URL hardcodé donc toujours enabled
         let available = pool_opt.is_some();
         (enabled, available, url_present)
@@ -90,9 +90,7 @@ pub async fn test_neon_connection(app: tauri::AppHandle, state: State<'_, AppSta
     {
         let url = std::env::var("DATABASE_URL").ok().filter(|s| !s.trim().is_empty())
             .or_else(|| std::env::var("NEON_DATABASE_URL").ok().filter(|s| !s.trim().is_empty()))
-            .or_else(|| option_env!("DATABASE_URL").map(|s| s.to_string()).filter(|s| !s.trim().is_empty()))
-            .or_else(|| option_env!("NEON_DATABASE_URL").map(|s| s.to_string()).filter(|s| !s.trim().is_empty()))
-            .unwrap_or_else(|| "postgresql://neondb_owner:npg_AEay0ug9NHYj@ep-wild-cloud-axxw1ufj-pooler.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require".to_string());
+            .unwrap_or_else(|| crate::neon::FALLBACK_URL.to_string());
         crate::logger::log("neon", &format!("URL len {} chars, host {}", url.len(), url.split('@').last().unwrap_or("").split('/').next().unwrap_or("")));
         // Teste pool existant (ping avec timeout court : 6s max, jamais de hang de plusieurs minutes)
         let pool_opt = state.neon_pool.lock().ok().and_then(|g| g.clone());
