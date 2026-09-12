@@ -152,10 +152,21 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
     let mut was_neon = false;
 
     if let Some(lu) = local_user {
-        let stored = lu.get("password_hash").and_then(Value::as_str).map(|s| s.to_string()).ok_or_else(|| ApiError::unauthorized("Identifiants incorrects"))?;
-        crate::logger::log_auth(&format!("hash local: algo={}, len={}", hash_algo(&stored), stored.len()));
+        // BUG FIX : un user local SANS hash (importé de Neon avec hash vide/absent) échouait
+        // immédiatement ici (ok_or_else) SANS jamais tenter Neon -> login impossible même
+        // avec le bon mot de passe. On tente maintenant Neon dans ce cas.
+        let stored_opt = lu.get("password_hash").and_then(Value::as_str);
         let t1 = now_ms();
-        let is_valid = compare_bounded(password.clone(), stored).await;
+        let is_valid = match stored_opt {
+            Some(stored) => {
+                crate::logger::log_auth(&format!("hash local: algo={}, len={}", hash_algo(stored), stored.len()));
+                compare_bounded(password.clone(), stored.to_string()).await
+            }
+            None => {
+                crate::logger::log_auth("hash local ABSENT -> tentative Neon");
+                false
+            }
+        };
         crate::logger::log_auth(&format!("compare local: {} ms, valid={}", now_ms() - t1, is_valid));
         if is_valid {
             user = Some(lu);

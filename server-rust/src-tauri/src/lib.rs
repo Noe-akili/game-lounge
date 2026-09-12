@@ -419,6 +419,14 @@ pub fn run() {
                     }
                 });
             }
+            // Sync AUTOMATIQUE : si le toggle est activé, pull+push complet ~10s après
+            // le boot puis toutes les 3 min. Les sessions créées/interrompues partent
+            // vers Neon SANS action manuelle, et tout est importé depuis Neon au démarrage.
+            #[cfg(feature = "neon-sync")]
+            {
+                let handle = app.handle().clone();
+                auto_sync_loop(handle);
+            }
             #[cfg(target_os = "android")]
             eprintln!("Android setup complete, AppState managed (neon bg init)");
             Ok(())
@@ -521,4 +529,28 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("erreur lors de l'exécution de Tauri");
+}
+
+/// Boucle de sync automatique (récursive async) : déclenche run_sync_impl si le toggle
+/// sync_enabled est actif et qu'aucune sync n'est déjà en cours. Premier tir ~10s après
+/// le boot, puis toutes les 3 minutes.
+#[cfg(feature = "neon-sync")]
+fn auto_sync_loop(handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        let state_opt = handle.try_state::<AppState>();
+        if state_opt.is_some() {
+            let state = state_opt.unwrap();
+            let enabled = state.db.get_setting("sync_enabled").ok().and_then(|o| o).unwrap_or_default() == "1";
+            let running = state.sync_state.lock().ok()
+                .and_then(|g| g.clone())
+                .and_then(|v| v.get("running").and_then(serde_json::Value::as_bool))
+                .unwrap_or(false);
+            if enabled && !running {
+                eprintln!("[sync-auto] sync automatique déclenchée");
+                let _ = crate::commands::sync::run_sync_impl(&handle, &state).await;
+            }
+        }
+        auto_sync_loop(handle);
+    });
 }

@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, titre TEXT, contenu
 CREATE TABLE IF NOT EXISTS parametres_fidelite (id INTEGER PRIMARY KEY, regle_type TEXT, seuil INTEGER, jetons_attribues INTEGER, actif INTEGER DEFAULT 1, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS lignes_facture (id INTEGER PRIMARY KEY, facture_id INTEGER, description TEXT, quantite INTEGER, prix_unitaire INTEGER, total_ligne INTEGER, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS hangouts (id INTEGER PRIMARY KEY, titre TEXT, activite TEXT, prix INTEGER, actif INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT);
 "#;
 
 /// Migration soft-delete : ajoute la colonne `deleted` aux bases existantes.
@@ -252,6 +253,34 @@ impl Db {
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(|e| ApiError::internal(format!("Colonnes {table}: {e}")))?;
         Ok(cols)
+    }
+
+    /// Lit un paramètre applicatif (ex: sync_enabled) — table app_settings.
+    pub fn get_setting(&self, key: &str) -> ApiResult<Option<String>> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let mut stmt = conn
+            .prepare("SELECT value FROM app_settings WHERE key = ?")
+            .map_err(|e| ApiError::internal(format!("get_setting {key}: {e}")))?;
+        let rows = stmt
+            .query_map([key], |r| r.get::<_, String>(0))
+            .map_err(|e| ApiError::internal(format!("get_setting {key}: {e}")))?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| ApiError::internal(format!("get_setting {key}: {e}")))?;
+        Ok(rows.iter().next().map(|s| s.to_string()))
+    }
+
+    /// Écrit un paramètre applicatif (upsert).
+    pub fn set_setting(&self, key: &str, value: &str) -> ApiResult<()> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", [key, value])
+            .map_err(|e| ApiError::internal(format!("set_setting {key}: {e}")))?;
+        Ok(())
     }
 
     pub fn find_one(&self, table: &str, pred: impl Fn(&Value) -> bool) -> ApiResult<Option<Value>> {

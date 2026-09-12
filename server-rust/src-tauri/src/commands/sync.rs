@@ -18,6 +18,8 @@ fn set_sync_state<'a>(state: &'a State<'_, AppState>, v: Value) {
 
 fn local_status(state: &State<'_, AppState>) -> ApiResult<Value> {
     let has_local = !db(state).query_all("users")?.is_empty();
+    // Toggle PERSISTÉ en SQLite : reste activé après sortie des paramètres / redémarrage
+    let sync_enabled = db(state).get_setting("sync_enabled").ok().and_then(|o| o).unwrap_or_default() == "1";
     #[cfg(feature = "neon-sync")]
     let (neon_enabled, neon_available) = {
         let pool_opt = state.neon_pool.lock().ok().and_then(|g| g.clone());
@@ -30,15 +32,18 @@ fn local_status(state: &State<'_, AppState>) -> ApiResult<Value> {
     #[cfg(not(feature = "neon-sync"))]
     let (neon_enabled, neon_available) = (false, false);
 
-    let last_sync = state.sync_state.lock().ok().and_then(|g| g.clone());
-    let last_sync_val: Value = match last_sync {
-        Some(v) => v.get("finished_at").cloned().unwrap_or(Value::Null),
-        None => Value::Null,
-    };
+    let sync_state = state.sync_state.lock().ok().and_then(|g| g.clone());
+    let syncing = sync_state.clone().and_then(|v| v.get("running").and_then(Value::as_bool)).unwrap_or(false);
+    let last_sync_val: Value = sync_state
+        .map(|v| v.get("finished_at").cloned().unwrap_or(Value::Null))
+        .unwrap_or(Value::Null);
 
     Ok(json!({
         "neonEnabled": neon_enabled,
         "neonAvailable": neon_available,
+        "neonConnected": neon_available,
+        "enabled": sync_enabled,
+        "syncing": syncing,
         "hasLocalData": has_local,
         "lastSync": last_sync_val,
         "mode": if neon_available { "cloud" } else { "offline" },
@@ -63,13 +68,10 @@ pub fn sync_toggle(
 ) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
     admin_only(&user)?;
-    eprintln!("[sync] toggle enabled={}", enabled);
-    let base = local_status(&state)?;
-    let mut o = base;
-    if let Value::Object(map) = &mut o {
-        map.insert("enabled".into(), json!(enabled));
-    }
-    Ok(o)
+    // Persistance : le toggle survit à la sortie des paramètres et au redémarrage
+    let _ = db(&state).set_setting("sync_enabled", if enabled { "1" } else { "0" });
+    eprintln!("[sync] toggle enabled={} (persisté)", enabled);
+    local_status(&state)
 }
 
 /// POST /api/sync/run - Best practice : pull Neon -> local, puis push local -> Neon.
@@ -154,8 +156,9 @@ pub async fn sync_run(app: tauri::AppHandle, state: State<'_, AppState>, token: 
 }
 
 /// Travail réel de la sync (pull + push), exécuté en arrière-plan.
+/// Pub : utilisé aussi par la sync automatique (boucle du setup).
 #[cfg(feature = "neon-sync")]
-async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) -> ApiResult<Value> {
+pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) -> ApiResult<Value> {
     let pool_opt = {
         let guard = state.neon_pool.lock().map_err(|_| crate::error::ApiError::internal("neon lock"))?;
         guard.clone()

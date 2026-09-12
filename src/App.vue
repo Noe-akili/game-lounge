@@ -1,18 +1,20 @@
 <template>
-  <div id="game-lounge-app" class="h-full bg-bg">
+  <div id="game-lounge-app" class="h-full overflow-hidden bg-bg">
+    <!-- Barre de progression de chargement d'onglet : SOUS le header (top-16 = h-16 du
+         header), et après la sidebar desktop (lg:left-64) -->
     <motion.div
       v-if="routeLoading"
       :initial="{ scaleX: 0 }"
       :animate="{ scaleX: 1 }"
       :transition="{ duration: 0.8, ease: 'easeInOut' }"
-      class="fixed top-0 left-0 right-0 h-0.5 bg-neon-violet z-[60] origin-left shadow-neon-violet"
+      class="fixed top-16 left-0 right-0 lg:left-64 h-0.5 bg-neon-violet z-[60] origin-left shadow-neon-violet"
       style="transform-origin: left"
     />
     <motion.div
       :initial="{ opacity: 0, y: 24 }"
       :animate="{ opacity: 1, y: 0 }"
       :transition="{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }"
-      class="w-full min-h-0 flex-1 flex flex-col"
+      class="w-full h-full min-h-0 flex-1 flex flex-col overflow-hidden"
     >
       <router-view />
     </motion.div>
