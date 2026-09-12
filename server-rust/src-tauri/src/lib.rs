@@ -28,6 +28,9 @@ pub struct AppState {
     pub neon_pool: Mutex<Option<()>>,
     /// Garde-fou : une seule reconnexion Neon à la fois (évite le spam de tâches)
     pub neon_reconnecting: std::sync::atomic::AtomicBool,
+    /// État/progression de la dernière sync (sync_run tourne en arrière-plan :
+    /// le frontend suit via /sync/poll pour éviter le Timeout IPC Android WebView)
+    pub sync_state: Mutex<Option<serde_json::Value>>,
 }
 
 fn open_db(app: &tauri::AppHandle) -> Result<Db, Box<dyn std::error::Error>> {
@@ -346,6 +349,7 @@ pub fn run() {
                 login_attempts: Mutex::new(std::collections::HashMap::new()),
                 neon_pool: Mutex::new(None),
                 neon_reconnecting: std::sync::atomic::AtomicBool::new(false),
+                sync_state: Mutex::new(None),
             });
             // Init Neon pool en arrière-plan (non bloquant, best practice offline-first)
             #[cfg(feature = "neon-sync")]
@@ -383,7 +387,9 @@ pub fn run() {
                                                     }
                                                 }
                                                 let mut hash_present = false;
-                                                if let Ok(Some(local)) = state.db.find_one("users", |r| r.get("email").and_then(serde_json::Value::as_str) == Some(email.as_str())) {
+                                                // find_one_all : inclut les users soft-deleted pour ne JAMAIS
+                                                // les ressusciter au boot (sinon le pull réinsérait un user supprimé)
+                                                if let Ok(Some(local)) = state.db.find_one_all("users", |r| r.get("email").and_then(serde_json::Value::as_str) == Some(email.as_str())) {
                                                     // Existant local : on met à jour role/nom/etc. mais PAS le hash
                                                     if let Some(id) = local.get("id").and_then(serde_json::Value::as_i64) {
                                                         let _ = state.db.update("users", id, &map);

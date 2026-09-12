@@ -93,8 +93,13 @@ async fn try_neon_login(app: &tauri::AppHandle, state: &State<'_, AppState>, ema
             // Persiste en local : met à jour role/nom mais NE REMPLACE PAS un hash local
             // existant par le hash Neon (algos possiblement incompatibles).
             let database = db(state);
-            match database.find_one("users", |r| r.get("email").and_then(Value::as_str) == Some(email)) {
+            match database.find_one_all("users", |r| r.get("email").and_then(Value::as_str) == Some(email)) {
                 Ok(Some(existing)) => {
+                    // Utilisateur soft-deleted : login refusé, on ne le ressuscite pas
+                    if existing.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1 {
+                        crate::logger::log_auth(&format!("neon: user {} soft-deleted, login refusé", email));
+                        return Ok(None);
+                    }
                     let mut updates = jmap();
                     updates.insert("role".into(), json!(neon_user.role));
                     updates.insert("nom".into(), json!(neon_user.nom));

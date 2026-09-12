@@ -157,9 +157,18 @@ async function testNeon() {
 
 async function testSync() {
   loadingNeon.value = true
+  neonResult.value = ''
   try {
     const res = await api.post('/sync/run')
-    neonResult.value = `✅ sync_run:\n${JSON.stringify(res, null, 2)}`
+    if (res.started === false) { neonResult.value = `⏳ Sync déjà en cours`; return }
+    // Sync en arrière-plan : on poll jusqu'au résultat final
+    let last: any = null
+    for (let i = 0; i < 80; i++) {
+      await new Promise(r => setTimeout(r, 1500))
+      try { last = (await api.get('/sync/poll')).last_sync } catch {}
+      if (last && last.running !== true) break
+    }
+    neonResult.value = `✅ sync_run (arrière-plan):\n${JSON.stringify(last || res, null, 2)}`
   } catch (e: any) {
     neonResult.value = `❌ sync_run échoué: ${e.message}`
   } finally { loadingNeon.value = false }

@@ -26,19 +26,36 @@ pub const TABLES: [&str; 11] = [
 ];
 
 const SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, nom TEXT, role TEXT DEFAULT 'employe', created_at TEXT);
-CREATE TABLE IF NOT EXISTS consoles (id INTEGER PRIMARY KEY, nom TEXT, type TEXT, etat TEXT DEFAULT 'disponible', poste_numero INTEGER, date_ajout TEXT, created_at TEXT);
-CREATE TABLE IF NOT EXISTS jeux (id INTEGER PRIMARY KEY, titre TEXT, genre TEXT, console_id INTEGER, actif INTEGER DEFAULT 1, jaquette_url TEXT, created_at TEXT);
-CREATE TABLE IF NOT EXISTS joueurs (id INTEGER PRIMARY KEY, nom TEXT, telephone TEXT, email TEXT, jetons_solde INTEGER DEFAULT 0, date_inscription TEXT, derniere_visite TEXT);
-CREATE TABLE IF NOT EXISTS sessions_jeu (id INTEGER PRIMARY KEY, console_id INTEGER, joueur_id INTEGER, jeu_id INTEGER, employe_id INTEGER, tarif_id INTEGER, debut TEXT, fin TEXT, duree_minutes INTEGER, montant INTEGER, tarif_prix INTEGER, jetons_gagnes INTEGER DEFAULT 0, statut TEXT, created_at TEXT);
-CREATE TABLE IF NOT EXISTS tarifs (id INTEGER PRIMARY KEY, nom TEXT, type TEXT, prix INTEGER, duree_minutes INTEGER, description TEXT, actif INTEGER DEFAULT 1, console_type TEXT, jeu TEXT, created_at TEXT);
-CREATE TABLE IF NOT EXISTS factures (id INTEGER PRIMARY KEY, numero_facture TEXT UNIQUE, session_id INTEGER, joueur_id INTEGER, montant_ht REAL, taux_tva REAL DEFAULT 20, montant_tva REAL, montant_ttc REAL, mode_paiement TEXT, statut TEXT, date_paiement TEXT, created_at TEXT);
-CREATE TABLE IF NOT EXISTS jetons_transactions (id INTEGER PRIMARY KEY, joueur_id INTEGER, quantite INTEGER, type TEXT, raison TEXT, session_id INTEGER, created_at TEXT);
-CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, titre TEXT, contenu TEXT, auteur TEXT, created_at TEXT);
-CREATE TABLE IF NOT EXISTS parametres_fidelite (id INTEGER PRIMARY KEY, regle_type TEXT, seuil INTEGER, jetons_attribues INTEGER, actif INTEGER DEFAULT 1);
-CREATE TABLE IF NOT EXISTS lignes_facture (id INTEGER PRIMARY KEY, facture_id INTEGER, description TEXT, quantite INTEGER, prix_unitaire INTEGER, total_ligne INTEGER, created_at TEXT);
-CREATE TABLE IF NOT EXISTS hangouts (id INTEGER PRIMARY KEY, titre TEXT, activite TEXT, prix INTEGER, actif INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, nom TEXT, role TEXT DEFAULT 'employe', created_at TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS consoles (id INTEGER PRIMARY KEY, nom TEXT, type TEXT, etat TEXT DEFAULT 'disponible', poste_numero INTEGER, date_ajout TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS jeux (id INTEGER PRIMARY KEY, titre TEXT, genre TEXT, console_id INTEGER, actif INTEGER DEFAULT 1, jaquette_url TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS joueurs (id INTEGER PRIMARY KEY, nom TEXT, telephone TEXT, email TEXT, jetons_solde INTEGER DEFAULT 0, date_inscription TEXT, derniere_visite TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS sessions_jeu (id INTEGER PRIMARY KEY, console_id INTEGER, joueur_id INTEGER, jeu_id INTEGER, employe_id INTEGER, tarif_id INTEGER, debut TEXT, fin TEXT, duree_minutes INTEGER, montant INTEGER, tarif_prix INTEGER, jetons_gagnes INTEGER DEFAULT 0, statut TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS tarifs (id INTEGER PRIMARY KEY, nom TEXT, type TEXT, prix INTEGER, duree_minutes INTEGER, description TEXT, actif INTEGER DEFAULT 1, console_type TEXT, jeu TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS factures (id INTEGER PRIMARY KEY, numero_facture TEXT UNIQUE, session_id INTEGER, joueur_id INTEGER, montant_ht REAL, taux_tva REAL DEFAULT 20, montant_tva REAL, montant_ttc REAL, mode_paiement TEXT, statut TEXT, date_paiement TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS jetons_transactions (id INTEGER PRIMARY KEY, joueur_id INTEGER, quantite INTEGER, type TEXT, raison TEXT, session_id INTEGER, created_at TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, titre TEXT, contenu TEXT, auteur TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS parametres_fidelite (id INTEGER PRIMARY KEY, regle_type TEXT, seuil INTEGER, jetons_attribues INTEGER, actif INTEGER DEFAULT 1, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS lignes_facture (id INTEGER PRIMARY KEY, facture_id INTEGER, description TEXT, quantite INTEGER, prix_unitaire INTEGER, total_ligne INTEGER, created_at TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS hangouts (id INTEGER PRIMARY KEY, titre TEXT, activite TEXT, prix INTEGER, actif INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT, deleted INTEGER DEFAULT 0);
 "#;
+
+/// Migration soft-delete : ajoute la colonne `deleted` aux bases existantes.
+/// (Neon ne supprime JAMAIS physiquement : une ligne supprimée passe deleted=1,
+/// est cachée des listes, et la suppression se propage par la sync.)
+const SOFT_DELETE_MIGRATION: &str = "\
+ALTER TABLE users ADD COLUMN deleted INTEGER DEFAULT 0; \
+ALTER TABLE consoles ADD COLUMN deleted INTEGER DEFAULT 0; \
+ALTER TABLE jeux ADD COLUMN deleted INTEGER DEFAULT 0; \
+ALTER TABLE joueurs ADD COLUMN deleted INTEGER DEFAULT 0; \
+ALTER TABLE sessions_jeu ADD COLUMN deleted INTEGER DEFAULT 0; \
+ALTER TABLE tarifs ADD COLUMN deleted INTEGER DEFAULT 0; \
+ALTER TABLE factures ADD COLUMN deleted INTEGER DEFAULT 0; \
+ALTER TABLE jetons_transactions ADD COLUMN deleted INTEGER DEFAULT 0; \
+ALTER TABLE messages ADD COLUMN deleted INTEGER DEFAULT 0; \
+ALTER TABLE parametres_fidelite ADD COLUMN deleted INTEGER DEFAULT 0; \
+ALTER TABLE lignes_facture ADD COLUMN deleted INTEGER DEFAULT 0; \
+ALTER TABLE hangouts ADD COLUMN deleted INTEGER DEFAULT 0;";
 
 pub struct Db(pub Mutex<Connection>);
 
@@ -144,6 +161,8 @@ impl Db {
              ALTER TABLE joueurs ADD COLUMN derniere_visite TEXT; \
              ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER;",
         );
+        // Soft-delete : colonne deleted sur les bases existantes (idempotent, erreurs ignorées)
+        let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
         apply_pragmas(&conn);
         // Test écriture immédiate pour détecter disque plein / permission early
         let _ = conn.execute_batch("CREATE TABLE IF NOT EXISTS __healthcheck (id INTEGER PRIMARY KEY); DROP TABLE IF EXISTS __healthcheck;");
@@ -163,13 +182,14 @@ impl Db {
              ALTER TABLE joueurs ADD COLUMN derniere_visite TEXT; \
              ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER;",
         );
+        let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
         apply_pragmas(&conn);
         Ok(Db(Mutex::new(conn)))
     }
 
-    /// `SELECT * FROM {table}` puis filtre optionnel en Rust (comme le backend JS).
+    /// `SELECT * FROM {table}` avec filtre WHERE optionnel (comme le backend JS).
     /// Gère le poison du Mutex sans panic (Android peut tuer le thread)
-    pub fn query_all(&self, table: &str) -> ApiResult<Vec<Value>> {
+    fn query_all_impl(&self, table: &str, filter: &str) -> ApiResult<Vec<Value>> {
         // Sur Android, le Mutex peut être poisoned si un panic a eu lieu lors d'une transaction
         // On récupère quand même l'intérieur pour éviter crash définitif
         let conn = match self.0.lock() {
@@ -184,7 +204,7 @@ impl Db {
             return Err(ApiError::internal(format!("Table inconnue: {table}")));
         }
         let mut stmt = conn
-            .prepare(&format!("SELECT * FROM \"{table}\""))
+            .prepare(&format!("SELECT * FROM \"{table}\"{filter}"))
             .map_err(|e| {
                 // Sur Android low-end, "database disk image is malformed" arrive après coupure batterie
                 if e.to_string().contains("malformed") || e.to_string().contains("corrupt") {
@@ -198,6 +218,18 @@ impl Db {
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(|e| ApiError::internal(format!("Requête {table}: {e}")))?;
         Ok(rows)
+    }
+
+    /// Liste PAR DÉFAUT : exclut les lignes soft-deleted (deleted=1) pour que
+    /// l'utilisateur ne voie jamais une donnée supprimée (sur l'app comme après sync).
+    pub fn query_all(&self, table: &str) -> ApiResult<Vec<Value>> {
+        self.query_all_impl(table, " WHERE deleted = 0")
+    }
+
+    /// Liste TOUTES les lignes, y compris soft-deleted — utilisé par la sync pour
+    /// propager les suppressions vers Neon (tombstones).
+    pub fn query_all_all(&self, table: &str) -> ApiResult<Vec<Value>> {
+        self.query_all_impl(table, "")
     }
 
     /// Colonnes de la table locale (PRAGMA table_info) pour filtrer les données venues
@@ -224,6 +256,11 @@ impl Db {
 
     pub fn find_one(&self, table: &str, pred: impl Fn(&Value) -> bool) -> ApiResult<Option<Value>> {
         Ok(self.query_all(table)?.into_iter().find(pred))
+    }
+
+    /// Comme find_one mais inclut les lignes soft-deleted (pour ne jamais les ressusciter).
+    pub fn find_one_all(&self, table: &str, pred: impl Fn(&Value) -> bool) -> ApiResult<Option<Value>> {
+        Ok(self.query_all_all(table)?.into_iter().find(pred))
     }
 
     /// Insère un enregistrement. Si un `id` est fourni, INSERT OR REPLACE (comme db.ts).
@@ -285,12 +322,15 @@ impl Db {
         self.get(table, id)
     }
 
+    /// SOFT-DELETE : rien n'est supprimé physiquement, la ligne passe deleted=1.
+    /// C'est ce qui permet à la sync de propager la suppression vers Neon (qui ne
+    /// supprime jamais non plus) sans que la donnée ne réapparaisse au prochain pull.
     pub fn remove(&self, table: &str, id: i64) -> ApiResult<()> {
         let conn = match self.0.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        conn.execute(&format!("DELETE FROM \"{table}\" WHERE id=?"), [id])
+        conn.execute(&format!("UPDATE \"{table}\" SET deleted=1 WHERE id=?"), [id])
             .map_err(|e| ApiError::internal(format!("Delete {table}: {e}")))?;
         Ok(())
     }
@@ -344,6 +384,9 @@ mod tests {
         let got = db.get("consoles", id).unwrap();
         assert_eq!(got["etat"], json!("occupee"));
         db.remove("consoles", id).unwrap();
-        assert!(db.get_opt("consoles", id).unwrap().is_none());
+        // Soft-delete : la ligne existe toujours mais est cachée (deleted=1)
+        let soft = db.get_opt("consoles", id).unwrap().unwrap();
+        assert_eq!(soft["deleted"], json!(1));
+        assert!(db.query_all("consoles").unwrap().is_empty());
     }
 }

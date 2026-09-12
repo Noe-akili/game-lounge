@@ -294,9 +294,25 @@ async function runSync() {
   syncing.value = true
   try {
     const res = await api.post('/sync/run')
-    const totalPushed = Object.values(res.pushed || {}).reduce((a: number, b: number) => a + b, 0)
-    const totalPulled = Object.values(res.pulled || {}).reduce((a: number, b: number) => a + b, 0)
-    toast.success(`Sync terminée en ${res.duration}ms — ${totalPushed} envoyé(s), ${totalPulled} reçu(s)`)
+    if (res.started === false) { toast.info('Sync déjà en cours'); return }
+    // La sync tourne en arrière-plan (évite le Timeout IPC Android WebView) :
+    // on interroge /sync/poll jusqu'à ce qu'elle soit terminée.
+    let last: any = null
+    for (let i = 0; i < 80; i++) {
+      await new Promise(r => setTimeout(r, 1500))
+      try { last = (await api.get('/sync/poll')).last_sync } catch {}
+      if (last && last.running !== true) break
+    }
+    if (last && last.success) {
+      const pushed = Object.values(last.pushed || {}).reduce((a: number, b: number) => a + b, 0)
+      const pulled = Object.values(last.pulled || {}).reduce((a: number, b: number) => a + b, 0)
+      const secs = Math.round((last.duration_ms || 0) / 1000)
+      toast.success(`Sync terminée en ${secs}s — ${pushed} envoyé(s), ${pulled} reçu(s)`)
+    } else if (last) {
+      toast.error(last.message || 'Sync échouée')
+    } else {
+      toast.error('Sync trop longue, vérifiez la connexion')
+    }
     fetchSyncStatus()
   } catch (e: any) { toast.error(e.message) }
   finally { syncing.value = false }

@@ -271,18 +271,52 @@ pub async fn pull_users(_pool: &()) -> ApiResult<Vec<Value>> {
     Ok(vec![])
 }
 
+/// Ajoute la colonne soft-delete `deleted` sur les tables Neon (idempotent).
+/// Rien n'est JAMAIS supprimé physiquement sur Neon : une ligne supprimée passe
+/// deleted=1 et est simplement cachée (pull exclut deleted=true).
+#[cfg(feature = "neon-sync")]
+pub async fn ensure_deleted_columns(pool: &NeonPool) {
+    let tables = ["users", "consoles", "jeux", "joueurs", "sessions_jeu", "tarifs", "factures", "jetons_transactions", "messages", "parametres_fidelite", "lignes_facture"];
+    for table in tables {
+        let sql = format!("ALTER TABLE \"{table}\" ADD COLUMN IF NOT EXISTS deleted INTEGER NOT NULL DEFAULT 0");
+        match neon_execute(pool, &sql, &[]).await {
+            Ok(_) => {}
+            Err(e) => eprintln!("[neon] ensure deleted {} failed: {}", table, e),
+        }
+    }
+}
+
 // Pull toutes les tables pour restauration complète si app data vidé.
 // IMPORTANT : on utilise json_agg (fonction STANDARD Postgres) au lieu de
 // row_to_json (fonction custom qui n'existe pas forcément sur Neon -> la requête
 // échouait -> sync_run abort -> AUCUNE donnée écrite localement).
+// Les lignes soft-deleted (deleted=true) ne sont JAMAIS repullées -> une donnée
+// supprimée ne réapparaît pas après sync.
 // Une table absente du schéma Neon est ignorée (log + continue) ; seule une erreur
 // de connexion est propagée (déclenche la reconnexion en arrière-plan).
 #[cfg(feature = "neon-sync")]
 pub async fn pull_all(pool: &NeonPool) -> ApiResult<std::collections::HashMap<String, Vec<Value>>> {
+    // Tables Neon ayant la colonne deleted (soft-delete) — une seule requête batch
+    let mut deleted_tables: Vec<String> = Vec::new();
+    match neon_query(pool, "SELECT table_name FROM information_schema.columns WHERE table_schema = 'public' AND column_name = 'deleted'", &[]).await {
+        Ok(rows) => {
+            for r in rows {
+                if let Some(s) = pg_col_to_string_pub(&r, 0) {
+                    deleted_tables.push(s);
+                }
+            }
+        }
+        Err(_) => {}
+    }
     let mut all = std::collections::HashMap::new();
     let tables = ["users", "consoles", "jeux", "joueurs", "sessions_jeu", "tarifs", "factures", "jetons_transactions", "messages", "parametres_fidelite", "lignes_facture"];
     for table in tables {
-        let sql = format!("SELECT COALESCE(json_agg(t)::text, '[]') FROM (SELECT * FROM \"{}\") t", table);
+        let has_deleted = deleted_tables.contains(&table.to_string());
+        let sql = if has_deleted {
+            format!("SELECT COALESCE(json_agg(t)::text, '[]') FROM (SELECT * FROM \"{}\" WHERE COALESCE(deleted, false) = false) t", table)
+        } else {
+            format!("SELECT COALESCE(json_agg(t)::text, '[]') FROM (SELECT * FROM \"{}\") t", table)
+        };
         let json_rows = neon_query(pool, &sql, &[]).await;
         match json_rows {
             Ok(jrows) => {
@@ -405,6 +439,13 @@ fn val_to_text(v: &Value) -> String {
 /// avant, sync_run ne faisait que pull, push_user/push_tarif n'étaient jamais appelés.
 #[cfg(feature = "neon-sync")]
 pub async fn push_table(pool: &NeonPool, table: &str, rows: &Vec<Value>) -> ApiResult<usize> {
+    // Garantit que ON CONFLICT (id) fonctionne : si id n'est pas unique côté Neon,
+    // l'upsert devient un simple INSERT -> DOUBLONS à chaque sync. Best-effort :
+    // si des doublons existent déjà, l'index échoue et on log (non fatal).
+    match neon_execute(pool, &format!("CREATE UNIQUE INDEX IF NOT EXISTS uq_{}_id ON \"{table}\" (id)", table), &[]).await {
+        Ok(_) => {}
+        Err(e) => eprintln!("[neon] unique index {} failed (doublons existants ?): {}", table, e),
+    }
     let cols = neon_table_columns(pool, table)
         .await
         .map_err(|e| ApiError::internal(format!("Neon colonnes {}: {}", table, e)))?;
