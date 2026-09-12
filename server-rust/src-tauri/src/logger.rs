@@ -75,9 +75,11 @@ pub fn log(target: &str, msg: &str) {
             let _ = writeln!(guard, "{}", line);
             let _ = guard.flush();
         }
-    }
-    // Aussi eprintln pour logcat
-    eprintln!("{}", line);
+    }        // Migration Neon -> Supabase : tout ce qui s'affiche "neon" dans les logs est
+        // maintenant Supabase (l'app utilise Supabase Postgres). Le tag devient [cloud].
+        let line = line.replace("neon", "cloud").replace("Neon", "Supabase");
+        // Aussi eprintln pour logcat
+        eprintln!("{}", line);
 }
 
 pub fn log_neon(msg: &str) { log("neon", msg); }

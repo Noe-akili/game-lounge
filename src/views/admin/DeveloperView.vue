@@ -5,7 +5,7 @@
       <h3 class="font-gaming text-lg font-bold">Outils Développeur</h3>
       <span class="badge bg-amber-500/20 text-amber-400 border-amber-500/30">Debug uniquement</span>
     </div>
-    <p class="text-sm text-txt-dim">Testez le login, Neon et consultez les logs pour identifier les erreurs avec précision (Android 14).</p>
+    <p class="text-sm text-txt-dim">Testez le login, Supabase et consultez les logs pour identifier les erreurs avec précision (Android 14).</p>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <div class="card">
@@ -21,10 +21,10 @@
       </div>
 
       <div class="card">
-        <h4 class="font-bold mb-3 flex items-center gap-2"><Cloud class="w-4 h-4 text-neon-blue" /> Test Neon</h4>
+        <h4 class="font-bold mb-3 flex items-center gap-2"><Cloud class="w-4 h-4 text-neon-blue" /> Test Cloud (Supabase)</h4>
         <div class="space-y-3">
           <button @click="testNeon" :disabled="loadingNeon" class="btn-neon-violet w-full">
-            {{ loadingNeon ? 'Test en cours...' : 'Tester Neon (pull/push)' }}
+            {{ loadingNeon ? 'Test en cours...' : 'Tester Supabase (pull/push)' }}
           </button>
           <button @click="testSync" :disabled="loadingNeon" class="btn-neon-outline w-full">Lancer sync_run</button>
           <div v-if="neonResult" class="p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap max-h-32 overflow-auto">{{ neonResult }}</div>
@@ -49,12 +49,12 @@
       <h4 class="font-bold mb-3 flex items-center gap-2"><Server class="w-4 h-4" /> Logs Backend (Rust) - 1.log</h4>
       <p class="text-xs text-txt-dim mb-2">Tous les logs Rust capturés dans <code>1.log</code> (aucun logcat nécessaire)</p>
       <div class="flex gap-2">
-        <button @click="fetchBackendLogs" class="btn-neon-outline flex-1">Statut Neon</button>
+        <button @click="fetchBackendLogs" class="btn-neon-outline flex-1">Statut cloud</button>
         <button @click="fetchRustLogs" class="btn-neon-violet flex-1">Voir 1.log (Rust)</button>
       </div>
       <div v-if="backendStatus" class="mt-3 p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap max-h-32 overflow-auto">{{ backendStatus }}</div>
       <div v-if="rustLogs" class="mt-3 p-3 rounded-xl bg-black/50 text-xs font-mono whitespace-pre-wrap max-h-64 overflow-auto">{{ rustLogs }}</div>
-      <button @click="testNeonConnection" class="btn-neon-outline w-full mt-3">Tester connexion Neon (où ça bloque)</button>
+      <button @click="testNeonConnection" class="btn-neon-outline w-full mt-3">Tester connexion cloud (où ça bloque)</button>
       <div v-if="neonTestResult" class="mt-2 p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap">{{ neonTestResult }}</div>
     </div>
 
@@ -69,7 +69,7 @@
     <div class="card">
       <h4 class="font-bold mb-3 flex items-center gap-2"><KeyRound class="w-4 h-4 text-amber-400" /> Diagnostic login</h4>
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <button @click="diagUsers" class="btn-neon-outline text-sm">Diag users local+Neon</button>
+        <button @click="diagUsers" class="btn-neon-outline text-sm">Diag users local+cloud</button>
         <button @click="resetAdmin" class="btn-neon-outline text-sm text-amber-400">Reset admin (admin123)</button>
         <button @click="refreshRustLogsAfter = true; fetchRustLogs()" class="btn-neon-outline text-sm">Voir logs auth</button>
       </div>
@@ -97,7 +97,7 @@ const neonTestResult = ref('')
 function logColor(l: string) {
   if (l.includes('[BOOT]') || l.includes('[DASHBOARD_START]')) return 'text-neon-green'
   if (l.includes('[TAURI_INVOKE_ERROR]') || l.includes('[auth]') && l.includes('failed')) return 'text-neon-red'
-  if (l.includes('[NEON_SYNC]') || l.includes('[neon]')) return 'text-neon-blue'
+  if (l.includes('[NEON_SYNC]') || l.includes('[cloud]') || l.includes('[supabase]')) return 'text-neon-blue'
   if (l.includes('[DEBUG')) return 'text-amber-400'
   return 'text-txt-dim'
 }

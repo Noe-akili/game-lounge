@@ -117,7 +117,7 @@ async fn try_neon_login(app: &tauri::AppHandle, state: &State<'_, AppState>, ema
         Err(e) => {
             crate::logger::log_auth(&format!("neon: fetch error pour {}: {} -> reconnexion", email, e.message));
             crate::neon::schedule_reconnect(app);
-            Err(ApiError::new(503, "Neon indisponible (reconnexion en cours), réessayez"))
+            Err(ApiError::new(503, "Supabase indisponible (reconnexion en cours), réessayez"))
         }
     }
 }

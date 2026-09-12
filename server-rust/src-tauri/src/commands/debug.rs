@@ -99,7 +99,7 @@ pub async fn test_neon_connection(app: tauri::AppHandle, state: State<'_, AppSta
             match crate::neon::ping(&pool).await {
                 Ok(_) => {
                     crate::logger::log("neon", "SELECT 1 OK - Neon joignable");
-                    return Ok(json!({"success": true, "message": "Neon joignable (pool existant)", "url_host": url.split('@').last().unwrap_or("").split('/').next().unwrap_or("").to_string()}));
+                    return Ok(json!({"success": true, "message": "Supabase joignable (pool existant)", "url_host": url.split('@').last().unwrap_or("").split('/').next().unwrap_or("").to_string()}));
                 }
                 Err(e) => {
                     crate::logger::log_neon_error("SELECT 1 pool existant", &e);
@@ -115,7 +115,7 @@ pub async fn test_neon_connection(app: tauri::AppHandle, state: State<'_, AppSta
             Some(pool) => {
                 crate::logger::log("neon", "init_neon_pool OK, test query");
                 match crate::neon::ping(&pool).await {
-                    Ok(_) => Ok(json!({"success": true, "message": "Neon connecté avec succès (nouveau pool)", "url_host": url.split('@').last().unwrap_or("").split('/').next().unwrap_or("").to_string()})),
+                    Ok(_) => Ok(json!({"success": true, "message": "Supabase connecté avec succès (nouveau pool)", "url_host": url.split('@').last().unwrap_or("").split('/').next().unwrap_or("").to_string()})),
                     Err(e) => {
                         crate::logger::log_neon_error("SELECT 1 nouveau pool", &e);
                         Ok(json!({"success": false, "message": format!("Nouveau pool mais query failed: {}", e), "error": e}))
@@ -124,7 +124,7 @@ pub async fn test_neon_connection(app: tauri::AppHandle, state: State<'_, AppSta
             }
             None => {
                 crate::logger::log("neon", "init_neon_pool returned None (offline)");
-                Ok(json!({"success": false, "message": "Neon pool non disponible (offline) - vérifiez DATABASE_URL et internet", "url_host": url.split('@').last().unwrap_or("").split('/').next().unwrap_or("").to_string()}))
+                Ok(json!({"success": false, "message": "Supabase pool non disponible (offline) - vérifiez DATABASE_URL et internet", "url_host": url.split('@').last().unwrap_or("").split('/').next().unwrap_or("").to_string()}))
             }
         }
     }

@@ -52,16 +52,16 @@
     <div class="card w-full max-w-full min-w-0 overflow-hidden">
       <div class="flex items-center gap-3 mb-4">
         <Cloud class="w-5 h-5 text-neon-blue shrink-0" />
-        <h4 class="font-gaming font-bold truncate">Synchronisation cloud (Neon)</h4>
+        <h4 class="font-gaming font-bold truncate">Synchronisation cloud (Supabase)</h4>
       </div>
       <div v-if="!syncStatus.neonEnabled" class="text-center py-6">
         <CloudOff class="w-10 h-10 text-txt-dim mx-auto mb-2" />
-        <p class="text-txt-dim text-sm">Cloud Neon non configuré</p>
+        <p class="text-txt-dim text-sm">Cloud Supabase non configuré</p>
         <p class="text-xs text-txt-dim mt-1">Vérifiez la connexion internet</p>
       </div>
       <div v-else-if="!syncStatus.neonAvailable" class="text-center py-6">
         <CloudOff class="w-10 h-10 text-amber-400 mx-auto mb-2" />
-        <p class="text-amber-400 text-sm">Neon configuré (offline)</p>
+        <p class="text-amber-400 text-sm">Supabase configuré (offline)</p>
         <p class="text-xs text-txt-dim mt-1">Données locales synchronisées à la reconnexion — {{ syncStatus.mode }}</p>
         <button @click="runSync" class="btn-neon-violet mt-3">Tester connexion</button>
       </div>
@@ -82,7 +82,7 @@
           <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': syncing }" />
           {{ syncing ? 'Synchronisation en cours...' : 'Synchroniser maintenant' }}
         </button>
-        <p class="text-xs text-txt-dim text-center">Compare et fusionne les données locales SQLite ↔ Neon cloud</p>
+        <p class="text-xs text-txt-dim text-center">Compare et fusionne les données locales SQLite ↔ Supabase cloud</p>
       </div>
     </div>
 

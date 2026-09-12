@@ -47,7 +47,7 @@ fn local_status(state: &State<'_, AppState>) -> ApiResult<Value> {
         "hasLocalData": has_local,
         "lastSync": last_sync_val,
         "mode": if neon_available { "cloud" } else { "offline" },
-        "message": if neon_enabled && !neon_available { "Neon configuré (fallback) mais offline - données locales" } else { "" }
+        "message": if neon_enabled && !neon_available { "Supabase configuré (fallback) mais offline - données locales" } else { "" }
     }))
 }
 
@@ -149,7 +149,7 @@ pub async fn sync_run(app: tauri::AppHandle, state: State<'_, AppState>, token: 
         let _ = db(&state).query_all("users")?;
         return Ok(json!({
             "success": true,
-            "message": "Synchronisation locale terminée (Neon non configuré)",
+            "message": "Synchronisation locale terminée (Supabase non configuré)",
             "timestamp": now_iso()
         }));
     }
@@ -167,7 +167,7 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
         eprintln!("[sync] Neon pool non disponible (offline) - données locales conservées");
         return Ok(json!({
             "success": true,
-            "message": "Mode offline: données locales utilisées (Neon sera synchronisé à la reconnexion)",
+            "message": "Mode offline: données locales utilisées (Supabase sera synchronisé à la reconnexion)",
             "timestamp": now_iso()
         }));
     };
@@ -280,7 +280,7 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
             return Ok(json!({
                 "success": false,
                 "step": "erreur",
-                "message": format!("Neon sync échouée (connexion perdue): {}. Reconnexion en arrière-plan, réessayez.", e.message),
+                "message": format!("Sync cloud échouée (connexion perdue): {}. Reconnexion en arrière-plan, réessayez.", e.message),
                 "timestamp": now_iso()
             }));
         }

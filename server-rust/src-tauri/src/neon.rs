@@ -121,9 +121,25 @@ pub async fn init_neon_pool() -> Option<NeonPool> {
     };
     crate::logger::log_neon(&format!("DATABASE_URL présent ({} chars), tentative rustls", url.len()));
     // Tente rustls 0.19 - webpki-roots 0.21 fournit TLS_SERVER_ROOTS directement compatible
+    // SUPABASE : la chaîne du pooler (*.pooler.supabase.com) remonte à "Supabase Root
+    // 2021 CA", une racine PRIVÉE absente des racines publiques Mozilla -> sans l'ajouter
+    // le handshake TLS échoue, le fallback NoTls est refusé par le pooler (TLS obligatoire)
+    // et l'app restait OFFLINE. On embarque la racine officielle Supabase (certs/).
     let rustls_result = tokio::time::timeout(NEON_CONNECT_TIMEOUT, async {
         let mut root_store = rustls::RootCertStore::empty();
         root_store.add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+        let supa_pem: &[u8] = include_bytes!("../certs/supabase-root-ca.pem");
+        let mut pem_rd = std::io::BufReader::new(supa_pem);
+        match rustls::internal::pemfile::certs(&mut pem_rd) {
+            Ok(certs) => {
+                let mut added = 0;
+                for c in certs.iter() {
+                    if root_store.add(c).is_ok() { added += 1; }
+                }
+                crate::logger::log_neon(&format!("CA Supabase chargée dans le store TLS ({} certificat(s))", added));
+            }
+            Err(_) => crate::logger::log_neon("WARNING: échec parsing CA Supabase (TLS Supabase va échouer)"),
+        }
         let mut config = rustls::ClientConfig::new();
         config.root_store = root_store;
         let tls = tokio_postgres_rustls::MakeRustlsConnect::new(config);
@@ -151,6 +167,7 @@ pub async fn init_neon_pool() -> Option<NeonPool> {
             }
         }
         Ok(Err(e)) => {
+            crate::logger::log_neon(&format!("rustls connect failed: {} (tente NoTls)", e));
             eprintln!("[neon] rustls connect failed: {}, tente NoTls", e);
         }
         Err(_) => {
