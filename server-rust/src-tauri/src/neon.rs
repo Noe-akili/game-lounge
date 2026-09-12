@@ -20,7 +20,7 @@ const NEON_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 const NEON_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(6);
 
 #[cfg(feature = "neon-sync")]
-async fn neon_query(pool: &NeonPool, sql: &str, params: &[&(dyn tokio_postgres::types::ToSql + Sync)]) -> Result<Vec<tokio_postgres::Row>, String> {
+pub async fn neon_query(pool: &NeonPool, sql: &str, params: &[&(dyn tokio_postgres::types::ToSql + Sync)]) -> Result<Vec<tokio_postgres::Row>, String> {
     match tokio::time::timeout(NEON_QUERY_TIMEOUT, pool.client.query(sql, params)).await {
         Ok(Ok(rows)) => Ok(rows),
         Ok(Err(e)) => Err(e.to_string()),
@@ -189,12 +189,17 @@ pub struct NeonUser {
 /// Lecture d'une colonne texte tolérante aux pannes : N'UTILISE PAS row.get (panique si type
 /// Postgres inattendu, ex: TIMESTAMPTZ décodé en String) — un panic ici tue l'app Android.
 #[cfg(feature = "neon-sync")]
-fn pg_col_to_string(row: &tokio_postgres::Row, idx: usize) -> Option<String> {
+pub fn pg_col_to_string_pub(row: &tokio_postgres::Row, idx: usize) -> Option<String> {
     match row.try_get::<_, Option<String>>(idx) {
         Ok(Some(s)) => Some(s),
         Ok(None) => None,
         Err(_) => None, // type inattendu (timestamp, etc.) -> on ignore la colonne, pas de panic
     }
+}
+
+#[cfg(feature = "neon-sync")]
+fn pg_col_to_string(row: &tokio_postgres::Row, idx: usize) -> Option<String> {
+    pg_col_to_string_pub(row, idx)
 }
 
 #[cfg(feature = "neon-sync")]

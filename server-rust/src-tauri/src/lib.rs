@@ -363,23 +363,45 @@ pub fn run() {
                                 }
                             }
                             // Pull initial users en background (cache)
+                            // IMPORTANT : upsert PAR EMAIL et on NE TOUCH JAMAIS au password_hash
+                            // local. Avant : INSERT OR REPLACE par id écrasait le hash admin local
+                            // (scrypt seed) par le hash Neon (souvent bcrypt/$2 ou autre algo) ->
+                            // admin123 refusé en local ET sur Neon -> "Identifiants incorrects".
                             if let Some(state) = handle.try_state::<AppState>() {
                                 let pool_opt = state.neon_pool.lock().ok().and_then(|g| g.clone());
                                 if let Some(pool) = pool_opt {
                                     match crate::neon::pull_users(&pool).await {
                                         Ok(users) => {
                                             eprintln!("[neon] pull {} users en background", users.len());
-                                            // Cache local : upsert (sans unwrap : un panic ici tue l'app)
                                             for u in users {
+                                                let Some(email) = u.get("email").and_then(serde_json::Value::as_str).map(|s: &str| s.to_string()) else { continue };
+                                                if email.is_empty() { continue; }
+                                                let mut map = serde_json::Map::new();
                                                 if let Some(obj) = u.as_object() {
-                                                    let map = obj.clone();
-                                                    let _ = state.db.insert("users", &map);
+                                                    for (k, v) in obj {
+                                                        if k != "password_hash" && k != "id" { map.insert(k.clone(), v.clone()); }
+                                                    }
                                                 }
+                                                let mut hash_present = false;
+                                                if let Ok(Some(local)) = state.db.find_one("users", |r| r.get("email").and_then(serde_json::Value::as_str) == Some(email.as_str())) {
+                                                    // Existant local : on met à jour role/nom/etc. mais PAS le hash
+                                                    if let Some(id) = local.get("id").and_then(serde_json::Value::as_i64) {
+                                                        let _ = state.db.update("users", id, &map);
+                                                    }
+                                                    hash_present = true;
+                                                } else if let Some(h) = u.get("password_hash").and_then(serde_json::Value::as_str) {
+                                                    if !h.is_empty() {
+                                                        map.insert("password_hash".into(), json!(h));
+                                                        map.insert("email".into(), json!(email));
+                                                        let _ = state.db.insert("users", &map);
+                                                        hash_present = true;
+                                                    }
+                                                }
+                                                let _ = hash_present;
                                             }
                                         }
                                         Err(e) => {
                                             eprintln!("[neon] pull users failed: {}", e.message);
-                                            // Connexion probablement morte dès le boot -> reconnexion auto
                                             crate::logger::log_neon(&format!("pull users boot failed: {} -> reconnexion", e.message));
                                             crate::neon::schedule_reconnect(&handle);
                                         }
@@ -403,6 +425,9 @@ pub fn run() {
             commands::auth_logout,
             commands::auth_me,
             commands::auth_refresh,
+            commands::auth_debug_info,
+            commands::auth_debug_neon_users,
+            commands::debug_reset_admin,
             // ==== CONSOLES ====
             commands::consoles_list,
             commands::consoles_get,

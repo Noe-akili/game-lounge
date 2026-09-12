@@ -65,13 +65,23 @@
         <button @click="importTarifs" class="btn-neon-violet text-sm">Importer tarifs PDF</button>
       </div>
     </div>
+
+    <div class="card">
+      <h4 class="font-bold mb-3 flex items-center gap-2"><KeyRound class="w-4 h-4 text-amber-400" /> Diagnostic login</h4>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <button @click="diagUsers" class="btn-neon-outline text-sm">Diag users local+Neon</button>
+        <button @click="resetAdmin" class="btn-neon-outline text-sm text-amber-400">Reset admin (admin123)</button>
+        <button @click="refreshRustLogsAfter = true; fetchRustLogs()" class="btn-neon-outline text-sm">Voir logs auth</button>
+      </div>
+      <div v-if="diagResult" class="mt-3 p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap max-h-64 overflow-auto">{{ diagResult }}</div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { api } from '@/utils/api'
-import { Bug, LogIn, Cloud, FileText, Server } from 'lucide-vue-next'
+import { Bug, LogIn, Cloud, FileText, Server, KeyRound } from 'lucide-vue-next'
 
 const testEmail = ref('admin@gamelounge.com')
 const testPassword = ref('admin123')
@@ -183,6 +193,38 @@ async function testNeonConnection() {
     fetchRustLogs()
   } catch (e: any) {
     neonTestResult.value = `❌ Erreur: ${e.message}`
+  }
+}
+
+const diagResult = ref('')
+const refreshRustLogsAfter = false
+
+async function diagUsers() {
+  diagResult.value = 'Diagnostic en cours...'
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const local = await invoke('auth_debug_info')
+    let neonPart = ''
+    try {
+      const neon = await invoke('auth_debug_neon_users')
+      neonPart = `\n\n=== NEON ===\n${JSON.stringify(neon, null, 2)}`
+    } catch (e: any) {
+      neonPart = `\n\n=== NEON === erreur: ${e?.message || e}`
+    }
+    diagResult.value = `=== LOCAL ===\n${JSON.stringify(local, null, 2)}${neonPart}`
+  } catch (e: any) {
+    diagResult.value = `❌ Erreur diag: ${e?.message || e}`
+  }
+}
+
+async function resetAdmin() {
+  if (!confirm('Réinitialiser admin@gamelounge.com avec le mot de passe admin123 ?')) return
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const res = await invoke('debug_reset_admin')
+    diagResult.value = `✅ ${JSON.stringify(res, null, 2)}\n\nTeste maintenant admin@gamelounge.com / admin123`
+  } catch (e: any) {
+    diagResult.value = `❌ Erreur reset: ${e?.message || e}`
   }
 }
 
