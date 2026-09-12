@@ -22,10 +22,12 @@ fn too_many_attempts(state: &State<'_, AppState>, key: &str) -> bool {
     if entries.len() >= LOGIN_MAX { true } else { entries.push(now); false }
 }
 
+// Retourne Err en cas de problème Neon (timeout/connexion morte) pour ne pas répondre
+// faussement "Identifiants incorrects" ; déclenche aussi la reconnexion en arrière-plan.
 #[cfg(feature = "neon-sync")]
-async fn try_neon_login(state: &State<'_, AppState>, email: &str, password: &str) -> Option<Value> {
-    let pool_opt = { state.neon_pool.lock().ok()?.clone() };
-    let pool = pool_opt?;
+async fn try_neon_login(app: &tauri::AppHandle, state: &State<'_, AppState>, email: &str, password: &str) -> ApiResult<Option<Value>> {
+    let pool_opt = { state.neon_pool.lock().ok().and_then(|g| g.clone()) };
+    let Some(pool) = pool_opt else { return Ok(None) };
     eprintln!("[auth] tentative Neon pour {}", email);
     match crate::neon::fetch_neon_user(&pool, email).await {
         Ok(Some(neon_user)) => {
@@ -36,7 +38,7 @@ async fn try_neon_login(state: &State<'_, AppState>, email: &str, password: &str
             }).await.unwrap_or(false);
             if !valid {
                 eprintln!("[auth] Neon password mismatch");
-                return None;
+                return Ok(None);
             }
             eprintln!("[auth] Neon login OK");
             let mut map = jmap();
@@ -51,23 +53,28 @@ async fn try_neon_login(state: &State<'_, AppState>, email: &str, password: &str
                 Ok(Some(existing)) => {
                     if let Some(id) = existing.get("id").and_then(Value::as_i64) {
                         let _ = database.update("users", id, &map);
-                        if let Ok(Some(u)) = database.find_one("users", |r| r.get("id").and_then(Value::as_i64) == Some(id)) { return Some(u); }
+                        if let Ok(Some(u)) = database.find_one("users", |r| r.get("id").and_then(Value::as_i64) == Some(id)) { return Ok(Some(u)); }
                     }
                 }
-                Ok(None) => { if let Ok(u) = database.insert("users", &map) { return Some(u); } }
+                Ok(None) => { if let Ok(u) = database.insert("users", &map) { return Ok(Some(u)); } }
                 _ => {}
             }
-            Some(json!({"id": neon_user.id, "email": neon_user.email, "role": neon_user.role, "nom": neon_user.nom, "password_hash": neon_user.password_hash}))
+            Ok(Some(json!({"id": neon_user.id, "email": neon_user.email, "role": neon_user.role, "nom": neon_user.nom, "password_hash": neon_user.password_hash})))
         }
-        Ok(None) => { eprintln!("[auth] Neon user non trouvé"); None }
-        Err(e) => { eprintln!("[auth] Neon fetch error: {}", e.message); None }
+        Ok(None) => { eprintln!("[auth] Neon user non trouvé"); Ok(None) }
+        Err(e) => {
+            eprintln!("[auth] Neon fetch error: {}", e.message);
+            crate::logger::log_neon(&format!("auth: Neon fetch error pour {}: {} -> reconnexion", email, e.message));
+            crate::neon::schedule_reconnect(app);
+            Err(ApiError::new(503, "Neon indisponible (reconnexion en cours), réessayez"))
+        }
     }
 }
 #[cfg(not(feature = "neon-sync"))]
-async fn try_neon_login(_state: &State<'_, AppState>, _email: &str, _password: &str) -> Option<Value> { None }
+async fn try_neon_login(_app: &tauri::AppHandle, _state: &State<'_, AppState>, _email: &str, _password: &str) -> ApiResult<Option<Value>> { Ok(None) }
 
 #[tauri::command(async)]
-pub async fn auth_login(state: State<'_, AppState>, email: String, password: String) -> ApiResult<Value> {
+pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email: String, password: String) -> ApiResult<Value> {
     if email.is_empty() || password.is_empty() {
         return Err(ApiError::bad_request("Email et mot de passe requis"));
     }
@@ -94,17 +101,17 @@ pub async fn auth_login(state: State<'_, AppState>, email: String, password: Str
         let is_valid = tokio::task::spawn_blocking(move || auth_core::compare_password(&pwd, &st)).await.map_err(|e| ApiError::internal(format!("Erreur vérification: {}", e)))?;
         if is_valid {
             user = Some(lu);
-        } else if let Some(nu) = try_neon_login(&state, &email, &password).await {
-            user = Some(nu);
-            was_neon = true;
         } else {
-            return Err(ApiError::unauthorized("Identifiants incorrects"));
+            match try_neon_login(&app, &state, &email, &password).await? {
+                Some(nu) => { user = Some(nu); was_neon = true; }
+                None => return Err(ApiError::unauthorized("Identifiants incorrects")),
+            }
         }
-    } else if let Some(nu) = try_neon_login(&state, &email, &password).await {
-        user = Some(nu);
-        was_neon = true;
     } else {
-        return Err(ApiError::unauthorized("Identifiants incorrects"));
+        match try_neon_login(&app, &state, &email, &password).await? {
+            Some(nu) => { user = Some(nu); was_neon = true; }
+            None => return Err(ApiError::unauthorized("Identifiants incorrects")),
+        }
     }
 
     let user = user.ok_or_else(|| ApiError::unauthorized("Identifiants incorrects"))?;

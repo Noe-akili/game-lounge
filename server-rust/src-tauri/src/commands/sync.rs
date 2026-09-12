@@ -59,7 +59,7 @@ pub fn sync_toggle(
 
 /// POST /api/sync/run - Best practice : pull Neon -> local, puis push local -> Neon en background
 #[tauri::command(async)]
-pub async fn sync_run(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+pub async fn sync_run(app: tauri::AppHandle, state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
     admin_only(&user)?;
     eprintln!("[sync] sync_run demandé par {}", user.email);
@@ -109,9 +109,11 @@ pub async fn sync_run(state: State<'_, AppState>, token: Option<String>) -> ApiR
                 }
                 Err(e) => {
                     eprintln!("[sync] pull_all failed: {}", e.message);
+                    crate::logger::log_neon(&format!("sync_run: pull_all failed: {} -> reconnexion", e.message));
+                    crate::neon::schedule_reconnect(&app);
                     return Ok(json!({
                         "success": false,
-                        "message": format!("Neon sync échouée (offline): {}", e.message),
+                        "message": format!("Neon sync échouée (connexion perdue): {}. Reconnexion en arrière-plan, réessayez.", e.message),
                         "timestamp": now_iso()
                     }));
                 }

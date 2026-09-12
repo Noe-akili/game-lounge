@@ -26,6 +26,8 @@ pub struct AppState {
     pub neon_pool: Mutex<Option<crate::neon::NeonPool>>,
     #[cfg(not(feature = "neon-sync"))]
     pub neon_pool: Mutex<Option<()>>,
+    /// Garde-fou : une seule reconnexion Neon à la fois (évite le spam de tâches)
+    pub neon_reconnecting: std::sync::atomic::AtomicBool,
 }
 
 fn open_db(app: &tauri::AppHandle) -> Result<Db, Box<dyn std::error::Error>> {
@@ -343,6 +345,7 @@ pub fn run() {
                 jwt_secret,
                 login_attempts: Mutex::new(std::collections::HashMap::new()),
                 neon_pool: Mutex::new(None),
+                neon_reconnecting: std::sync::atomic::AtomicBool::new(false),
             });
             // Init Neon pool en arrière-plan (non bloquant, best practice offline-first)
             #[cfg(feature = "neon-sync")]
@@ -374,7 +377,12 @@ pub fn run() {
                                                 }
                                             }
                                         }
-                                        Err(e) => eprintln!("[neon] pull users failed: {}", e.message),
+                                        Err(e) => {
+                                            eprintln!("[neon] pull users failed: {}", e.message);
+                                            // Connexion probablement morte dès le boot -> reconnexion auto
+                                            crate::logger::log_neon(&format!("pull users boot failed: {} -> reconnexion", e.message));
+                                            crate::neon::schedule_reconnect(&handle);
+                                        }
                                     }
                                 }
                             }

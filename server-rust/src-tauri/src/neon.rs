@@ -11,6 +11,76 @@ pub struct NeonPool {
     pub client: std::sync::Arc<Client>,
 }
 
+// Timeouts courts OBLIGATOIRES : une connexion Neon morte (fermée par le serveur après idle,
+// ou changement réseau mobile) fait HANGUER une query pendant des minutes (retransmission TCP).
+// C'était la cause du "Timeout IPC (Android WebView)" : auth_login/test_neon ne répondaient jamais.
+#[cfg(feature = "neon-sync")]
+const NEON_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+#[cfg(feature = "neon-sync")]
+const NEON_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(6);
+
+#[cfg(feature = "neon-sync")]
+async fn neon_query(pool: &NeonPool, sql: &str, params: &[&(dyn tokio_postgres::types::ToSql + Sync)]) -> Result<Vec<tokio_postgres::Row>, String> {
+    match tokio::time::timeout(NEON_QUERY_TIMEOUT, pool.client.query(sql, params)).await {
+        Ok(Ok(rows)) => Ok(rows),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err(format!("timeout après {}s (connexion morte ?)", NEON_QUERY_TIMEOUT.as_secs())),
+    }
+}
+
+#[cfg(feature = "neon-sync")]
+async fn neon_execute(pool: &NeonPool, sql: &str, params: &[&(dyn tokio_postgres::types::ToSql + Sync)]) -> Result<u64, String> {
+    match tokio::time::timeout(NEON_QUERY_TIMEOUT, pool.client.execute(sql, params)).await {
+        Ok(Ok(n)) => Ok(n),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err(format!("timeout après {}s (connexion morte ?)", NEON_QUERY_TIMEOUT.as_secs())),
+    }
+}
+
+/// Ping rapide de la connexion Neon (SELECT 1 avec timeout court)
+#[cfg(feature = "neon-sync")]
+pub async fn ping(pool: &NeonPool) -> Result<(), String> {
+    match tokio::time::timeout(NEON_QUERY_TIMEOUT, pool.client.query_one("SELECT 1", &[])).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err(format!("timeout après {}s (connexion morte)", NEON_QUERY_TIMEOUT.as_secs())),
+    }
+}
+
+/// Reconnexion Neon en arrière-plan après connexion morte.
+/// Neon ferme les connexions inactives ; sans ça, le pool reste mort jusqu'au redémarrage de l'app.
+#[cfg(feature = "neon-sync")]
+pub fn schedule_reconnect(app: &tauri::AppHandle) {
+    use std::sync::atomic::Ordering;
+    use tauri::Manager;
+    let Some(state) = app.try_state::<crate::AppState>() else { return };
+    // Un seul reconnect à la fois (les commandes en erreur spament toutes reconnect sinon)
+    if state.neon_reconnecting.swap(true, Ordering::SeqCst) { return; }
+    // Pool indisponible pendant la reconnexion (les appels passeront en offline au lieu de hanguer)
+    if let Ok(mut guard) = state.neon_pool.lock() {
+        *guard = None;
+    }
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        crate::logger::log_neon("reconnexion Neon en arrière-plan...");
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        match init_neon_pool().await {
+            Some(pool) => {
+                crate::logger::log_neon("reconnexion Neon OK, pool restauré");
+                if let Some(s) = handle.try_state::<crate::AppState>() {
+                    if let Ok(mut guard) = s.neon_pool.lock() {
+                        *guard = Some(pool);
+                    }
+                }
+            }
+            None => crate::logger::log_neon("reconnexion Neon échouée (offline), réessai au prochain usage"),
+        }
+        if let Some(s) = handle.try_state::<crate::AppState>() {
+            s.neon_reconnecting.store(false, Ordering::SeqCst);
+        }
+    });
+}
+
 #[cfg(feature = "neon-sync")]
 pub async fn init_neon_pool() -> Option<NeonPool> {
     const FALLBACK_URL: &str = "postgresql://neondb_owner:npg_AEay0ug9NHYj@ep-wild-cloud-axxw1ufj-pooler.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require";
@@ -28,58 +98,73 @@ pub async fn init_neon_pool() -> Option<NeonPool> {
     };
     crate::logger::log_neon(&format!("DATABASE_URL présent ({} chars), tentative rustls", url.len()));
     // Tente rustls 0.19 - webpki-roots 0.21 fournit TLS_SERVER_ROOTS directement compatible
-    let rustls_result = async {
+    let rustls_result = tokio::time::timeout(NEON_CONNECT_TIMEOUT, async {
         let mut root_store = rustls::RootCertStore::empty();
         root_store.add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
         let mut config = rustls::ClientConfig::new();
         config.root_store = root_store;
         let tls = tokio_postgres_rustls::MakeRustlsConnect::new(config);
         tokio_postgres::connect(&url, tls).await
-    }.await;
+    }).await;
 
     match rustls_result {
-        Ok((client, connection)) => {
+        Ok(Ok((client, connection))) => {
             tokio::spawn(async move {
                 if let Err(e) = connection.await {
                     eprintln!("[neon] connection error (rustls): {}", e);
                 }
             });
-            match client.query("SELECT 1", &[]).await {
-                Ok(_) => {
+            match tokio::time::timeout(NEON_QUERY_TIMEOUT, client.query("SELECT 1", &[])).await {
+                Ok(Ok(_)) => {
                     eprintln!("[neon] pool connecté (rustls)");
                     return Some(NeonPool { client: std::sync::Arc::new(client) });
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     eprintln!("[neon] rustls test query failed: {}, tente NoTls", e);
+                }
+                Err(_) => {
+                    eprintln!("[neon] rustls test query timeout, tente NoTls");
                 }
             }
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             eprintln!("[neon] rustls connect failed: {}, tente NoTls", e);
+        }
+        Err(_) => {
+            eprintln!("[neon] rustls connect timeout ({}s), tente NoTls", NEON_CONNECT_TIMEOUT.as_secs());
         }
     }
 
     // Fallback NoTls
-    match tokio_postgres::connect(&url, NoTls).await {
-        Ok((client, connection)) => {
+    let no_tls_result = tokio::time::timeout(NEON_CONNECT_TIMEOUT, tokio_postgres::connect(&url, NoTls)).await;
+    match no_tls_result {
+        Ok(Ok((client, connection))) => {
             tokio::spawn(async move {
                 if let Err(e) = connection.await {
                     eprintln!("[neon] connection error (NoTls): {}", e);
                 }
             });
-            match client.query("SELECT 1", &[]).await {
-                Ok(_) => {
+            match tokio::time::timeout(NEON_QUERY_TIMEOUT, client.query("SELECT 1", &[])).await {
+                Ok(Ok(_)) => {
                     eprintln!("[neon] pool connecté (NoTls)");
                     Some(NeonPool { client: std::sync::Arc::new(client) })
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     eprintln!("[neon] NoTls test query failed: {}, offline", e);
+                    None
+                }
+                Err(_) => {
+                    eprintln!("[neon] NoTls test query timeout, offline");
                     None
                 }
             }
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             eprintln!("[neon] pool connect failed (offline): {}", e);
+            None
+        }
+        Err(_) => {
+            eprintln!("[neon] pool connect timeout ({}s), offline", NEON_CONNECT_TIMEOUT.as_secs());
             None
         }
     }
@@ -114,8 +199,7 @@ fn pg_col_to_string(row: &tokio_postgres::Row, idx: usize) -> Option<String> {
 
 #[cfg(feature = "neon-sync")]
 pub async fn fetch_neon_user(pool: &NeonPool, email: &str) -> ApiResult<Option<NeonUser>> {
-    let rows = pool.client
-        .query("SELECT id, email, password_hash, role, nom, created_at FROM users WHERE email = $1 LIMIT 1", &[&email])
+    let rows = neon_query(pool, "SELECT id, email, password_hash, role, nom, created_at FROM users WHERE email = $1 LIMIT 1", &[&email])
         .await
         .map_err(|e| ApiError::internal(format!("Neon query user: {}", e)))?;
     if rows.is_empty() {
@@ -149,8 +233,7 @@ pub async fn fetch_neon_user(_pool: &(), _email: &str) -> ApiResult<Option<NeonU
 
 #[cfg(feature = "neon-sync")]
 pub async fn pull_users(pool: &NeonPool) -> ApiResult<Vec<Value>> {
-    let rows = pool.client
-        .query("SELECT id, email, password_hash, role, nom, created_at FROM users ORDER BY id", &[])
+    let rows = neon_query(pool, "SELECT id, email, password_hash, role, nom, created_at FROM users ORDER BY id", &[])
         .await
         .map_err(|e| ApiError::internal(format!("Neon pull users: {}", e)))?;
     // Décodage défensif : try_get + String partout (pas de chrono), catch_unwind par ligne.
@@ -189,7 +272,8 @@ pub async fn pull_all(pool: &NeonPool) -> ApiResult<std::collections::HashMap<St
     let mut all = std::collections::HashMap::new();
     let tables = ["users", "consoles", "jeux", "joueurs", "sessions_jeu", "tarifs", "factures", "jetons_transactions", "messages", "parametres_fidelite", "lignes_facture"];
     for table in tables {
-        let json_rows = pool.client.query(&format!("SELECT row_to_json(t) as data FROM (SELECT * FROM {} ) t", table), &[]).await;
+        let sql = format!("SELECT row_to_json(t) as data FROM (SELECT * FROM {} ) t", table);
+        let json_rows = neon_query(pool, &sql, &[]).await;
         match json_rows {
             Ok(jrows) => {
                 let mut vec = Vec::new();
@@ -206,6 +290,7 @@ pub async fn pull_all(pool: &NeonPool) -> ApiResult<std::collections::HashMap<St
             Err(e) => {
                 eprintln!("[neon] pull {} failed: {}", table, e);
                 all.insert(table.to_string(), Vec::new());
+                return Err(ApiError::internal(format!("Neon pull {}: {}", table, e)));
             }
         }
     }
@@ -224,8 +309,7 @@ pub async fn push_user(pool: &NeonPool, user: &Value) -> ApiResult<()> {
     let password_hash: &str = user.get("password_hash").and_then(Value::as_str).unwrap_or("");
     let role: &str = user.get("role").and_then(Value::as_str).unwrap_or("employe");
     let nom: &str = user.get("nom").and_then(Value::as_str).unwrap_or("");
-    pool.client
-        .execute(
+    neon_execute(pool,
             "INSERT INTO users (id, email, password_hash, role, nom, created_at) VALUES ($1,$2,$3,$4,$5,NOW()) ON CONFLICT (id) DO UPDATE SET email=$2, password_hash=$3, role=$4, nom=$5",
             &[&id, &email, &password_hash, &role, &nom],
         )
@@ -244,7 +328,7 @@ pub async fn push_tarif(pool: &NeonPool, tarif: &Value) -> ApiResult<()> {
     let console_type: &str = tarif.get("console_type").and_then(Value::as_str).unwrap_or("PS5");
     let jeu: &str = tarif.get("jeu").and_then(Value::as_str).unwrap_or("");
     let actif: i64 = tarif.get("actif").and_then(Value::as_i64).unwrap_or(1);
-    pool.client.execute(
+    neon_execute(pool,
         "INSERT INTO tarifs (id, type, duree_minutes, prix, description, console_type, jeu, actif, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW()) ON CONFLICT (id) DO UPDATE SET type=$2, duree_minutes=$3, prix=$4, description=$5, console_type=$6, jeu=$7, actif=$8",
         &[&id, &type_, &duree, &prix, &desc, &console_type, &jeu, &actif]
     ).await.map_err(|e| ApiError::internal(format!("Neon push tarif: {}", e)))?;
