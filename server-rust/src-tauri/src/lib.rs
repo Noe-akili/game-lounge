@@ -277,6 +277,7 @@ pub fn run() {
             // ==== SANTÉ ====
             commands::health,
             // ==== AUTH ====
+            commands::auth_bootstrap_admin,
             commands::auth_login,
             commands::auth_logout,
             commands::auth_me,

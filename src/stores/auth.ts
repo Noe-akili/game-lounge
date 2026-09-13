@@ -43,15 +43,25 @@ export const useAuthStore = defineStore('auth', () => {
     } catch {}
   }
 
+  async function bootstrapAdmin() {
+    const data = await api.post("/auth/bootstrap")
+    token.value = data.token
+    user.value = data.user
+    localStorage.setItem("gl_token", data.token)
+    localStorage.setItem("gl_user", JSON.stringify(data.user))
+    if (data.refresh_token) localStorage.setItem("gl_refresh_token", data.refresh_token)
+    return data.user
+  }
+
   async function restoreSession() {
     if (sessionReady.value) return isAuthenticated.value
     try {
-      if (!token.value || !user.value) { clearSession(); return false }
+      if (!token.value || !user.value) { await bootstrapAdmin(); return true }
       await fetchMe()
       return true
     } catch {
       clearSession()
-      return false
+      try { await bootstrapAdmin(); return true } catch { return false }
     } finally {
       sessionReady.value = true
     }
@@ -72,5 +82,5 @@ export const useAuthStore = defineStore('auth', () => {
     window.addEventListener('gl:unauthorized', clearSession)
   }
 
-  return { user, token, sessionReady, isAuthenticated, isAdmin, login, logout, fetchMe, restoreSession, clearSession }
+  return { user, token, sessionReady, isAuthenticated, isAdmin, login, logout, fetchMe, bootstrapAdmin, restoreSession, clearSession }
 })

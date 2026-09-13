@@ -149,6 +149,21 @@ async fn try_supabase_login(app: &tauri::AppHandle, state: &State<'_, AppState>,
 #[cfg(not(feature = "supabase-sync"))]
 async fn try_supabase_login(_app: &tauri::AppHandle, _state: &State<'_, AppState>, _email: &str, _password: &str) -> ApiResult<Option<Value>> { Ok(None) }
 
+#[tauri::command]
+pub fn auth_bootstrap_admin(state: State<'_, AppState>) -> ApiResult<Value> {
+    let selected = db(&state).query_all("users")?.into_iter().find(|u| u.get("role").and_then(Value::as_str) == Some("admin"));
+    let user = selected.unwrap_or_else(|| json!({"id": 0, "email": "admin", "role": "admin", "nom": "Administrateur"}));
+    let claims = auth_core::Claims {
+        id: user.get("id").and_then(Value::as_i64).unwrap_or(0),
+        email: user.get("email").and_then(Value::as_str).unwrap_or("admin").to_string(),
+        role: "admin".to_string(),
+        nom: user.get("nom").and_then(Value::as_str).unwrap_or("Administrateur").to_string(),
+        iat: 0, exp: 0,
+    };
+    let (token, refresh_token) = auth_core::generate_token_pair(&claims, &state.jwt_secret)?;
+    Ok(json!({"token": token, "refresh_token": refresh_token, "user": user_public(&user), "source": "kiosk-admin"}))
+}
+
 #[tauri::command(async)]
 pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email: String, password: String) -> ApiResult<Value> {
     let email = email.trim().to_ascii_lowercase();

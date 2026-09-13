@@ -73,6 +73,7 @@ const ROUTES: RouteDef[] = [
   { m: 'GET', p: '/health', f: () => ({ cmd: 'health', args: {} }) },
 
   // ===== AUTH =====
+  { m: 'POST', p: '/auth/bootstrap', f: () => ({ cmd: 'auth_bootstrap_admin', args: {} }) },
   { m: 'POST', p: '/auth/login', f: ({ body }) => ({ cmd: 'auth_login', args: { email: val(body, 'email'), password: val(body, 'password') } }) },
   { m: 'POST', p: '/auth/refresh', f: ({ body }) => ({ cmd: 'auth_refresh', args: { refresh_token: val(body, 'refresh_token') } }) },
   { m: 'POST', p: '/auth/logout', f: ({ token }) => ({ cmd: 'auth_logout', args: { token } }) },
