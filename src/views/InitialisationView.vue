@@ -3,7 +3,7 @@
     <div class="w-full max-w-md card space-y-6">
       <div class="text-center">
         <h1 class="font-gaming text-2xl font-bold text-txt">Initialisation de</h1>
-        <h2 class="font-gaming text-3xl font-bold text-neon-violet">GAME LOUNGE</h2>
+        <h2 class="font-gaming text-3xl font-bold text-neon-violet">{{ settings.appName }}</h2>
         <p class="text-txt-dim mt-2 text-sm">{{ subtitle }}</p>
       </div>
 
@@ -69,10 +69,12 @@ import { useRouter } from 'vue-router'
 import { CheckCircle2, Circle, Loader2, CloudOff, RefreshCw } from 'lucide-vue-next'
 import { useSyncStore, SYNC_PHASES, PHASE_LABELS } from '@/stores/sync'
 import { useAuthStore } from '@/stores/auth'
+import { useSettingsStore } from '@/stores/settings'
 
 const router = useRouter()
 const sync = useSyncStore()
 const auth = useAuthStore()
+const settings = useSettingsStore()
 const retrying = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 

@@ -77,6 +77,7 @@ import { api } from '@/utils/api'
 import { useAuthStore } from '@/stores/auth'
 import { useSyncStore, PHASE_LABELS } from '@/stores/sync'
 import { useNotifStore } from '@/stores/notifications'
+import { useSettingsStore } from '@/stores/settings'
 
 defineProps({ sidebarOpen: Boolean })
 defineEmits(['toggleSidebar'])
@@ -85,6 +86,7 @@ const route = useRoute()
 const auth = useAuthStore()
 const sync = useSyncStore()
 const notif = useNotifStore()
+const settings = useSettingsStore()
 const bellOpen = ref(false)
 const bellWrap = ref<HTMLElement | null>(null)
 
@@ -163,6 +165,6 @@ const pageTitle = computed(() => {
     '/admin/parametres': 'Paramètres',
     '/admin/utilisateurs': 'Utilisateurs',
   }
-  return map[route.path] || 'Game Lounge'
+  return map[route.path] || settings.appName
 })
 </script>

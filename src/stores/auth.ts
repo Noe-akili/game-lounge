@@ -56,12 +56,14 @@ export const useAuthStore = defineStore('auth', () => {
   async function restoreSession() {
     if (sessionReady.value) return isAuthenticated.value
     try {
-      if (!token.value || !user.value) { await bootstrapAdmin(); return true }
+      // Une app fraîche doit afficher le vrai écran de connexion. Le bootstrap
+      // automatique contournait le login et créait une session admin implicite.
+      if (!token.value || !user.value) return false
       await fetchMe()
       return true
     } catch {
       clearSession()
-      try { await bootstrapAdmin(); return true } catch { return false }
+      return false
     } finally {
       sessionReady.value = true
     }

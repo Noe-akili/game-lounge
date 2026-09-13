@@ -16,7 +16,7 @@
       <Gamepad2 class="w-5 h-5 text-neon-violet" />
      </div>
      <div>
-      <h1 class="font-gaming text-lg font-bold text-txt">GAME LOUNGE</h1>
+      <h1 class="font-gaming text-lg font-bold text-txt truncate max-w-40">{{ settings.appName }}</h1>
       <p class="text-[10px] text-txt-dim uppercase tracking-widest">Gestion</p>
      </div>
     </div>

@@ -5,6 +5,7 @@ import { ref } from 'vue'
 export const useSettingsStore = defineStore('settings', () => {
   const fontMode = ref(localStorage.getItem('gl_font') || 'gaming')
   const themeMode = ref(localStorage.getItem('gl_theme') || 'dark')
+  const appName = ref(localStorage.getItem('gl_app_name') || 'Game Lounge')
 
   function setFont(mode: string) {
     fontMode.value = mode
@@ -16,6 +17,13 @@ export const useSettingsStore = defineStore('settings', () => {
     themeMode.value = mode
     localStorage.setItem('gl_theme', mode)
     applyTheme(mode)
+  }
+
+  function setAppName(name: string) {
+    const clean = (name || '').trim().replace(/\s+/g, ' ').slice(0, 40) || 'Game Lounge'
+    appName.value = clean
+    localStorage.setItem('gl_app_name', clean)
+    document.title = clean
   }
 
   function applyFont(mode: string) {
@@ -37,7 +45,8 @@ export const useSettingsStore = defineStore('settings', () => {
   function init() {
     applyFont(fontMode.value)
     applyTheme(themeMode.value)
+    document.title = appName.value
   }
 
-  return { fontMode, themeMode, setFont, setTheme, init }
+  return { fontMode, themeMode, appName, setFont, setTheme, setAppName, init }
 })

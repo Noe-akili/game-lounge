@@ -45,10 +45,15 @@
       <h4 class="font-gaming font-bold mb-4 truncate">Configuration générale</h4>
       <div class="space-y-4 w-full max-w-full min-w-0 overflow-hidden">
         <div class="w-full max-w-full min-w-0">
+          <label class="text-sm text-txt-muted">Nom de l'application</label>
+          <input v-model="appNameDraft" maxlength="40" class="input-field w-full max-w-full min-w-0" placeholder="Ex. Play Zone Lubumbashi" />
+          <p class="text-xs text-txt-dim mt-1">Visible dans la connexion, les menus et le titre de l'application.</p>
+        </div>
+        <div class="w-full max-w-full min-w-0">
           <label class="text-sm text-txt-muted">TVA par défaut (%)</label>
           <input v-model.number="config.taux_tva" type="number" class="input-field w-full max-w-full min-w-0" />
         </div>
-        <button @click="toast.success('Paramètres sauvegardés')" class="btn-neon-violet w-full sm:w-auto">Enregistrer</button>
+        <button @click="saveGeneral" class="btn-neon-violet w-full sm:w-auto">Enregistrer</button>
       </div>
     </div>
 
@@ -216,6 +221,7 @@ const selected = ref(null)
 const editingId = ref(null)
 const form = reactive({ regle_type: 'temps', seuil: 60, jetons_attribues: 1, actif: true })
 const config = reactive({ taux_tva: 20 })
+const appNameDraft = ref(settings.appName)
 const syncStatus = ref({ enabled: false, supabaseEnabled: false, lastSync: null, syncing: false })
 const syncing = ref(false)
 
@@ -227,6 +233,13 @@ function changeFont(mode: string) {
 function changeTheme(mode: string) {
   settings.setTheme(mode)
   toast.success(`Thème: ${mode === 'dark' ? 'Sombre' : 'Clair'}`)
+}
+
+function saveGeneral() {
+  if (!appNameDraft.value.trim()) return toast.error("Le nom de l'application est requis")
+  settings.setAppName(appNameDraft.value)
+  appNameDraft.value = settings.appName
+  toast.success("Configuration générale enregistrée")
 }
 
 async function fetchData() {

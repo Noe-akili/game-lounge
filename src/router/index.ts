@@ -20,14 +20,14 @@ const routes = [
       { path: 'jetons', component: () => import('@/views/admin/AdminJetons.vue') },
       { path: 'messages', component: () => import('@/views/MessagesView.vue') },
       { path: 'parametres', component: () => import('@/views/ParametresView.vue') },
-      { path: 'admin', component: () => import('@/views/admin/AdminDashboard.vue') },
-      { path: 'admin/consoles', component: () => import('@/views/admin/AdminConsoles.vue') },
-      { path: 'admin/jeux', component: () => import('@/views/admin/AdminJeux.vue') },
-      { path: 'admin/tarifs', component: () => import('@/views/admin/AdminTarifs.vue') },
-      { path: 'admin/rapports', component: () => import('@/views/admin/AdminRapports.vue') },
-      { path: 'admin/parametres', component: () => import('@/views/admin/AdminParametres.vue') },
-      { path: 'admin/utilisateurs', component: () => import('@/views/admin/AdminUtilisateurs.vue') },
-      { path: 'admin/developpeur', component: () => import('@/views/admin/DeveloperView.vue') },
+      { path: 'admin', component: () => import('@/views/admin/AdminDashboard.vue'), meta: { adminOnly: true } },
+      { path: 'admin/consoles', component: () => import('@/views/admin/AdminConsoles.vue'), meta: { adminOnly: true } },
+      { path: 'admin/jeux', component: () => import('@/views/admin/AdminJeux.vue'), meta: { adminOnly: true } },
+      { path: 'admin/tarifs', component: () => import('@/views/admin/AdminTarifs.vue'), meta: { adminOnly: true } },
+      { path: 'admin/rapports', component: () => import('@/views/admin/AdminRapports.vue'), meta: { adminOnly: true } },
+      { path: 'admin/parametres', component: () => import('@/views/admin/AdminParametres.vue'), meta: { adminOnly: true } },
+      { path: 'admin/utilisateurs', component: () => import('@/views/admin/AdminUtilisateurs.vue'), meta: { adminOnly: true } },
+      { path: 'admin/developpeur', component: () => import('@/views/admin/DeveloperView.vue'), meta: { adminOnly: true } },
     ]
   }
 ]
@@ -42,6 +42,7 @@ router.beforeEach(async (to) => {
   await auth.restoreSession()
   if (to.path !== '/login' && !auth.isAuthenticated) return '/login'
   if (to.path === '/login' && auth.isAuthenticated) return auth.user?.role === 'admin' ? '/admin' : '/dashboard'
+  if (to.matched.some(record => record.meta.adminOnly) && !auth.isAdmin) return '/dashboard'
 })
 
 export default router
