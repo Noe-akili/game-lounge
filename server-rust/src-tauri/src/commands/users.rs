@@ -70,18 +70,39 @@ pub async fn users_create(
         return Err(ApiError::bad_request("Rôle invalide"));
     }
     let db = db(&state);
-    if db
-        .find_one("users", |u| u.get("email").and_then(Value::as_str) == Some(email.as_str()))?
-        .is_some()
-    {
-        return Err(ApiError::new(409, "Email déjà utilisé"));
-    }
     // Hash dans thread bloquant pour ne pas freezer l'UI Android
     let pwd = password.clone();
     let hash = tokio::task::spawn_blocking(move || auth_core::hash_password(&pwd))
         .await
         .map_err(|e| ApiError::internal(format!("Erreur hachage: {e}")))?
         ?;
+    // FIX utilisateurs fantômes : un utilisateur soft-deleted garde sa ligne
+    // (et son email sous UNIQUE). Recréer le même email échouait donc en local
+    // ET sur le push cloud (violation UNIQUE -> batch de sync entier perdu).
+    // On RÉACTIVE la ligne existante : même id, deleted=0, nouvelles valeurs.
+    // Le payload UPDATE repasse deleted=0 au cloud -> plus aucun fantôme.
+    if let Some(prev) = db.find_one_all("users", |u| {
+        u.get("email").and_then(Value::as_str) == Some(email.as_str())
+            && u.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1
+    })? {
+        let id = prev.get("id").and_then(Value::as_i64).unwrap_or(0);
+        if id > 0 {
+            let mut upd = jmap();
+            upd.insert("deleted".into(), json!(0));
+            upd.insert("password_hash".into(), json!(hash));
+            upd.insert("nom".into(), json!(validators::sanitize_input(&nom, 50)));
+            upd.insert("role".into(), json!(role));
+            upd.insert("created_at".into(), json!(crate::db::now_iso()));
+            let revived = db.update("users", id, &upd)?;
+            return Ok(to_public(&revived));
+        }
+    }
+    if db
+        .find_one("users", |u| u.get("email").and_then(Value::as_str) == Some(email.as_str()))?
+        .is_some()
+    {
+        return Err(ApiError::new(409, "Email déjà utilisé"));
+    }
     let mut row = jmap();
     row.insert("email".into(), json!(validators::sanitize_input(&email, 100)));
     row.insert("password_hash".into(), json!(hash));

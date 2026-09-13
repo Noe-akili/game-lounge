@@ -82,8 +82,8 @@ const ROUTES: RouteDef[] = [
   // ===== CONSOLES =====
   { m: 'GET', p: '/consoles', f: ({ token }) => ({ cmd: 'consoles_list', args: { token } }) },
   { m: 'GET', p: '/consoles/:id', f: ({ token, segs }) => ({ cmd: 'consoles_get', args: { token, id: num(segs.id) } }) },
-  { m: 'POST', p: '/consoles', f: ({ token, body }) => ({ cmd: 'consoles_create', args: { token, nom: val(body, 'nom'), type: val(body, 'type'), posteNumero: num(val(body, 'poste_numero')), etat: val(body, 'etat') } }) },
-  { m: 'PUT', p: '/consoles/:id', f: ({ token, segs, body }) => ({ cmd: 'consoles_update', args: { token, id: num(segs.id), nom: val(body, 'nom'), type: val(body, 'type'), posteNumero: num(val(body, 'poste_numero')), etat: val(body, 'etat') } }) },
+  { m: 'POST', p: '/consoles', f: ({ token, body }) => ({ cmd: 'consoles_create', args: { token, nom: val(body, 'nom'), type: val(body, 'type'), posteNumero: num(val(body, 'poste_numero')), etat: val(body, 'etat'), imageUrl: val(body, 'image_url') } }) },
+  { m: 'PUT', p: '/consoles/:id', f: ({ token, segs, body }) => ({ cmd: 'consoles_update', args: { token, id: num(segs.id), nom: val(body, 'nom'), type: val(body, 'type'), posteNumero: num(val(body, 'poste_numero')), etat: val(body, 'etat'), imageUrl: val(body, 'image_url') } }) },
   { m: 'DELETE', p: '/consoles/:id', f: ({ token, segs }) => ({ cmd: 'consoles_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== JEUX =====
@@ -97,8 +97,8 @@ const ROUTES: RouteDef[] = [
   { m: 'GET', p: '/joueurs', f: ({ token, query }) => ({ cmd: 'joueurs_list', args: { token, search: query.search } }) },
   { m: 'GET', p: '/joueurs/:id/historique', f: ({ token, segs }) => ({ cmd: 'joueurs_historique', args: { token, id: num(segs.id) } }) },
   { m: 'GET', p: '/joueurs/:id', f: ({ token, segs }) => ({ cmd: 'joueurs_get', args: { token, id: num(segs.id) } }) },
-  { m: 'POST', p: '/joueurs', f: ({ token, body }) => ({ cmd: 'joueurs_create', args: { token, nom: val(body, 'nom'), telephone: val(body, 'telephone'), email: val(body, 'email') } }) },
-  { m: 'PUT', p: '/joueurs/:id', f: ({ token, segs, body }) => ({ cmd: 'joueurs_update', args: { token, id: num(segs.id), nom: val(body, 'nom'), telephone: val(body, 'telephone'), email: val(body, 'email'), jetonsSolde: num(val(body, 'jetons_solde')) } }) },
+  { m: 'POST', p: '/joueurs', f: ({ token, body }) => ({ cmd: 'joueurs_create', args: { token, nom: val(body, 'nom'), telephone: val(body, 'telephone'), email: val(body, 'email'), sticker: val(body, 'sticker') } }) },
+  { m: 'PUT', p: '/joueurs/:id', f: ({ token, segs, body }) => ({ cmd: 'joueurs_update', args: { token, id: num(segs.id), nom: val(body, 'nom'), telephone: val(body, 'telephone'), email: val(body, 'email'), jetonsSolde: num(val(body, 'jetons_solde')), sticker: val(body, 'sticker') } }) },
   { m: 'DELETE', p: '/joueurs/:id', f: ({ token, segs }) => ({ cmd: 'joueurs_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== SESSIONS =====

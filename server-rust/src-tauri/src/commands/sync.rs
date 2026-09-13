@@ -470,6 +470,14 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
                     Ok(status) => {
                         if status == "applied" || status == "tombstone" {
                             downloaded += 1;
+                            // Cloche : changement effectué par un AUTRE appareil.
+                            // Native thread -> l'écoute continue même quand aucun
+                            // écran n'est affiché / app en arrière-plan.
+                            db(state).notify_remote_change(
+                                entity,
+                                if status == "tombstone" { "DELETE" } else { "UPDATE" },
+                                record_id,
+                            );
                         } else if status == "conflict" {
                             eprintln!("[sync] conflit {} #{}: local gagne", entity, record_id);
                         }

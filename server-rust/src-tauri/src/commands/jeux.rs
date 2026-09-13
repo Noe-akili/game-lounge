@@ -76,6 +76,14 @@ pub fn jeux_create(
             .as_deref()
             .map(|u| validators::sanitize_input(u, 500))),
     );
+    // image_url unifiée (item 6) : même valeur que la jaquette par défaut.
+    row.insert(
+        "image_url".into(),
+        json!(jaquette_url
+            .as_deref()
+            .map(|u| validators::sanitize_input(u, 500))
+            .filter(|u| !u.is_empty())),
+    );
     row.insert("actif".into(), json!(1));
     row.insert("created_at".into(), json!(now_iso()));
     db(&state).insert("jeux", &row)
@@ -135,6 +143,17 @@ pub fn jeux_update(
                 json!(validators::sanitize_input(&u, 500))
             },
         );
+        // image_url suit la jaquette quand elle n'est pas fournie explicitement.
+        if !updates.contains_key("image_url") {
+            updates.insert(
+                "image_url".into(),
+                if u.is_empty() {
+                    json!(Value::Null)
+                } else {
+                    json!(validators::sanitize_input(&u, 500))
+                },
+            );
+        }
     }
     db(&state).update("jeux", id, &updates)
 }

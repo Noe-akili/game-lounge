@@ -17,7 +17,13 @@
     </div>
 
     <div v-else class="space-y-2 w-full max-w-full min-w-0 overflow-hidden">
-      <div v-for="c in consoles" :key="c.id" class="card flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden flex-wrap">
+      <div v-for="c in consoles" :key="c.id" class="card relative flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden flex-wrap">
+        <!-- Image de couverture (item 6) : arrière-plan + overlay, texte lisible. -->
+        <div v-if="c.image_url" class="absolute inset-0 z-0">
+          <img :src="c.image_url" alt="" class="w-full h-full object-cover" @error="imgErr[c.id] = true" v-show="!imgErr[c.id]" />
+          <div class="absolute inset-0 bg-gradient-to-r from-bg via-bg/85 to-bg/60"></div>
+        </div>
+        <div class="relative z-10 contents">
         <Monitor class="w-8 h-8 shrink-0" :class="statusColor(c.etat)" />
         <div class="flex-1 min-w-0 overflow-hidden">
           <p class="font-medium truncate">{{ c.nom }}</p>
@@ -31,6 +37,7 @@
           <button @click="deleteConsole(c.id)" class="p-2 rounded-lg hover:bg-neon-red/10 text-neon-red transition-colors">
             <Trash2 class="w-4 h-4" />
           </button>
+        </div>
         </div>
       </div>
     </div>
@@ -47,6 +54,7 @@
           <select v-model="form.etat" class="input-field">
             <option value="disponible">Disponible</option><option value="maintenance">Maintenance</option><option value="hors_service">Hors service</option>
           </select>
+          <input v-model="form.image_url" placeholder="URL image de couverture (optionnel)" class="input-field" />
           <div class="flex gap-3">
             <button @click="showForm = false" class="btn-neon-outline flex-1">Annuler</button>
             <button @click="saveConsole" :disabled="!form.nom || !form.poste_numero" class="btn-neon-violet flex-1">
@@ -74,7 +82,9 @@ const consoles = ref([])
 const loading = ref(true)
 const showForm = ref(false)
 const editingId = ref(null)
-const form = reactive({ nom: '', type: 'PS5', poste_numero: 1, etat: 'disponible' })
+const form = reactive({ nom: '', type: 'PS5', poste_numero: 1, etat: 'disponible', image_url: '' })
+// Fallback image : par carte, si l'URL ne charge pas -> carte classique.
+const imgErr = reactive<Record<number, boolean>>({})
 
 function statusColor(e) { return { disponible: 'text-neon-green', occupee: 'text-neon-red', pause: 'text-neon-yellow', maintenance: 'text-neon-yellow', hors_service: 'text-neon-red' }[e] || 'text-txt-dim' }
 function statusBadge(e) { return { disponible: 'badge-green', occupee: 'badge-red', pause: 'badge-yellow', maintenance: 'badge-yellow', hors_service: 'badge-red' }[e] || 'badge-violet' }
@@ -86,8 +96,8 @@ async function fetchData() {
   finally { loading.value = false }
 }
 
-function openAdd() { editingId.value = null; form.nom = ''; form.type = 'PS5'; form.poste_numero = 1; form.etat = 'disponible'; showForm.value = true }
-function editConsole(c) { editingId.value = c.id; form.nom = c.nom; form.type = c.type; form.poste_numero = c.poste_numero; form.etat = c.etat; showForm.value = true }
+function openAdd() { editingId.value = null; form.nom = ''; form.type = 'PS5'; form.poste_numero = 1; form.etat = 'disponible'; form.image_url = ''; showForm.value = true }
+function editConsole(c) { editingId.value = c.id; form.nom = c.nom; form.type = c.type; form.poste_numero = c.poste_numero; form.etat = c.etat; form.image_url = c.image_url || ''; showForm.value = true }
 
 async function saveConsole() {
   if (!isValidNom(form.nom)) return toast.error('Nom invalide (2-50 caractères, lettres/chiffres/ -\'&)')

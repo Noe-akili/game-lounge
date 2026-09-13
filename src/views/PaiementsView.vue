@@ -81,14 +81,15 @@
             </div>
           </div>
         </div>
-        <div class="flex gap-3">
-          <button @click="showDetail = false" class="btn-neon-outline flex-1">Fermer</button>
-          <button @click="downloadPdf(selected)" class="btn-neon-blue flex-1 flex items-center justify-center gap-2">
+        <!-- BARRE D'ACTIONS SÉPARÉE du contenu (item 5) -->
+        <div class="mt-6 pt-4 border-t border-white/10 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          <button @click="downloadPdf(selected)" class="btn-neon-blue sm:flex-1 flex items-center justify-center gap-2">
             <Download class="w-4 h-4" /> Exporter PDF
           </button>
-          <button @click="printPdf(selected)" class="btn-neon-outline flex-1 flex items-center justify-center gap-2">
+          <button @click="printPdf(selected)" class="btn-neon-outline sm:flex-1 flex items-center justify-center gap-2">
             <Printer class="w-4 h-4" /> Imprimer
           </button>
+          <button @click="showDetail = false" class="btn-neon-outline sm:w-auto px-6">Fermer</button>
         </div>
       </div>
     </Modal>

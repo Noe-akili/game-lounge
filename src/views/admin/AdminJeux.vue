@@ -18,8 +18,9 @@
 
     <div v-else class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden">
       <div v-for="j in jeux" :key="j.id" class="card-hover text-center group w-full max-w-full min-w-0 overflow-hidden flex flex-col">
+        <!-- Image unifiée (item 6) : image_url sinon jaquette, fallback icône. -->
         <div class="w-20 h-20 mx-auto rounded-xl bg-bg-surface flex items-center justify-center mb-3 overflow-hidden">
-          <img v-if="j.jaquette_url" :src="j.jaquette_url" class="w-full h-full object-cover rounded-xl" />
+          <img v-if="(j.image_url || j.jaquette_url) && !imgErr[j.id]" :src="j.image_url || j.jaquette_url" class="w-full h-full object-cover rounded-xl" @error="imgErr[j.id] = true" />
           <Gamepad2 v-else class="w-10 h-10 text-txt-dim" />
         </div>
         <p class="font-medium text-sm truncate w-full max-w-full">{{ j.titre }}</p>
@@ -42,7 +43,7 @@
             <option :value="null">Choisir une console</option>
             <option v-for="c in consolesList" :key="c.id" :value="c.id">{{ c.nom }}</option>
           </select>
-          <input v-model="form.jaquette_url" placeholder="URL jaquette (optionnel)" class="input-field" />
+          <input v-model="form.jaquette_url" placeholder="URL image / jaquette (optionnel)" class="input-field" />
           <div class="flex gap-3">
             <button @click="showAdd = false; editingJeu = null" class="btn-neon-outline flex-1">Annuler</button>
             <button @click="saveJeu" :disabled="!form.titre" class="btn-neon-violet flex-1">{{ editingJeu ? 'Modifier' : 'Créer' }}</button>
@@ -70,6 +71,8 @@ const loading = ref(true)
 const showAdd = ref(false)
 const editingJeu = ref(null)
 const form = reactive({ titre: '', genre: '', console_id: null, jaquette_url: '' })
+// Fallback image : par jeu, si l'URL ne charge pas -> icône manette.
+const imgErr = reactive<Record<number, boolean>>({})
 
 function consoleName(id) { return consolesList.value.find(c => c.id === id)?.nom || 'N/A' }
 

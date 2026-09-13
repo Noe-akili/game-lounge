@@ -304,6 +304,13 @@ async fn consoles_create(
         row.insert("type".into(), json!(r#type));
         row.insert("poste_numero".into(), json!(poste_numero));
         row.insert("etat".into(), json!(etat.unwrap_or_else(|| "disponible".into())));
+        // Image de couverture (URL) — visuel principal des cartes (item 6).
+        row.insert(
+            "image_url".into(),
+            json!(body.get("image_url").and_then(Value::as_str)
+                .map(|u| validators::sanitize_input(u, 500))
+                .filter(|u| !u.is_empty())),
+        );
         row.insert("created_at".into(), json!(now_iso()));
         db(&state).insert("consoles", &row)
     })();
@@ -345,6 +352,9 @@ async fn consoles_update(
         }
         if let Some(etat) = body.get("etat").and_then(Value::as_str) {
             updates.insert("etat".into(), json!(validators::sanitize_input(etat, 50)));
+        }
+        if let Some(u) = body.get("image_url").and_then(Value::as_str) {
+            updates.insert("image_url".into(), if u.is_empty() { json!(Value::Null) } else { json!(validators::sanitize_input(u, 500)) });
         }
         db(&state).update("consoles", id, &updates)
     })();
@@ -439,6 +449,14 @@ async fn jeux_create(
         row.insert("genre".into(), json!(genre.as_deref().map(|g| validators::sanitize_input(g, 50))));
         row.insert("console_id".into(), json!(console_id));
         row.insert("jaquette_url".into(), json!(jaquette_url.as_deref().map(|u| validators::sanitize_input(u, 500))));
+        // image_url unifiée (item 6) : accepte image_url ou jaquette_url.
+        row.insert(
+            "image_url".into(),
+            json!(body.get("image_url").or_else(|| body.get("jaquette_url"))
+                .and_then(Value::as_str)
+                .map(|u| validators::sanitize_input(u, 500))
+                .filter(|u| !u.is_empty())),
+        );
         row.insert("actif".into(), json!(1));
         row.insert("created_at".into(), json!(now_iso()));
         db(&state).insert("jeux", &row)
@@ -483,6 +501,10 @@ async fn jeux_update(
         }
         if let Some(u) = body.get("jaquette_url").and_then(Value::as_str) {
             updates.insert("jaquette_url".into(), if u.is_empty() { json!(Value::Null) } else { json!(validators::sanitize_input(u, 500)) });
+        }
+        // image_url unifiée (item 6) : accepte image_url ou jaquette_url.
+        if let Some(u) = body.get("image_url").or_else(|| body.get("jaquette_url")).and_then(Value::as_str) {
+            updates.insert("image_url".into(), if u.is_empty() { json!(Value::Null) } else { json!(validators::sanitize_input(u, 500)) });
         }
         db(&state).update("jeux", id, &updates)
     })();
@@ -582,6 +604,13 @@ async fn joueurs_create(
         row.insert("jetons_solde".into(), json!(0));
         row.insert("date_inscription".into(), json!(now_iso()));
         row.insert("derniere_visite".into(), json!(Value::Null));
+        // Sticker/icône du joueur (emoji ou URL courte) — item 6.
+        row.insert(
+            "sticker".into(),
+            json!(body.get("sticker").and_then(Value::as_str)
+                .map(|s| validators::sanitize_input(s, 16))
+                .filter(|s| !s.is_empty())),
+        );
         db(&state).insert("joueurs", &row)
     })();
     reply(result)
@@ -624,6 +653,9 @@ async fn joueurs_update(
                 return Err(ApiError::bad_request("Jetons invalides"));
             }
             updates.insert("jetons_solde".into(), json!(js));
+        }
+        if let Some(s) = body.get("sticker").and_then(Value::as_str) {
+            updates.insert("sticker".into(), if s.is_empty() { json!(Value::Null) } else { json!(validators::sanitize_input(s, 16)) });
         }
         db(&state).update("joueurs", id, &updates)
     })();
@@ -2241,6 +2273,26 @@ async fn users_create(
             return Err(ApiError::bad_request("Rôle invalide"));
         }
         let d = db(&state);
+        // FIX utilisateurs fantômes (comme l'app Tauri) : réactive une ligne
+        // soft-deleted au lieu d'échouer sur UNIQUE(email) -> plus de batch de
+        // sync perdu ni de compte fantôme côté cloud.
+        if let Some(prev) = d.find_one_all("users", |u| {
+            u.get("email").and_then(Value::as_str) == Some(email)
+                && u.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1
+        })? {
+            let prev_id = prev.get("id").and_then(Value::as_i64).unwrap_or(0);
+            if prev_id > 0 {
+                let hash = auth::hash_password(password)?;
+                let mut upd = jmap();
+                upd.insert("deleted".into(), json!(0));
+                upd.insert("password_hash".into(), json!(hash));
+                upd.insert("nom".into(), json!(validators::sanitize_input(nom, 50)));
+                upd.insert("role".into(), json!(role));
+                upd.insert("created_at".into(), json!(now_iso()));
+                let revived = d.update("users", prev_id, &upd)?;
+                return Ok(to_public(&revived));
+            }
+        }
         if d.find_one("users", |u| u.get("email").and_then(Value::as_str) == Some(email))?.is_some() {
             return Err(ApiError::new(409, "Email déjà utilisé"));
         }

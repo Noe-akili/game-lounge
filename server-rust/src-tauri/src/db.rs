@@ -28,11 +28,11 @@ pub const TABLES: [&str; 11] = [
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, nom TEXT, role TEXT DEFAULT 'employe', created_at TEXT, deleted INTEGER DEFAULT 0);
-CREATE TABLE IF NOT EXISTS consoles (id INTEGER PRIMARY KEY, nom TEXT, type TEXT, etat TEXT DEFAULT 'disponible', poste_numero INTEGER, date_ajout TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
-CREATE TABLE IF NOT EXISTS jeux (id INTEGER PRIMARY KEY, titre TEXT, genre TEXT, console_id INTEGER, actif INTEGER DEFAULT 1, jaquette_url TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS joueurs (id INTEGER PRIMARY KEY, nom TEXT, telephone TEXT, email TEXT, jetons_solde INTEGER DEFAULT 0, date_inscription TEXT, derniere_visite TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS consoles (id INTEGER PRIMARY KEY, nom TEXT, type TEXT, etat TEXT DEFAULT 'disponible', poste_numero INTEGER, date_ajout TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS sessions_jeu (id INTEGER PRIMARY KEY, console_id INTEGER, joueur_id INTEGER, jeu_id INTEGER, employe_id INTEGER, tarif_id INTEGER, debut TEXT, fin TEXT, duree_minutes INTEGER, duree_secondes INTEGER DEFAULT 0, duree_allouee INTEGER DEFAULT 60, montant INTEGER, tarif_prix INTEGER, jetons_gagnes INTEGER DEFAULT 0, statut TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS tarifs (id INTEGER PRIMARY KEY, nom TEXT, type TEXT, prix INTEGER, duree_minutes INTEGER, description TEXT, actif INTEGER DEFAULT 1, console_type TEXT, jeu TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS jeux (id INTEGER PRIMARY KEY, titre TEXT, genre TEXT, console_id INTEGER, actif INTEGER DEFAULT 1, jaquette_url TEXT, image_url TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS factures (id INTEGER PRIMARY KEY, numero_facture TEXT UNIQUE, session_id INTEGER, joueur_id INTEGER, montant_ht REAL, taux_tva REAL DEFAULT 20, montant_tva REAL, montant_ttc REAL, mode_paiement TEXT, statut TEXT, date_paiement TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS jetons_transactions (id INTEGER PRIMARY KEY, joueur_id INTEGER, quantite INTEGER, type TEXT, raison TEXT, session_id INTEGER, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, titre TEXT, contenu TEXT, auteur TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
@@ -68,6 +68,15 @@ ALTER TABLE parametres_fidelite ADD COLUMN deleted INTEGER DEFAULT 0; \
 ALTER TABLE lignes_facture ADD COLUMN deleted INTEGER DEFAULT 0; \
 ALTER TABLE hangouts ADD COLUMN deleted INTEGER DEFAULT 0;";
 
+/// Visuels des entités (item 6) + fix utilisateurs fantômes : colonnes
+/// sticker/image_url et index unique partiel sur les utilisateurs vivants.
+const IMAGE_COLUMNS_MIGRATION: &str = "\
+ALTER TABLE joueurs ADD COLUMN sticker TEXT; \
+ALTER TABLE consoles ADD COLUMN image_url TEXT; \
+ALTER TABLE jeux ADD COLUMN image_url TEXT; \
+DROP INDEX IF EXISTS idx_users_email_alive; \
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_alive ON users(email) WHERE COALESCE(deleted, 0) = 0;";
+
 /// Base SQLite partagée + dirty set des tables modifiées localement.
 /// Une table ABSENTE du dirty set est considérée dirty (première sync = push complet).
 /// Le 3e champ est le canal de réveil : chaque écriture locale prévient le worker de
@@ -76,6 +85,7 @@ pub struct Db(
     pub Mutex<Connection>,
     pub Mutex<std::collections::HashMap<String, bool>>,
     pub Mutex<Option<tokio::sync::mpsc::UnboundedSender<()>>>,
+    pub Mutex<Option<crate::db_notify::ChangeCallback>>,
 );
 
 /// Horodatage ISO 8601 avec millisecondes, comme `new Date().toISOString()` en JS.
@@ -255,6 +265,9 @@ impl Db {
         );
         // Soft-delete : colonne deleted sur les bases existantes (idempotent, erreurs ignorées)
         let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
+        // Colonnes visuels (sticker joueur, image console/jeu) + index unique
+        // partiel sur users (fix utilisateurs fantômes). Idempotent.
+        let _ = conn.execute_batch(IMAGE_COLUMNS_MIGRATION);
         // Durée allouée par le tarif (sessions créées avant cette version) :
         // c'est elle qui déclenche l'expiration automatique. Idempotent.
         let _ = conn.execute_batch("ALTER TABLE sessions_jeu ADD COLUMN duree_allouee INTEGER DEFAULT 60;");
@@ -277,7 +290,7 @@ impl Db {
         apply_pragmas(&conn);
         // Test écriture immédiate pour détecter disque plein / permission early
         let _ = conn.execute_batch("CREATE TABLE IF NOT EXISTS __healthcheck (id INTEGER PRIMARY KEY); DROP TABLE IF EXISTS __healthcheck;");
-        Ok(Db(Mutex::new(conn), Mutex::new(std::collections::HashMap::new()), Mutex::new(None)))
+        Ok(Db(Mutex::new(conn), Mutex::new(std::collections::HashMap::new()), Mutex::new(None), Mutex::new(None)))
     }
 
     /// Fallback en mémoire si le fichier est inaccessible (permissions Android, disque plein).
@@ -291,8 +304,8 @@ impl Db {
             "ALTER TABLE consoles ADD COLUMN created_at TEXT; \
              ALTER TABLE consoles ADD COLUMN date_ajout TEXT; \
              ALTER TABLE joueurs ADD COLUMN derniere_visite TEXT; \
-             ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER;",
-        );            let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
+             ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER;",            );            let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
+        let _ = conn.execute_batch(IMAGE_COLUMNS_MIGRATION);
         let _ = conn.execute_batch("ALTER TABLE sessions_jeu ADD COLUMN duree_allouee INTEGER DEFAULT 60;");
         let _ = conn.execute_batch("ALTER TABLE sessions_jeu ADD COLUMN duree_secondes INTEGER DEFAULT 0;");
         let _ = conn.execute_batch(
@@ -304,7 +317,7 @@ impl Db {
              INSERT OR REPLACE INTO app_settings (key, value) VALUES ('sessions_seconds_seed_v1', '1');",
         );
         apply_pragmas(&conn);
-        Ok(Db(Mutex::new(conn), Mutex::new(std::collections::HashMap::new()), Mutex::new(None)))
+        Ok(Db(Mutex::new(conn), Mutex::new(std::collections::HashMap::new()), Mutex::new(None), Mutex::new(None)))
     }
 
     /// `SELECT * FROM {table}` avec filtre WHERE optionnel (comme le backend JS).
@@ -902,6 +915,58 @@ impl Db {
     /// Insère un enregistrement. Si un `id` est fourni, INSERT OR REPLACE (comme db.ts).
     /// L'écriture de la donnée ET l'événement sync_outbox sont dans la même
     /// transaction : aucune modification locale ne peut être perdue par la sync.
+    /// Snapshot léger d'une ligne juste écrite (pour les notifications UI).
+    /// Ne garde que les colonnes utiles à l'affichage — jamais de hash.
+    fn snapshot_row(conn: &rusqlite::Connection, table: &str, id: i64) -> Value {
+        let mut stmt = match conn.prepare(&format!("SELECT * FROM \"{table}\" WHERE id=?")) {
+            Ok(s) => s,
+            Err(_) => return Value::Null,
+        };
+        let mut rows = match stmt.query_map([id], |r| row_to_value(r)) {
+            Ok(r) => r,
+            Err(_) => return Value::Null,
+        };
+        let full = rows.next().and_then(|r| r.ok()).unwrap_or(Value::Null);
+        let obj = match full.as_object() {
+            Some(o) => o,
+            None => return Value::Null,
+        };
+        let mut out = serde_json::Map::new();
+        out.insert("id".into(), json!(id));
+        for k in ["nom", "titre", "numero_facture", "email", "montant", "montant_ttc", "tarif_prix", "statut", "joueur_nom", "console_nom", "jeu_nom"] {
+            if let Some(v) = obj.get(k) {
+                out.insert(k.into(), v.clone());
+            }
+        }
+        Value::Object(out)
+    }
+
+    /// Notifie les changements de données à l'UI (cloche du header). Appelé
+    /// APRÈS commit — n'affecte jamais la transaction de données elle-même.
+    fn notify_change(&self, table: &str, operation: &str, row: Value) {
+        if let Some(tx) = self.2.lock().ok().and_then(|g| g.clone()) {
+            let _ = tx.send(());
+        }
+        if let Some(cb) = self.3.lock().ok().and_then(|g| g.clone()) {
+            cb(table, operation, row);
+        }
+    }
+
+    /// Notification pour un changement appliqué par la sync delta (venu des
+    /// AUTRES appareils) : lit le snapshot APRÈS écriture puis notifie l'UI.
+    /// La sync initiale n'appelle PAS ceci (téléchargement massif, pas une
+    /// actualité) — seul le delta produit des notifications.
+    pub fn notify_remote_change(&self, table: &str, operation: &str, id: i64) {
+        let snap = {
+            let conn = match self.0.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            Self::snapshot_row(&*conn, table, id)
+        };
+        self.notify_change(table, operation, snap);
+    }
+
     pub fn insert(&self, table: &str, data: &Map<String, Value>) -> ApiResult<Value> {
         let conn = match self.0.lock() {
             Ok(g) => g,
@@ -939,9 +1004,11 @@ impl Db {
         let mut out = data.clone();
         out.insert("id".into(), json!(row_id));
         self.enqueue_outbox(&*tx, "INSERT", table, row_id, &Value::Object(out.clone()))?;
+        let snap = Self::snapshot_row(&*tx, table, row_id);
         tx.commit()
             .map_err(|e| ApiError::internal(format!("Commit insert {table}: {e}")))?;
         self.mark_dirty(table);
+        self.notify_change(table, "INSERT", snap);
         Ok(Value::Object(out))
     }
 
@@ -987,6 +1054,7 @@ impl Db {
         tx.commit()
             .map_err(|e| ApiError::internal(format!("Commit update {table}: {e}")))?;
         self.mark_dirty(table);
+        self.notify_change(table, "UPDATE", row.clone());
         Ok(row)
     }
 
@@ -1015,6 +1083,7 @@ impl Db {
         tx.commit()
             .map_err(|e| ApiError::internal(format!("Commit delete {table}: {e}")))?;
         self.mark_dirty(table);
+        self.notify_change(table, "DELETE", json!({ "id": id }));
         Ok(())
     }
 

@@ -37,10 +37,33 @@
           <p class="text-sm font-medium font-gaming">{{ currentTime }}</p>
           <p class="text-[10px] text-txt-dim">{{ currentDate }}</p>
         </div>
-        <button class="relative p-2 rounded-xl hover:bg-bg-hover text-txt-dim transition-colors">
-          <Bell class="w-5 h-5" />
-          <span class="absolute top-1 right-1 w-2 h-2 bg-neon-red rounded-full"></span>
-        </button>
+        <!-- Cloche : changements des AUTRES appareils (db-change, émis par Rust
+             même hors écran / en arrière-plan). Dropdown avec badge non-lus. -->
+        <div class="relative" ref="bellWrap">
+          <button @click="toggleBell" class="relative p-2 rounded-xl hover:bg-bg-hover text-txt-dim transition-colors">
+            <Bell class="w-5 h-5" />
+            <span v-if="notif.unread > 0" class="absolute top-0.5 right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-neon-red text-white text-[9px] font-bold flex items-center justify-center">{{ notif.unread > 9 ? '9+' : notif.unread }}</span>
+            <span v-else class="absolute top-1 right-1 w-2 h-2 bg-neon-red/40 rounded-full"></span>
+          </button>
+          <transition enter-active-class="transition duration-150" enter-from-class="opacity-0 -translate-y-1" leave-active-class="transition duration-100" leave-to-class="opacity-0">
+            <div v-if="bellOpen" class="absolute right-0 mt-2 w-80 max-w-[90vw] bg-bg-surface border border-white/10 rounded-xl shadow-xl z-50 overflow-hidden">
+              <div class="flex items-center justify-between px-3 py-2 border-b border-white/5">
+                <span class="font-gaming text-sm font-bold">Notifications</span>
+                <button @click="notif.clear()" class="text-xs text-txt-dim hover:text-txt-base">Tout effacer</button>
+              </div>
+              <div class="max-h-72 overflow-auto">
+                <div v-for="n in notif.items" :key="n.id" class="px-3 py-2 border-b border-white/5 hover:bg-bg-hover" :class="{ 'bg-neon-violet/5': !n.read }">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-sm font-medium truncate">{{ n.title }}</span>
+                    <span class="text-[10px] text-txt-dim shrink-0">{{ notifTime(n.ts) }}</span>
+                  </div>
+                  <p class="text-xs text-txt-dim truncate">{{ n.body }}</p>
+                </div>
+                <div v-if="notif.items.length === 0" class="px-3 py-6 text-center text-xs text-txt-dim">Aucune notification</div>
+              </div>
+            </div>
+          </transition>
+        </div>
       </div>
     </div>
   </header>
@@ -53,6 +76,7 @@ import { Menu, X, Bell, Cloud, RefreshCw } from 'lucide-vue-next'
 import { api } from '@/utils/api'
 import { useAuthStore } from '@/stores/auth'
 import { useSyncStore, PHASE_LABELS } from '@/stores/sync'
+import { useNotifStore } from '@/stores/notifications'
 
 defineProps({ sidebarOpen: Boolean })
 defineEmits(['toggleSidebar'])
@@ -60,6 +84,25 @@ defineEmits(['toggleSidebar'])
 const route = useRoute()
 const auth = useAuthStore()
 const sync = useSyncStore()
+const notif = useNotifStore()
+const bellOpen = ref(false)
+const bellWrap = ref<HTMLElement | null>(null)
+
+function toggleBell() {
+  bellOpen.value = !bellOpen.value
+  if (bellOpen.value) notif.markAllRead()
+}
+
+function onDocClick(e: MouseEvent) {
+  if (bellWrap.value && !bellWrap.value.contains(e.target as Node)) bellOpen.value = false
+}
+
+function notifTime(ts: string) {
+  try {
+    return new Date(ts).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+  } catch { return '' }
+}
+
 const now = ref(new Date())
 let timer = null
 let syncTimer = null
@@ -81,8 +124,10 @@ onMounted(() => {
   checkSync()
   syncTimer = setInterval(checkSync, 30000)
   sync.bindListeners() // événements Rust sync-progress etc. (delta sync visible)
+  notif.bind() // événements Rust db-change (cloche multi-appareils)
+  document.addEventListener('click', onDocClick)
 })
-onUnmounted(() => { clearInterval(timer); clearInterval(syncTimer) })
+onUnmounted(() => { clearInterval(timer); clearInterval(syncTimer); document.removeEventListener('click', onDocClick) })
 
 // Badge delta sync : "↻ Sync" pendant un delta, "N changements" restants, "⚠" en erreur.
 const syncBadgeVisible = computed(() => sync.isBusy || sync.status === 'error')

@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod commands;
 pub mod db;
+pub mod db_notify;
 pub mod error;
 pub mod logger;
 pub mod supabase;
@@ -277,6 +278,10 @@ pub fn run() {
             // session dont le temps est écoulé et notifie l'appareil (Android).
             if let Some(state) = app.handle().try_state::<AppState>() {
                 let handle = app.handle().clone();
+                // Cloche + notifications Android : chaque écriture de données
+                // (locale ou reçue par la sync des AUTRES appareils) émet
+                // "db-change" au WebView, même hors écran / en arrière-plan.
+                crate::db_notify::attach(handle.clone(), &state.db);
                 crate::session_watcher::start(handle, state.db.clone());
             }
             #[cfg(target_os = "android")]

@@ -8,15 +8,22 @@
   >
     <motion.div class="absolute top-0 left-0 w-full h-1" :class="statusBarColor" :animate="isOccupied ? { opacity: [1, 0.6, 1] } : {}" :transition="{ duration: 1.5, repeat: Infinity }" />
 
-    <div class="flex items-center justify-between gap-2 mb-3 min-w-0">
+    <!-- Image de couverture (item 6) : visuel principal en arrière-plan, texte
+         lisible par-dessus via un dégradé ; fallback icône si absente/invalide. -->
+    <div v-if="console.image_url" class="absolute inset-0 z-0">
+      <img :src="console.image_url" alt="" class="w-full h-full object-cover" @error="imgFailed = true" v-show="!imgFailed" />
+      <div class="absolute inset-0 bg-gradient-to-t from-bg via-bg/80 to-bg/30"></div>
+    </div>
+
+    <div class="relative z-10 flex items-center justify-between gap-2 mb-3 min-w-0">
       <div class="flex items-center gap-2 min-w-0 flex-1">
-        <Monitor class="w-5 h-5 shrink-0" :class="statusIconColor" />
+        <Monitor v-if="imgFailed || !console.image_url" class="w-5 h-5 shrink-0" :class="statusIconColor" />
         <h3 class="font-gaming font-bold text-txt truncate min-w-0">{{ console.nom }}</h3>
       </div>
       <span class="badge shrink-0" :class="statusBadgeClass">{{ statusLabel }}</span>
     </div>
 
-    <p class="text-xs text-txt-dim mb-3 truncate">Poste {{ console.poste_numero }} — {{ console.type }}</p>
+    <p class="relative z-10 text-xs text-txt-dim mb-3 truncate">Poste {{ console.poste_numero }} — {{ console.type }}</p>
 
     <div v-if="isActive" class="mb-4 space-y-2 min-w-0">
       <div class="flex items-center gap-2 min-w-0">
@@ -109,6 +116,9 @@ defineEmits(['start', 'pause', 'resume', 'end'])
 
 // Chrono temps réel partagé (LiveSessionTimer expose elapsedSeconds/restant).
 const liveTimer = ref(null)
+// Image de couverture : si l'URL échoue à charger, on retire l'img du DOM
+// (fallback propre -> carte classique avec icône).
+const imgFailed = ref(false)
 const elapsed = computed(() => liveTimer.value?.elapsedSeconds ?? 0)
 const restant = computed(() => liveTimer.value?.restant ?? 0)
 const depasse = computed(() => liveTimer.value?.depasse ?? false)

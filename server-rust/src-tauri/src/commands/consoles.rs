@@ -96,6 +96,7 @@ pub fn consoles_create(
     r#type: String,
     poste_numero: i64,
     etat: Option<String>,
+    image_url: Option<String>,
 ) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
     admin_only(&user)?;
@@ -119,6 +120,13 @@ pub fn consoles_create(
         "etat".into(),
         json!(etat.unwrap_or_else(|| "disponible".into())),
     );
+    // Image de couverture de la console (URL) — visuel principal des cartes.
+    row.insert(
+        "image_url".into(),
+        json!(image_url
+            .map(|u| validators::sanitize_input(&u, 500))
+            .filter(|u| !u.is_empty())),
+    );
     let now = now_iso();
     row.insert("created_at".into(), json!(now.clone()));
     row.insert("date_ajout".into(), json!(now));
@@ -135,6 +143,7 @@ pub fn consoles_update(
     r#type: Option<String>,
     poste_numero: Option<i64>,
     etat: Option<String>,
+    image_url: Option<String>,
 ) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
     admin_only(&user)?;
@@ -163,6 +172,17 @@ pub fn consoles_update(
     }
     if let Some(etat) = etat {
         updates.insert("etat".into(), json!(validators::sanitize_input(&etat, 50)));
+    }
+    // Image : chaîne vide = retirer le visuel.
+    if let Some(u) = image_url {
+        updates.insert(
+            "image_url".into(),
+            json!(if u.is_empty() {
+                Value::Null
+            } else {
+                json!(validators::sanitize_input(&u, 500))
+            }),
+        );
     }
     db(&state).update("consoles", id, &updates)
 }

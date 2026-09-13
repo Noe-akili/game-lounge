@@ -458,6 +458,41 @@ pub async fn ensure_deleted_columns(pool: &SupabasePool) {
     if let Err(e) = supabase_batch_execute(pool, sql).await {
         eprintln!("[supabase] ensure duree_secondes failed: {}", e);
     }
+    // Visuels des entités (item 6) : sticker joueur + image console/jeu.
+    for sql in [
+        "ALTER TABLE \"joueurs\" ADD COLUMN IF NOT EXISTS sticker TEXT",
+        "ALTER TABLE \"consoles\" ADD COLUMN IF NOT EXISTS image_url TEXT",
+        "ALTER TABLE \"jeux\" ADD COLUMN IF NOT EXISTS image_url TEXT",
+    ] {
+        if let Err(e) = supabase_batch_execute(pool, sql).await {
+            eprintln!("[supabase] ensure image columns failed: {}", e);
+        }
+    }
+    // FIX utilisateurs fantômes : l'unicité email ne doit s'appliquer qu'aux
+    // lignes VIVANTES. Avec UNIQUE(email) simple, recréer un utilisateur
+    // supprimé faisait échouer le push (batch entier perdu) ou bloquait la
+    // recréation locale. Nécessite le privilège CREATE INDEX (owner/postgres).
+    if let Err(e) = supabase_batch_execute(
+        pool,
+        "DROP INDEX IF EXISTS idx_users_email_alive; CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_alive ON \"users\" (email) WHERE COALESCE(deleted, 0) = 0",
+    )
+    .await
+    {
+        crate::logger::log_cloud(&format!("ensure idx_users_email_alive failed (à exécuter manuellement dans l'éditeur SQL Supabase): {}", e));
+    }
+    // RLS : la table journal est écrite par les appareils (service postgres).
+    // Les tables métier restent accessibles via la connexion postgres ; on
+    // documente les politiques attendues si RLS est activé sur le projet.
+    if let Err(e) = supabase_batch_execute(
+        pool,
+        "ALTER TABLE \"sync_changes\" ENABLE ROW LEVEL SECURITY; \
+         DROP POLICY IF EXISTS sync_changes_all ON \"sync_changes\"; \
+         CREATE POLICY sync_changes_all ON \"sync_changes\" FOR ALL USING (true) WITH CHECK (true)",
+    )
+    .await
+    {
+        crate::logger::log_cloud(&format!("ensure sync_changes RLS failed: {}", e));
+    }
 }
 
 // ===== MOTEUR DELTA SYNC (étapes 2-4 de ~/mod.md) =====

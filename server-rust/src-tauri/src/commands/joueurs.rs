@@ -52,6 +52,7 @@ pub fn joueurs_create(
     nom: String,
     telephone: Option<String>,
     email: Option<String>,
+    sticker: Option<String>,
 ) -> ApiResult<Value> {
     claims(&state, &token)?;
     if nom.is_empty() {
@@ -87,6 +88,11 @@ pub fn joueurs_create(
     row.insert("jetons_solde".into(), json!(0));
     row.insert("date_inscription".into(), json!(now_iso()));
     row.insert("derniere_visite".into(), json!(Value::Null));
+    // Sticker/icône du joueur (emoji ou URL courte) — affiché sur les cartes.
+    row.insert(
+        "sticker".into(),
+        json!(sticker.map(|s| validators::sanitize_input(&s, 16)).filter(|s| !s.is_empty())),
+    );
     db(&state).insert("joueurs", &row)
 }
 
@@ -100,6 +106,7 @@ pub fn joueurs_update(
     telephone: Option<String>,
     email: Option<String>,
     jetons_solde: Option<Option<i64>>,
+    sticker: Option<String>,
 ) -> ApiResult<Value> {
     claims(&state, &token)?;
     if !validators::is_valid_id(id) {
@@ -144,6 +151,17 @@ pub fn joueurs_update(
             }
             updates.insert("jetons_solde".into(), json!(js));
         }
+    }
+    // Sticker : chaîne vide = retirer le visuel.
+    if let Some(s) = sticker {
+        updates.insert(
+            "sticker".into(),
+            json!(if s.is_empty() {
+                Value::Null
+            } else {
+                json!(validators::sanitize_input(&s, 16))
+            }),
+        );
     }
     db(&state).update("joueurs", id, &updates)
 }

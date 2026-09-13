@@ -23,8 +23,10 @@
 
     <div v-else class="space-y-2 w-full max-w-full min-w-0 overflow-hidden">
       <div v-for="j in joueurs" :key="j.id" class="card flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden flex-wrap hover:border-neon-violet/20 transition-colors cursor-pointer" @click="viewJoueur(j)">
-        <div class="w-11 h-11 rounded-full bg-neon-violet/20 flex items-center justify-center text-neon-violet font-bold shrink-0">
-          {{ j.nom?.charAt(0) }}
+        <!-- Sticker/icône du joueur (item 6) : emoji choisi, fallback initiale. -->
+        <div class="w-11 h-11 rounded-full bg-neon-violet/20 flex items-center justify-center text-neon-violet font-bold shrink-0 overflow-hidden">
+          <span v-if="j.sticker" class="text-xl leading-none">{{ j.sticker }}</span>
+          <template v-else>{{ j.nom?.charAt(0) }}</template>
         </div>
         <div class="flex-1 min-w-0 overflow-hidden">
           <p class="font-medium truncate">{{ j.nom }}</p>
@@ -51,6 +53,16 @@
           <input v-model="form.nom" placeholder="Nom complet" class="input-field" />
           <input v-model="form.telephone" placeholder="Téléphone" class="input-field" />
           <input v-model="form.email" placeholder="Email (optionnel)" class="input-field" />
+          <div>
+            <label class="text-sm text-txt-muted">Sticker / icône (optionnel)</label>
+            <div class="flex items-center gap-2">
+              <input v-model="form.sticker" placeholder="Emoji ex: 🎮" maxlength="4" class="input-field flex-1" />
+              <div class="flex gap-1">
+                <button v-for="e in ['🎮','👾','🕹️','🎯','🏆','⚡','🔥','⭐']" :key="e" type="button" @click="form.sticker = e"
+                  class="w-8 h-8 rounded-lg bg-bg-surface hover:bg-bg-hover text-lg flex items-center justify-center">{{ e }}</button>
+              </div>
+            </div>
+          </div>
           <div v-if="editingJoueur">
             <label class="text-sm text-txt-muted">Jetons</label>
             <input v-model.number="form.jetons_solde" type="number" class="input-field" />
@@ -66,8 +78,9 @@
     <Modal :open="showDetail" @close="showDetail = false" size="lg">
       <div class="p-6" v-if="detailJoueur">
         <div class="flex flex-col sm:flex-row sm:items-center gap-4 mb-6 w-full max-w-full min-w-0 overflow-hidden">
-          <div class="w-14 h-14 rounded-full bg-neon-violet/20 flex items-center justify-center text-neon-violet font-bold text-xl shrink-0">
-            {{ detailJoueur.nom?.charAt(0) }}
+          <div class="w-14 h-14 rounded-full bg-neon-violet/20 flex items-center justify-center text-neon-violet font-bold text-xl shrink-0 overflow-hidden">
+            <span v-if="detailJoueur.sticker" class="text-2xl leading-none">{{ detailJoueur.sticker }}</span>
+            <template v-else>{{ detailJoueur.nom?.charAt(0) }}</template>
           </div>
           <div class="flex-1 min-w-0 overflow-hidden">
             <h3 class="font-gaming text-xl font-bold truncate">{{ detailJoueur.nom }}</h3>
@@ -125,7 +138,7 @@ const editingJoueur = ref(null)
 const showDetail = ref(false)
 const detailJoueur = ref(null)
 const detailData = ref({})
-const form = reactive({ nom: '', telephone: '', email: '', jetons_solde: 0 })
+const form = reactive({ nom: '', telephone: '', email: '', jetons_solde: 0, sticker: '' })
 
 let timeout = null
 function onSearch() {
@@ -143,7 +156,7 @@ async function fetchData() {
 
 function closeForm() { showAdd.value = false; editingJoueur.value = null }
 
-function editJoueur(j) { editingJoueur.value = j.id; form.nom = j.nom; form.telephone = j.telephone; form.email = j.email; form.jetons_solde = j.jetons_solde || 0; showAdd.value = false }
+function editJoueur(j) { editingJoueur.value = j.id; form.nom = j.nom; form.telephone = j.telephone; form.email = j.email; form.jetons_solde = j.jetons_solde || 0; form.sticker = j.sticker || ''; showAdd.value = false }
 
 async function viewJoueur(j) {
   detailJoueur.value = j
@@ -160,8 +173,8 @@ async function saveJoueur() {
   if (form.email) form.email = sanitizeInput(form.email, 100)
   try {
     if (editingJoueur.value) { await api.put(`/joueurs/${editingJoueur.value}`, { ...form }); toast.success('Joueur modifié') }
-    else { await api.post('/joueurs', { nom: form.nom, telephone: form.telephone, email: form.email }); toast.success('Joueur créé') }
-    closeForm(); form.nom = ''; form.telephone = ''; form.email = ''; form.jetons_solde = 0
+    else { await api.post('/joueurs', { nom: form.nom, telephone: form.telephone, email: form.email, sticker: form.sticker }); toast.success('Joueur créé') }
+    closeForm(); form.nom = ''; form.telephone = ''; form.email = ''; form.jetons_solde = 0; form.sticker = ''
     fetchData()
   } catch (e) { toast.error(e.message) }
 }

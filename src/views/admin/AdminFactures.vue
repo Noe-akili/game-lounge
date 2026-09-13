@@ -61,10 +61,24 @@
 
     <Modal :open="showDetail" @close="showDetail = false" size="lg">
       <div class="p-6" v-if="selected">
-        <div class="flex items-center justify-between mb-6">
-          <h3 class="font-gaming text-xl font-bold">Facture {{ selected.numero_facture }}</h3>
-          <span class="badge" :class="statusBadge(selected.statut)">{{ statusLabel(selected.statut) }}</span>
+        <!-- EN-TÊTE : titre + badge + actions secondaires (Modifier / Fermer) -->
+        <div class="flex items-center justify-between gap-3 mb-6">
+          <div class="flex items-center gap-3 min-w-0">
+            <h3 class="font-gaming text-xl font-bold truncate">Facture {{ selected.numero_facture }}</h3>
+            <span class="badge shrink-0" :class="statusBadge(selected.statut)">{{ statusLabel(selected.statut) }}</span>
+          </div>
+          <div class="flex items-center gap-1 shrink-0">
+            <button @click="editFacture(selected); showDetail = false" class="p-2 rounded-lg hover:bg-bg-hover text-txt-dim" title="Modifier">
+              <Pencil class="w-4 h-4" />
+            </button>
+            <button @click="showDetail = false" class="p-2 rounded-lg hover:bg-bg-hover text-txt-dim" title="Fermer">
+              <X class="w-5 h-5" />
+            </button>
+          </div>
         </div>
+
+        <!-- CONTENU de la facture (scrollable si long) -->
+        <div class="max-h-[55vh] overflow-y-auto pr-1 min-w-0">
         <div class="grid grid-cols-2 gap-2 sm:gap-4 mb-6 w-full max-w-full min-w-0">
           <div class="space-y-3 min-w-0 overflow-hidden">
             <div class="flex flex-col sm:flex-row sm:justify-between gap-1 min-w-0"><span class="text-txt-dim shrink-0">Joueur</span><span class="truncate min-w-0">{{ selected.joueur_nom }}</span></div>
@@ -101,17 +115,18 @@
           <p v-else class="text-txt-dim text-sm text-center py-3 bg-bg-surface rounded-xl">Aucune ligne</p>
         </div>
 
-        <div class="flex gap-3">
-          <button @click="showDetail = false" class="btn-neon-outline flex-1">Fermer</button>
-          <button @click="downloadPdf(selected)" class="btn-neon-blue flex-1 flex items-center justify-center gap-2">
+        </div><!-- /contenu scrollable -->
+
+        <!-- BARRE D'ACTIONS SÉPARÉE du contenu (item 5) : document d'abord,
+             fermeture discrète à droite. -->
+        <div class="mt-6 pt-4 border-t border-white/10 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          <button @click="downloadPdf(selected)" class="btn-neon-blue sm:flex-1 flex items-center justify-center gap-2">
             <Download class="w-4 h-4" /> Exporter PDF
           </button>
-          <button @click="printPdf(selected)" class="btn-neon-outline flex-1 flex items-center justify-center gap-2">
+          <button @click="printPdf(selected)" class="btn-neon-outline sm:flex-1 flex items-center justify-center gap-2">
             <Printer class="w-4 h-4" /> Imprimer
           </button>
-          <button @click="editFacture(selected); showDetail = false" class="btn-neon-violet flex-1 flex items-center justify-center gap-2">
-            <Pencil class="w-4 h-4" /> Modifier
-          </button>
+          <button @click="showDetail = false" class="btn-neon-outline sm:w-auto px-6">Fermer</button>
         </div>
       </div>
     </Modal>
@@ -202,7 +217,7 @@ import { getFacturePdfBlob, saveFacturePdf } from '@/lib/clientPdf'
 import { formatCurrency, formatDate } from '@/utils/helpers'
 import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
-import { Receipt, Eye, Download, Printer, XCircle, Plus, Pencil, Trash2 } from 'lucide-vue-next'
+import { Receipt, Eye, Download, Printer, XCircle, Plus, Pencil, Trash2, X } from 'lucide-vue-next'
 import Loader from '@/components/ui/Loader.vue'
 import { isValidId, isValidPrix, isValidFactureStatut, isValidModePaiement, isValidQuantite, sanitizeInput } from '@/utils/validators'
 
