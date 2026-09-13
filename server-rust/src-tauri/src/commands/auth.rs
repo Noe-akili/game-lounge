@@ -68,7 +68,23 @@ fn hash_algo(stored: &str) -> &'static str {
 // faussement "Identifiants incorrects" ; déclenche aussi la reconnexion en arrière-plan.
 #[cfg(feature = "supabase-sync")]
 async fn try_supabase_login(app: &tauri::AppHandle, state: &State<'_, AppState>, email: &str, password: &str) -> ApiResult<Option<Value>> {
-    let pool_opt = { state.supabase_pool.lock().ok().and_then(|g| g.clone()) };
+    let mut pool_opt = { state.supabase_pool.lock().ok().and_then(|g| g.clone()) };
+    // Le pool s'initialise 1,5s après le boot PUIS dépend du réseau mobile (peut
+    // prendre 10s+ à monter). Au premier login juste après l'ouverture de l'app il
+    // est donc souvent absent : au lieu d'échouer immédiatement ("Identifiants
+    // incorrects" trompeur), on TENTE une initialisation à la volée (borne 8s par
+    // init_supabase_pool). Résultat mis en cache dans AppState pour les logins suivants.
+    if pool_opt.is_none() {
+        crate::logger::log_auth("supabase: pool absent au login, tentative d'initialisation à la volée...");
+        let init = crate::supabase::init_supabase_pool().await;
+        if let Some(p) = init {
+            crate::logger::log_auth("supabase: pool créé au login");
+            if let Ok(mut guard) = state.supabase_pool.lock() {
+                *guard = Some(p.clone());
+            }
+            pool_opt = Some(p);
+        }
+    }
     let Some(pool) = pool_opt else {
         crate::logger::log_auth("supabase: pool non disponible (offline), skip");
         return Ok(None);
@@ -117,7 +133,9 @@ async fn try_supabase_login(app: &tauri::AppHandle, state: &State<'_, AppState>,
         Err(e) => {
             crate::logger::log_auth(&format!("supabase: fetch error pour {}: {} -> reconnexion", email, e.message));
             crate::supabase::schedule_reconnect(app);
-            Err(ApiError::new(503, "Supabase indisponible (reconnexion en cours), réessayez"))
+            // 503 explicite (PAS "Identifiants incorrects") : l'utilisateur comprend
+            // que c'est le RÉSEAU/le cloud, pas son mot de passe (mission §15 : logs honnêtes).
+            Err(ApiError::new(503, "Connexion au serveur impossible. Vérifiez internet et réessayez."))
         }
     }
 }

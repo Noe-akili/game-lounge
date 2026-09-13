@@ -167,7 +167,7 @@ const router = useRouter()
 const settings = useSettingsStore()
 
 const isAdmin = computed(() => auth.user?.role === 'admin')
-const isDebug = computed(() => auth.isAuthenticated && (auth.user?.email === 'debug@gamelounge.com' || (() => { try { return localStorage.getItem('gl_debug_bypass') === '1' } catch { return false } })()))
+const isDebug = computed(() => auth.isAuthenticated && (auth.isAdmin || auth.user?.email === 'debug@gamelounge.com' || (() => { try { return localStorage.getItem('gl_debug_bypass') === '1' } catch { return false } })()))
 const userInitials = computed(() => {
  const nom = auth.user?.nom || ''
  return nom.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
