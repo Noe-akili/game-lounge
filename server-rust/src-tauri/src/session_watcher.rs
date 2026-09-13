@@ -48,8 +48,10 @@ fn check_expired_sessions(app: &tauri::AppHandle, db: &Db) {
             else {
                 break;
             };
-            // Le chrono = `debut + secondes accumulées (pauses) + allocation
-            // restante`. Une session est expirée si cet instant est passé.
+            // `allouee` est en MINUTES alors que `accumulee` est en SECONDES.
+            // Les comparer directement faisait expirer une session au premier
+            // rafraîchissement (ex. 60 - 0 était lu comme 60 secondes).
+            // Le chrono = début de la période active + secondes restantes.
             let debut_ms = conn
                 .query_row(
                     "SELECT debut FROM sessions_jeu WHERE id = ?1",
@@ -61,7 +63,7 @@ fn check_expired_sessions(app: &tauri::AppHandle, db: &Db) {
                 .map(|d| d.timestamp_millis())
                 .unwrap_or(0);
             let reste_s = if debut_ms > 0 {
-                (debut_ms + (allouee - accumulee).max(0) * 1000 - now_ms) / 1000
+                (debut_ms + (allouee * 60 - accumulee).max(0) * 1000 - now_ms) / 1000
             } else {
                 i64::MAX
             };

@@ -54,10 +54,10 @@
           <input v-model="form.telephone" placeholder="Téléphone" class="input-field" />
           <input v-model="form.email" placeholder="Email (optionnel)" class="input-field" />
           <div>
-            <label class="text-sm text-txt-muted">Sticker / icône (optionnel)</label>
+            <label class="text-sm text-txt-muted">Sticker / icône unique (optionnel)</label>
             <div class="flex items-center gap-2">
-              <input v-model="form.sticker" placeholder="Emoji ex: 🎮" maxlength="4" class="input-field flex-1" />
-              <div class="flex gap-1">
+              <input v-model="form.sticker" placeholder="Choisir une icône ci-contre" readonly class="input-field flex-1" />
+              <div class="flex gap-1" aria-label="Choisir une seule icône">
                 <button v-for="e in ['🎮','👾','🕹️','🎯','🏆','⚡','🔥','⭐']" :key="e" type="button" @click="form.sticker = e"
                   class="w-8 h-8 rounded-lg bg-bg-surface hover:bg-bg-hover text-lg flex items-center justify-center">{{ e }}</button>
               </div>

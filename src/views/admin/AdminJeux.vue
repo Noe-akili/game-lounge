@@ -17,16 +17,18 @@
     </div>
 
     <div v-else class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden">
-      <div v-for="j in jeux" :key="j.id" class="card-hover text-center group w-full max-w-full min-w-0 overflow-hidden flex flex-col">
-        <!-- Image unifiée (item 6) : image_url sinon jaquette, fallback icône. -->
-        <div class="w-20 h-20 mx-auto rounded-xl bg-bg-surface flex items-center justify-center mb-3 overflow-hidden">
-          <img v-if="(j.image_url || j.jaquette_url) && !imgErr[j.id]" :src="j.image_url || j.jaquette_url" class="w-full h-full object-cover rounded-xl" @error="imgErr[j.id] = true" />
-          <Gamepad2 v-else class="w-10 h-10 text-txt-dim" />
+      <div v-for="j in jeux" :key="j.id" class="card-hover relative min-h-44 text-center group w-full max-w-full min-w-0 overflow-hidden flex flex-col justify-end">
+        <img v-if="(j.image_url || j.jaquette_url) && !imgErr[j.id]" :src="j.image_url || j.jaquette_url" :alt="j.titre" class="absolute inset-0 w-full h-full object-cover" @error="imgErr[j.id] = true" />
+        <div class="absolute inset-0 bg-gradient-to-t from-bg via-bg/55 to-transparent"></div>
+        <div class="relative z-10">
+          <div v-if="(!j.image_url && !j.jaquette_url) || imgErr[j.id]" class="w-12 h-12 mx-auto rounded-xl bg-bg-surface/90 flex items-center justify-center mb-3">
+            <Gamepad2 class="w-7 h-7 text-txt-dim" />
+          </div>
+          <p class="font-medium text-sm truncate w-full max-w-full">{{ j.titre }}</p>
+          <p class="text-xs text-txt-dim truncate w-full max-w-full">{{ j.genre }}</p>
+          <p class="text-xs text-txt-dim mt-1 truncate w-full max-w-full">{{ consoleName(j.console_id) }}</p>
         </div>
-        <p class="font-medium text-sm truncate w-full max-w-full">{{ j.titre }}</p>
-        <p class="text-xs text-txt-dim truncate w-full max-w-full">{{ j.genre }}</p>
-        <p class="text-xs text-txt-dim mt-1 truncate w-full max-w-full">{{ consoleName(j.console_id) }}</p>
-        <div class="flex gap-2 mt-3 justify-center opacity-0 group-hover:opacity-100 transition-opacity flex-wrap shrink-0">
+        <div class="relative z-10 flex gap-2 mt-3 justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex-wrap shrink-0">
           <button @click="editJeu(j)" class="p-1.5 rounded-lg hover:bg-bg-hover text-txt-dim"><Pencil class="w-3.5 h-3.5" /></button>
           <button @click="deleteJeu(j.id)" class="p-1.5 rounded-lg hover:bg-neon-red/10 text-neon-red"><Trash2 class="w-3.5 h-3.5" /></button>
         </div>

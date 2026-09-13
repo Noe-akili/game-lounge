@@ -285,13 +285,13 @@ async function startSession() {
   if (!selectedTarif.value) return toast.error('Veuillez choisir un tarif')
   loading.value = true
   try {
-    await api.post('/sessions', {
+    const session = await api.post('/sessions', {
       console_id: selectedConsole.value.id,
       joueur_id: selectedJoueur.value.id,
       jeu_id: selectedJeu.value.id,
       tarif_id: selectedTarif.value.id,
     })
-    emit('started')
+    emit('started', session)
     emit('close')
     toast.success('Session démarrée !')
   } catch (e: any) {

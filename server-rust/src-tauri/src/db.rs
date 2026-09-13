@@ -99,13 +99,15 @@ pub fn today_str() -> String {
 }
 
 /// Session actuellement EN COURS (pour le watcher d'expiration) :
-/// (id, console_id, duree_allouee, duree_minutes). None si aucune session active.
+/// (id, console_id, duree_allouee_en_minutes, secondes_deja_accumulees).
+/// None si aucune session active.
 pub fn find_active_session(
     conn: &rusqlite::Connection,
 ) -> Option<(i64, Option<i64>, i64, i64)> {
     conn.query_row(
         "SELECT id, console_id, COALESCE(duree_allouee, duree_minutes, 60), COALESCE(duree_secondes, duree_minutes * 60, 0) \
-         FROM sessions_jeu WHERE statut = 'en_cours' AND COALESCE(deleted, 0) = 0 LIMIT 1",
+         FROM sessions_jeu WHERE statut = 'en_cours' AND COALESCE(deleted, 0) = 0 \
+         ORDER BY debut ASC LIMIT 1",
         [],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     )

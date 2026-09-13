@@ -10,6 +10,14 @@ on:
       - 'package-lock.json'
       - 'vite.config*.ts'
       - '.github/workflows/build-tauri-apk.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'server-rust/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config*.ts'
+      - '.github/workflows/build-tauri-apk.yml'
   workflow_dispatch:
 
 jobs:
@@ -36,6 +44,11 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Validate Vue frontend
+        run: |
+          npm run type-check
+          npm run build:mobile
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

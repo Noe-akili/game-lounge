@@ -17,14 +17,16 @@
     </div>
 
     <div v-else class="space-y-2 w-full max-w-full min-w-0 overflow-hidden">
-      <div v-for="c in consoles" :key="c.id" class="card relative flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden flex-wrap">
+      <div v-for="c in consoles" :key="c.id" class="card relative min-h-28 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden flex-wrap">
         <!-- Image de couverture (item 6) : arrière-plan + overlay, texte lisible. -->
         <div v-if="c.image_url" class="absolute inset-0 z-0">
           <img :src="c.image_url" alt="" class="w-full h-full object-cover" @error="imgErr[c.id] = true" v-show="!imgErr[c.id]" />
-          <div class="absolute inset-0 bg-gradient-to-r from-bg via-bg/85 to-bg/60"></div>
+          <div class="absolute inset-0 bg-gradient-to-r from-bg via-bg/80 to-bg/35"></div>
         </div>
         <div class="relative z-10 contents">
-        <Monitor class="w-8 h-8 shrink-0" :class="statusColor(c.etat)" />
+        <div class="w-12 h-12 rounded-xl bg-black/35 backdrop-blur-sm flex items-center justify-center shrink-0">
+          <Monitor class="w-7 h-7" :class="statusColor(c.etat)" />
+        </div>
         <div class="flex-1 min-w-0 overflow-hidden">
           <p class="font-medium truncate">{{ c.nom }}</p>
           <p class="text-xs text-txt-dim truncate">{{ c.type }} — Poste {{ c.poste_numero }}</p>

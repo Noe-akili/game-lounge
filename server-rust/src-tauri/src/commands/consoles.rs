@@ -30,6 +30,7 @@ fn enrich(
                 "etat": c["etat"],
                 "poste_numero": c["poste_numero"],
                 "date_ajout": c["date_ajout"],
+                "image_url": c.get("image_url").cloned().unwrap_or(Value::Null),
                 "session_id": session.and_then(|s| s.get("id")).cloned().unwrap_or(Value::Null),
                 "session_statut": session.and_then(|s| s.get("statut")).cloned().unwrap_or(Value::Null),
                 "session_debut": session.and_then(|s| s.get("debut")).cloned().unwrap_or(Value::Null),

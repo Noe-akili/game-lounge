@@ -305,8 +305,23 @@ async function endSession(s) {
   } catch (e) { toast.error(e.message) }
 }
 
-onMounted(() => { fetchData(); fetchRefs(); window.addEventListener('sync-poll', onSyncPoll) })
-onUnmounted(() => window.removeEventListener('sync-poll', onSyncPoll))
+onMounted(() => {
+  fetchData(); fetchRefs()
+  window.addEventListener('sync-poll', onSyncPoll)
+  window.addEventListener('session-started', onSessionStarted as EventListener)
+})
+onUnmounted(() => {
+  window.removeEventListener('sync-poll', onSyncPoll)
+  window.removeEventListener('session-started', onSessionStarted as EventListener)
+})
+function onSessionStarted(e: Event) {
+  const session = (e as CustomEvent).detail
+  if (!session?.id) return fetchData()
+  const index = activeSessions.value.findIndex(s => s.id === session.id)
+  if (index === -1) activeSessions.value.unshift(session)
+  else activeSessions.value[index] = session
+  allSessions.value = [session, ...allSessions.value.filter(s => s.id !== session.id)]
+}
 function onSyncPoll(e: Event) {
   const d = (e as CustomEvent).detail?.changes
   if (d?.sessions_jeu || d?.consoles || d?.jeux || d?.joueurs) { fetchData(); fetchRefs() }

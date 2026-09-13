@@ -42,8 +42,9 @@ const settings = useSettingsStore()
 const isDesktop = ref(typeof window !== 'undefined' ? window.innerWidth >= 1024 : false)
 let pollInterval: ReturnType<typeof setInterval> | null = null
 
-function onSessionStarted() {
+function onSessionStarted(session?: unknown) {
   showSessionModal.value = false
+  window.dispatchEvent(new CustomEvent('session-started', { detail: session }))
   router.push('/sessions')
 }
 

@@ -9,6 +9,25 @@ use crate::error::{ApiError, ApiResult};
 use crate::validators;
 use crate::AppState;
 
+/// Un même joueur ne doit pas pouvoir être créé deux fois avec le même
+/// téléphone ou e-mail. Le nom seul n'est volontairement pas unique.
+fn duplicate_contact(rows: &[Value], id_to_ignore: Option<i64>, telephone: &str, email: &str) -> bool {
+    let phone = telephone.replace([' ', '-'], "");
+    let email = email.trim().to_ascii_lowercase();
+    rows.iter().any(|row| {
+        if row_id(row) == id_to_ignore {
+            return false;
+        }
+        let same_phone = !phone.is_empty()
+            && row.get("telephone").and_then(Value::as_str)
+                .is_some_and(|value| value.replace([' ', '-'], "") == phone);
+        let same_email = !email.is_empty()
+            && row.get("email").and_then(Value::as_str)
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case(&email));
+        same_phone || same_email
+    })
+}
+
 /// GET /api/joueurs (?search=)
 #[tauri::command]
 pub fn joueurs_list(
@@ -73,6 +92,12 @@ pub fn joueurs_create(
             return Err(ApiError::bad_request("Email invalide"));
         }
     }
+    let db = db(&state);
+    let telephone_clean = telephone.as_deref().unwrap_or("").replace([' ', '-'], "");
+    let email_clean = email.as_deref().unwrap_or("").trim().to_ascii_lowercase();
+    if duplicate_contact(&db.query_all("joueurs")?, None, &telephone_clean, &email_clean) {
+        return Err(ApiError::bad_request("Ce joueur existe déjà (même téléphone ou e-mail)"));
+    }
     let mut row = jmap();
     row.insert("nom".into(), json!(validators::sanitize_input(&nom, 50)));
     row.insert(
@@ -93,7 +118,7 @@ pub fn joueurs_create(
         "sticker".into(),
         json!(sticker.map(|s| validators::sanitize_input(&s, 16)).filter(|s| !s.is_empty())),
     );
-    db(&state).insert("joueurs", &row)
+    db.insert("joueurs", &row)
 }
 
 /// PUT /api/joueurs/:id
@@ -112,7 +137,16 @@ pub fn joueurs_update(
     if !validators::is_valid_id(id) {
         return Err(ApiError::bad_request("ID invalide"));
     }
-    get_by_id(db(&state), "joueurs", id, "Joueur non trouvé")?;
+    let database = db(&state);
+    get_by_id(database, "joueurs", id, "Joueur non trouvé")?;
+    // Les champs absents restent ceux déjà enregistrés afin que l'unicité soit
+    // également respectée lors d'une modification partielle.
+    let current = get_by_id(database, "joueurs", id, "Joueur non trouvé")?;
+    let next_phone = telephone.as_deref().unwrap_or_else(|| current.get("telephone").and_then(Value::as_str).unwrap_or(""));
+    let next_email = email.as_deref().unwrap_or_else(|| current.get("email").and_then(Value::as_str).unwrap_or(""));
+    if duplicate_contact(&database.query_all("joueurs")?, Some(id), next_phone, next_email) {
+        return Err(ApiError::bad_request("Ce joueur existe déjà (même téléphone ou e-mail)"));
+    }
     let mut updates = jmap();
     if let Some(n) = nom {
         if !validators::is_valid_nom(&n) {
@@ -163,7 +197,7 @@ pub fn joueurs_update(
             }),
         );
     }
-    db(&state).update("joueurs", id, &updates)
+    database.update("joueurs", id, &updates)
 }
 
 /// GET /api/joueurs/:id/historique
