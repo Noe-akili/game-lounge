@@ -9,11 +9,18 @@ use serde_json::{Value, json};
 use tauri::State;
 
 use crate::AppState;
+use crate::commands::{admin_only, claims};
 use crate::error::ApiResult;
+
+fn require_admin(state: &State<'_, AppState>, token: &Option<String>) -> ApiResult<()> {
+    let user = claims(state, token)?;
+    admin_only(&user)
+}
 
 /// Vérifie le statut Supabase (pour le paramètre .env)
 #[tauri::command]
-pub fn supabase_status(state: State<'_, AppState>) -> ApiResult<Value> {
+pub fn supabase_status(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    require_admin(&state, &token)?;
     #[cfg(feature = "supabase-sync")]
     let (enabled, available, url_present) = {
         let pool_opt = state.supabase_pool.lock().ok().and_then(|g| g.clone());
@@ -39,7 +46,8 @@ pub fn supabase_status(state: State<'_, AppState>) -> ApiResult<Value> {
 /// (liste JSON d'ULID, lue en local puis sur Supabase).
 #[cfg(feature = "supabase-sync")]
 #[tauri::command(async)]
-pub async fn device_debug_info(state: State<'_, AppState>) -> ApiResult<Value> {
+pub async fn device_debug_info(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    require_admin(&state, &token)?;
     let device_id = state.db.device_id().unwrap_or_default();
     let local_allowed = state.db.get_setting("debug_devices").ok().flatten()
         .map(|list| debug_list_contains(&list, &device_id))
@@ -66,7 +74,8 @@ pub async fn device_debug_info(state: State<'_, AppState>) -> ApiResult<Value> {
 /// Identité de l'appareil (variante sans feature sync, build desktop léger)
 #[cfg(not(feature = "supabase-sync"))]
 #[tauri::command]
-pub fn device_debug_info(state: State<'_, AppState>) -> ApiResult<Value> {
+pub fn device_debug_info(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    require_admin(&state, &token)?;
     let device_id = state.db.device_id().unwrap_or_default();
     let local_allowed = state.db.get_setting("debug_devices").ok().flatten()
         .map(|list| debug_list_contains(&list, &device_id))
@@ -107,19 +116,22 @@ async fn cloud_debug_devices(state: &State<'_, AppState>) -> Option<String> {
 
 /// Récupère les logs Rust (1.log) - tout est capturé, rien ne nous échappe
 #[tauri::command]
-pub fn get_rust_logs() -> String {
-    crate::logger::read_log_file()
+pub fn get_rust_logs(state: State<'_, AppState>, token: Option<String>) -> ApiResult<String> {
+    require_admin(&state, &token)?;
+    Ok(crate::logger::read_log_file())
 }
 
 /// Récupère les logs en mémoire (derniers 200)
 #[tauri::command]
-pub fn get_memory_logs() -> Vec<String> {
-    crate::logger::get_logs(200)
+pub fn get_memory_logs(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Vec<String>> {
+    require_admin(&state, &token)?;
+    Ok(crate::logger::get_logs(200))
 }
 
 /// Teste la connexion Supabase et retourne le diagnostic précis où ça bloque
 #[tauri::command(async)]
-pub async fn test_supabase_connection(app: tauri::AppHandle, state: State<'_, AppState>) -> ApiResult<Value> {
+pub async fn test_supabase_connection(app: tauri::AppHandle, state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    require_admin(&state, &token)?;
     crate::logger::log("supabase", "test_supabase_connection demandé");
     #[cfg(feature = "supabase-sync")]
     {

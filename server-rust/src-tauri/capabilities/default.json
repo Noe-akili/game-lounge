@@ -5,10 +5,6 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "fs:default",
-    "fs:allow-read",
-    "fs:allow-exists",
-    "fs:allow-read-dir",
     "store:default",
     "store:allow-get",
     "store:allow-set",

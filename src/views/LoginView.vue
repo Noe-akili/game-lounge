@@ -1,10 +1,9 @@
 <template>
   <div class="min-h-screen flex items-center justify-center bg-bg p-4">
     <div class="w-full max-w-md card space-y-5">
-      <div class="text-center" @click="onLogoTap">
+      <div class="text-center">
         <h1 class="font-gaming text-3xl font-bold text-txt">GAME LOUNGE</h1>
         <p class="text-txt-dim mt-2">Connexion</p>
-        <p v-if="debugHint" class="text-[10px] text-amber-400 mt-1">Mode développeur activé</p>
       </div>
       <form @submit.prevent="handleLogin" class="space-y-4">
         <div>
@@ -44,26 +43,9 @@ const success = ref(false)
 const error = ref('')
 
 const form = reactive({
-  email: 'admin@gamelounge.com',
-  password: 'admin123',
+  email: '',
+  password: '',
 })
-
-// ACCÈS DÉBOGAGE (réparé) : 5 taps sur le logo -> gl_debug_bypass=1. Le lien
-// "Développeur" apparaît alors dans la barre latérale APRÈS connexion (même en
-// compte employé), donnant accès aux logs 1.log, diagnostic users et tests cloud.
-const debugHint = ref(false)
-let logoTaps = 0
-let tapTimer: ReturnType<typeof setTimeout> | null = null
-function onLogoTap() {
-  logoTaps++
-  if (tapTimer) clearTimeout(tapTimer)
-  tapTimer = setTimeout(() => { logoTaps = 0 }, 1500)
-  if (logoTaps >= 5) {
-    logoTaps = 0
-    try { localStorage.setItem('gl_debug_bypass', '1') } catch {}
-    debugHint.value = true
-  }
-}
 
 function dashboardPath() {
   return auth.user?.role === 'admin' ? '/admin' : '/dashboard'

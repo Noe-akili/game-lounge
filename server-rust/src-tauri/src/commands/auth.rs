@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use tauri::State;
 
 use crate::auth as auth_core;
-use crate::commands::{claims, db, jmap, user_public};
+use crate::commands::{admin_only, claims, db, jmap, user_public};
 use crate::error::{ApiError, ApiResult};
 use crate::validators;
 use crate::AppState;
@@ -259,7 +259,9 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
 
 /// Diagnostic : état des users locaux (algo de hash, sans jamais exposer le hash)
 #[tauri::command]
-pub fn auth_debug_info(state: State<'_, AppState>) -> ApiResult<Value> {
+pub fn auth_debug_info(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
     let users = db(&state).query_all("users")?;
     let list: Vec<Value> = users.iter().map(|u| {
         let hash = u.get("password_hash").and_then(Value::as_str).unwrap_or("");
@@ -279,7 +281,9 @@ pub fn auth_debug_info(state: State<'_, AppState>) -> ApiResult<Value> {
 /// Diagnostic : liste les users côté Supabase (email + algo de hash uniquement)
 #[cfg(feature = "supabase-sync")]
 #[tauri::command(async)]
-pub async fn auth_debug_supabase_users(state: State<'_, AppState>) -> ApiResult<Value> {
+pub async fn auth_debug_supabase_users(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
     let pool_opt = { state.supabase_pool.lock().ok().and_then(|g| g.clone()) };
     let Some(pool) = pool_opt else { return Ok(json!({ "users": [], "online": false })) };
     match crate::supabase::supabase_query(&pool, "SELECT id, email, password_hash, role, nom FROM users ORDER BY id", &[]).await {
@@ -302,7 +306,9 @@ pub async fn auth_debug_supabase_users(state: State<'_, AppState>) -> ApiResult<
 }
 #[cfg(not(feature = "supabase-sync"))]
 #[tauri::command(async)]
-pub async fn auth_debug_supabase_users(_state: State<'_, AppState>) -> ApiResult<Value> {
+pub async fn auth_debug_supabase_users(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
     Ok(json!({ "users": [], "online": false }))
 }
 

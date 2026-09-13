@@ -2363,6 +2363,9 @@ async fn sync_poll(
 // ===== Serveur =====
 
 fn seed_default_users(state: &AppState) -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::var("GL_SEED_DEMO").as_deref() != Ok("1") {
+        return Ok(());
+    }
     if !db(state).query_all("users")?.is_empty() {
         return Ok(());
     }

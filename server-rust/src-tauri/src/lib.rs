@@ -8,6 +8,8 @@ pub mod pdf;
 pub mod validators;
 
 use std::sync::Mutex;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use rand::RngCore;
 use serde_json::json;
 use tauri::Manager;
 
@@ -32,6 +34,19 @@ pub struct AppState {
     pub sync_state: Mutex<Option<serde_json::Value>>,
 }
 
+
+/// A release APK must never use a predictable JWT signing key. When no
+/// deployment secret is present, keep tokens valid only for this app process.
+fn runtime_jwt_secret() -> String {
+    std::env::var("JWT_SECRET")
+        .ok()
+        .filter(|secret| secret.len() >= 32)
+        .unwrap_or_else(|| {
+            let mut bytes = [0u8; 32];
+            rand::thread_rng().fill_bytes(&mut bytes);
+            URL_SAFE_NO_PAD.encode(bytes)
+        })
+}
 fn open_db(app: &tauri::AppHandle) -> Result<Db, Box<dyn std::error::Error>> {
     // 1. DATADIR env (tests / debug http-server)
     if let Ok(dir_str) = std::env::var("DATADIR") {
@@ -152,8 +167,7 @@ pub fn run() {
                 eprintln!("Final DB move panicked, emergency in-memory");
                 Db::open_in_memory().unwrap_or_else(|e| panic!("emergency in-memory failed: {e}"))
             });
-            let jwt_secret =
-                std::env::var("JWT_SECRET").unwrap_or_else(|_| "game-lounge-secret-2024".into());
+            let jwt_secret = runtime_jwt_secret();
             // Charge .env si présent (pour DATABASE_URL Supabase)
             #[cfg(feature = "supabase-sync")]
             let _ = dotenvy::dotenv();

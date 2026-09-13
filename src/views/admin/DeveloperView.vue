@@ -11,8 +11,8 @@
       <div class="card">
         <h4 class="font-bold mb-3 flex items-center gap-2"><LogIn class="w-4 h-4 text-neon-violet" /> Test Login</h4>
         <div class="space-y-3">
-          <input v-model="testEmail" placeholder="admin@gamelounge.com" class="input-field w-full" />
-          <input v-model="testPassword" placeholder="admin123" type="password" class="input-field w-full" />
+          <input v-model="testEmail" placeholder="Email administrateur" class="input-field w-full" />
+          <input v-model="testPassword" placeholder="Mot de passe" type="password" class="input-field w-full" />
           <button @click="testLogin" :disabled="loadingLogin" class="btn-neon-violet w-full">
             {{ loadingLogin ? 'Test en cours...' : 'Tester login' }}
           </button>
@@ -88,8 +88,12 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { api } from '@/utils/api'
 import { Bug, LogIn, Cloud, FileText, Server, KeyRound, Smartphone } from 'lucide-vue-next'
 
-const testEmail = ref('admin@gamelounge.com')
-const testPassword = ref('admin123')
+function adminToken() {
+  return localStorage.getItem('gl_token') || undefined
+}
+
+const testEmail = ref('')
+const testPassword = ref('')
 const loadingLogin = ref(false)
 const loginResult = ref('')
 const loadingSupabase = ref(false)
@@ -150,7 +154,7 @@ async function testSupabase() {
   supabaseResult.value = ''
   try {
     const { invoke } = await import('@tauri-apps/api/core')
-    const status = await invoke('supabase_status')
+    const status = await invoke('supabase_status', { token: adminToken() })
     supabaseResult.value = `supabase_status:\n${JSON.stringify(status, null, 2)}`
   } catch (e: any) {
     supabaseResult.value = `❌ Supabase test échoué: ${e.message || String(e)}`
@@ -179,7 +183,7 @@ async function testSync() {
 async function fetchBackendLogs() {
   try {
     const { invoke } = await import('@tauri-apps/api/core')
-    const s = await invoke('supabase_status')
+    const s = await invoke('supabase_status', { token: adminToken() })
     backendStatus.value = JSON.stringify(s, null, 2)
   } catch (e: any) {
     backendStatus.value = `Erreur: ${e.message}`
@@ -188,8 +192,8 @@ async function fetchBackendLogs() {
 async function fetchRustLogs() {
   try {
     const { invoke } = await import('@tauri-apps/api/core')
-    rustLogs.value = await invoke('get_rust_logs')
-    if (!rustLogs.value) rustLogs.value = await invoke('get_memory_logs').then((a: string[]) => a.join('\n'))
+    rustLogs.value = await invoke('get_rust_logs', { token: adminToken() })
+    if (!rustLogs.value) rustLogs.value = await invoke('get_memory_logs', { token: adminToken() }).then((a: string[]) => a.join('\n'))
   } catch (e: any) {
     rustLogs.value = `Erreur get_rust_logs: ${e.message}`
   }
@@ -198,7 +202,7 @@ async function testSupabaseConnection() {
   supabaseTestResult.value = 'Test en cours...'
   try {
     const { invoke } = await import('@tauri-apps/api/core')
-    const res = await invoke('test_supabase_connection')
+    const res = await invoke('test_supabase_connection', { token: adminToken() })
     supabaseTestResult.value = JSON.stringify(res, null, 2)
     // Rafraîchit aussi les logs Rust
     fetchRustLogs()
@@ -214,10 +218,10 @@ async function diagUsers() {
   diagResult.value = 'Diagnostic en cours...'
   try {
     const { invoke } = await import('@tauri-apps/api/core')
-    const local = await invoke('auth_debug_info')
+    const local = await invoke('auth_debug_info', { token: adminToken() })
     let supabasePart = ''
     try {
-      const supa = await invoke('auth_debug_supabase_users')
+      const supa = await invoke('auth_debug_supabase_users', { token: adminToken() })
       supabasePart = `\n\n=== SUPABASE ===\n${JSON.stringify(supa, null, 2)}`
     } catch (e: any) {
       supabasePart = `\n\n=== SUPABASE === erreur: ${e?.message || e}`
@@ -234,7 +238,7 @@ async function showDeviceId() {
   deviceInfo.value = 'Lecture en cours...'
   try {
     const { invoke } = await import('@tauri-apps/api/core')
-    const info = await invoke('device_debug_info')
+    const info = await invoke('device_debug_info', { token: adminToken() })
     deviceInfo.value = JSON.stringify(info, null, 2)
   } catch (e: any) {
     deviceInfo.value = `❌ Erreur: ${e?.message || e}`
