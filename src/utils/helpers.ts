@@ -53,10 +53,18 @@ export function calcSessionAmount(durationMinutes, tarif) {
   return Math.ceil(durationMinutes / 60) * tarif.prix
 }
 
-export function calcJetonsEarned(durationMinutes, rules) {
+export function calcJetonsEarned(durationMinutes, rules, montant) {
   if (!rules || !rules.actif) return 0
+  // Règle 'temps' : jetons par tranche de durée jouée (seuil en minutes).
   if (rules.regle_type === 'temps') {
     return Math.floor(durationMinutes / rules.seuil) * rules.jetons_attribues
+  }
+  // Règle 'montant' : bonus selon la dépense (seuil = montant en FC),
+  // alignée sur le backend (sessions.rs) : (montant / seuil) × jetons.
+  if (rules.regle_type === 'montant' && montant) {
+    return rules.seuil > 0 && montant >= rules.seuil
+      ? Math.floor(montant / rules.seuil) * rules.jetons_attribues
+      : 0
   }
   return 0
 }

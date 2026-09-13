@@ -33,6 +33,10 @@ fn enrich(
                 "session_id": session.and_then(|s| s.get("id")).cloned().unwrap_or(Value::Null),
                 "session_statut": session.and_then(|s| s.get("statut")).cloned().unwrap_or(Value::Null),
                 "session_debut": session.and_then(|s| s.get("debut")).cloned().unwrap_or(Value::Null),
+                // Temps alloué + accumulé : pour le chrono temps réel et la
+                // barre de progression de fin de session (ConsoleCard).
+                "duree_allouee": session.and_then(|s| s.get("duree_allouee")).cloned().unwrap_or(Value::Null),
+                "duree_minutes": session.and_then(|s| s.get("duree_minutes")).cloned().unwrap_or(Value::Null),
                 "joueur_id": joueur_id.map(Value::from).unwrap_or(Value::Null),
                 "jeu_id": jeu_id.map(Value::from).unwrap_or(Value::Null),
                 "tarif_prix": session.and_then(|s| s.get("tarif_prix")).cloned().unwrap_or(Value::Null),

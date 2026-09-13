@@ -256,6 +256,35 @@
   }
 }
 
+/* ==== Barre de statut Android (edge-to-edge) ====
+   Le patch natif (scripts/patch-android-edge-to-edge.sh) expose les insets
+   système via --safe-area-inset-*. Fallback CSS standard si le patch natif
+   n'est pas chargé (WebView 136+ fournit env(safe-area-inset-*)).
+   L'app dessine edge-to-edge (fond continu derrière la barre) mais son
+   CONTENU (header, toasts…) commence SOUS la barre de statut. */
+:root {
+  --safe-area-inset-top: env(safe-area-inset-top, 0px);
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.safe-top {
+  padding-top: var(--safe-area-inset-top);
+}
+
+/* Positionne un élément fixed juste SOUS le header (barre de statut + h-20). */
+.header-offset {
+  top: calc(var(--safe-area-inset-top) + 80px);
+}
+
+.safe-bottom {
+  padding-bottom: var(--safe-area-inset-bottom);
+}
+
+/* Toasts : jamais cachés sous la barre de statut ni sous la barre système. */
+[data-sonner-toaster] {
+  padding-top: calc(var(--safe-area-inset-top) + 8px) !important;
+}
+
 @layer components {
   .btn-neon {
     @apply min-h-btn px-6 py-3 rounded-xl font-semibold text-sm

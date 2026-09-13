@@ -992,10 +992,21 @@ async fn sessions_terminer(
             let a = r.get("actif").map(|v| !matches!(v, Value::Null)).unwrap_or(false);
             a
         })? {
-            if regle.get("regle_type").and_then(Value::as_str) == Some("temps") {
-                let seuil = regle.get("seuil").and_then(Value::as_i64).unwrap_or(60);
-                let jetons = regle.get("jetons_attribues").and_then(Value::as_i64).unwrap_or(1);
-                jetons_gagnes = (duree_minutes_final / seuil) * jetons;
+            let jetons = regle.get("jetons_attribues").and_then(Value::as_i64).unwrap_or(1);
+            match regle.get("regle_type").and_then(Value::as_str) {
+                Some("temps") => {
+                    let seuil = regle.get("seuil").and_then(Value::as_i64).unwrap_or(60);
+                    jetons_gagnes = (duree_minutes_final / seuil) * jetons;
+                }
+                // Règle 'montant' : bonus selon le montant de la session
+                // (seuil = montant en FC, ex. tous les 5000 FC -> +N jetons).
+                Some("montant") => {
+                    let seuil = regle.get("seuil").and_then(Value::as_i64).unwrap_or(0);
+                    if seuil > 0 && montant >= seuil {
+                        jetons_gagnes = (montant / seuil) * jetons;
+                    }
+                }
+                _ => {}
             }
         }
         if jetons_gagnes > 0 {

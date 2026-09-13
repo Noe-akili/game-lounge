@@ -214,6 +214,9 @@ pub fn sessions_create(
     row.insert("debut".into(), json!(now_iso()));
     row.insert("fin".into(), json!(Value::Null));
     row.insert("duree_minutes".into(), json!(duree_minutes));
+    // Durée ALLOUÉE par le tarif : c'est elle qui déclenche la terminaison
+    // automatique (notification) quand le temps est écoulé.
+    row.insert("duree_allouee".into(), json!(duree_minutes));
     row.insert("montant".into(), json!(tarif_prix));
     row.insert("tarif_prix".into(), json!(tarif_prix));
     row.insert("jetons_gagnes".into(), json!(0));
@@ -310,7 +313,7 @@ pub fn sessions_reprendre(
     get_by_id(db, "sessions_jeu", id, "Session non trouvée")
 }
 
-/// PUT /api/sessions/:id/terminer (génère la facture + jetonx de fidélité)
+/// PUT /api/sessions/:id/terminer (génère la facture + jetons de fidélité)
 #[tauri::command]
 pub fn sessions_terminer(
     state: State<'_, AppState>,
@@ -323,7 +326,29 @@ pub fn sessions_terminer(
     }
     let db = db(&state);
     let s = get_by_id(db, "sessions_jeu", id, "Session non trouvée")?;
+    finalize_session(db, &s, None, false)
+}
 
+/// Finalise une session : statut terminee + heure de fin, libère la console,
+/// génère la facture (HT/TVA/TTC + ligne), attribue les jetons de fidélité
+/// (règle 'temps' par durée OU règle 'montant' selon le montant de la session)
+/// et renvoie le détail { session, facture, montant, jetonsGagnes, dureeMinutes }.
+///
+/// `duree_imposee` : durée (minutes) à facturer — utilisée par la terminaison
+/// AUTOMATIQUE (temps écoulé) pour arrêter le chrono à la seconde où la session
+/// a expiré, même si le watcher n'a pu tourner que plus tard.
+/// `auto` : true = terminaison automatique -> l'heure de fin est calculée depuis
+/// `debut + durée totale` (et non "maintenant") pour une facturation exacte.
+pub(crate) fn finalize_session(
+    db: &crate::db::Db,
+    s: &Value,
+    duree_imposee: Option<i64>,
+    auto: bool,
+) -> ApiResult<Value> {
+    let id = s
+        .get("id")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| ApiError::internal("Session ID manquant"))?;
     let statut = s.get("statut").and_then(Value::as_str).unwrap_or("");
     let debut = s.get("debut").and_then(Value::as_str).unwrap_or("");
     let duree_minutes = s.get("duree_minutes").and_then(Value::as_i64).unwrap_or(0);
@@ -336,10 +361,7 @@ pub fn sessions_terminer(
         .get("joueur_id")
         .and_then(Value::as_i64)
         .ok_or_else(|| ApiError::internal("Joueur ID manquant"))?;
-    let session_id = s
-        .get("id")
-        .and_then(Value::as_i64)
-        .ok_or_else(|| ApiError::internal("Session ID manquant"))?;
+    let session_id = id;
 
     let now_ms = chrono::Utc::now().timestamp_millis();
     let elapsed = if statut == "en_cours" {
@@ -351,15 +373,41 @@ pub fn sessions_terminer(
         0
     };
     let total_secondes = duree_minutes * 60 + elapsed;
-    let duree_minutes_final = ((total_secondes as f64) / 60.0).ceil().max(1.0) as i64;
+    let duree_minutes_final = match duree_imposee {
+        Some(d) if d > 0 => d,
+        _ => ((total_secondes as f64) / 60.0).ceil().max(1.0) as i64,
+    };
     let montant = (((duree_minutes_final as f64) / 60.0).ceil() as i64) * tarif_prix;
 
-    // Terminer la session
+    // Terminer la session. En AUTO (temps écoulé), l'heure de fin est calculée
+    // exactement à l'expiration : debut + (durée imposée - déjà accumulée),
+    // PAS "maintenant" — le joueur paie le temps alloué + dépassement réel,
+    // même si le watcher n'a pu tourner que plus tard.
+    let fin_iso = if auto {
+        chrono::DateTime::parse_from_rfc3339(debut)
+            .map(|d| {
+                let offset_s = (duree_minutes_final - duree_minutes).max(0) * 60;
+                (d + chrono::Duration::seconds(offset_s))
+                    .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+            })
+            .unwrap_or_else(|_| now_iso())
+    } else {
+        now_iso()
+    };
     let mut upd_session = jmap();
     upd_session.insert("statut".into(), json!("terminee"));
-    upd_session.insert("fin".into(), json!(now_iso()));
+    upd_session.insert("fin".into(), json!(fin_iso));
     upd_session.insert("duree_minutes".into(), json!(duree_minutes_final));
     upd_session.insert("montant".into(), json!(montant));
+    if auto {
+        // Aligne la durée allouée sur la durée réellement jouée : sinon un pull
+        // cloud plus ancien pourrait remettre duree_allouee à la valeur du tarif.
+        let allouee = s
+            .get("duree_allouee")
+            .and_then(Value::as_i64)
+            .unwrap_or(duree_minutes_final);
+        upd_session.insert("duree_allouee".into(), json!(allouee.max(duree_minutes_final)));
+    }
     db.update("sessions_jeu", id, &upd_session)?;
 
     let mut upd_console = jmap();
@@ -410,16 +458,29 @@ pub fn sessions_terminer(
     ligne.insert("total_ligne".into(), json!(montant));
     db.insert("lignes_facture", &ligne)?;
 
-    // Fidélité
+    // Fidélité : règle 'temps' (jetons par tranche de durée jouée) OU règle
+    // 'montant' (bonus selon le montant de la session : seuil = montant en FC).
     let mut jetons_gagnes: i64 = 0;
     if let Some(regle) = db.find_one("parametres_fidelite", |r| {
         let a = r.get("actif").map(|v| !matches!(v, Value::Null)).unwrap_or(false);
         a
     })? {
-        if regle.get("regle_type").and_then(Value::as_str) == Some("temps") {
-            let seuil = regle.get("seuil").and_then(Value::as_i64).unwrap_or(60);
-            let jetons = regle.get("jetons_attribues").and_then(Value::as_i64).unwrap_or(1);
-            jetons_gagnes = (duree_minutes_final / seuil) * jetons;
+        let jetons = regle
+            .get("jetons_attribues")
+            .and_then(Value::as_i64)
+            .unwrap_or(1);
+        match regle.get("regle_type").and_then(Value::as_str) {
+            Some("temps") => {
+                let seuil = regle.get("seuil").and_then(Value::as_i64).unwrap_or(60);
+                jetons_gagnes = (duree_minutes_final / seuil) * jetons;
+            }
+            Some("montant") => {
+                let seuil = regle.get("seuil").and_then(Value::as_i64).unwrap_or(0);
+                if seuil > 0 && montant >= seuil {
+                    jetons_gagnes = (montant / seuil) * jetons;
+                }
+            }
+            _ => {}
         }
     }
     if jetons_gagnes > 0 {
@@ -517,6 +578,9 @@ pub fn sessions_update(
             return Err(ApiError::bad_request("Durée invalide (1-1000)"));
         }
         updates.insert("duree_minutes".into(), json!(d));
+        // Modifier la durée d'une session active = modifier son temps alloué
+        // (prolonger/raccourcir) : l'expiration automatique suit.
+        updates.insert("duree_allouee".into(), json!(d));
     }
     if let Some(m) = montant {
         if !validators::is_valid_prix(m) {

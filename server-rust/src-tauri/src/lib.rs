@@ -5,6 +5,7 @@ pub mod error;
 pub mod logger;
 pub mod supabase;
 pub mod pdf;
+pub mod session_watcher;
 pub mod validators;
 
 use std::sync::Mutex;
@@ -16,8 +17,9 @@ use tauri::Manager;
 use db::Db;
 
 pub struct AppState {
-    /// Base de données SQLite partagée.
-    pub db: Db,
+    /// Base de données SQLite partagée (Arc : aussi utilisée par le watcher
+    /// de sessions en tâche de fond, sans dupliquer la connexion).
+    pub db: std::sync::Arc<Db>,
     /// Secret utilisé pour signer/vérifier les JWT.
     pub jwt_secret: String,
     /// Journal des tentatives de connexion (rate limiting simple, par IP/app).
@@ -112,6 +114,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        // Notifications natives (Android) : fin de session automatique.
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let handle = app.handle();
             // GARANTIE : AppState est TOUJOURS enregistré, même si la DB échoue.
@@ -178,7 +182,7 @@ pub fn run() {
             #[cfg(feature = "supabase-sync")]
             db.set_sync_waker(wake_tx);
             app.manage(AppState {
-                db,
+                db: std::sync::Arc::new(db),
                 jwt_secret,
                 login_attempts: Mutex::new(std::collections::HashMap::new()),
                 supabase_pool: Mutex::new(None),
@@ -268,6 +272,12 @@ pub fn run() {
             {
                 let handle = app.handle().clone();
                 auto_sync_loop(handle, wake_rx);
+            }
+            // Watcher d'expiration des sessions : termine AUTOMATIQUEMENT une
+            // session dont le temps est écoulé et notifie l'appareil (Android).
+            if let Some(state) = app.handle().try_state::<AppState>() {
+                let handle = app.handle().clone();
+                crate::session_watcher::start(handle, state.db.clone());
             }
             #[cfg(target_os = "android")]
             eprintln!("Android setup complete, AppState managed (supabase bg init)");

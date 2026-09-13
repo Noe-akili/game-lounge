@@ -55,20 +55,35 @@
 
       <template v-else>
         <select v-model="form.regle_type" class="input-field">
-          <option value="temps">1 jeton chaque heure jouée</option>
+          <option value="temps">Temps de jeu (jetons par durée)</option>
           <option value="montant">Bonus selon le montant dépensé</option>
         </select>
 
+        <!-- Le 3e champ S'ADAPTE à la règle : "Seuil (minutes)" pour le temps,
+             "Montant (FC)" pour le bonus selon la dépense (demande utilisateur). -->
         <div class="grid grid-cols-2 gap-2 sm:gap-4 w-full max-w-full min-w-0">
           <div class="min-w-0 w-full max-w-full">
-            <label class="text-sm text-txt-muted">Seuil (minutes)</label>
-            <input v-model.number="form.seuil" type="number" class="input-field w-full max-w-full min-w-0" />
+            <label class="text-sm text-txt-muted">
+              {{ form.regle_type === 'montant' ? 'Montant (FC)' : 'Seuil (minutes)' }}
+            </label>
+            <input
+              v-model.number="form.seuil"
+              type="number"
+              :placeholder="form.regle_type === 'montant' ? 'Ex: 5000' : 'Ex: 60'"
+              class="input-field w-full max-w-full min-w-0"
+            />
           </div>
           <div class="min-w-0 w-full max-w-full">
             <label class="text-sm text-txt-muted">Jetons attribués</label>
             <input v-model.number="form.jetons_attribues" type="number" class="input-field w-full max-w-full min-w-0" />
           </div>
         </div>
+        <p v-if="form.regle_type === 'montant'" class="text-xs text-txt-dim">
+          À chaque {{ formatCurrency(form.seuil || 0) }} dépensés, le joueur reçoit {{ form.jetons_attribues || 0 }} jeton(s). Ex : seuil 5 000 FC → une session de 12 000 FC rapporte 2 × jetons.
+        </p>
+        <p v-else class="text-xs text-txt-dim">
+          À chaque {{ form.seuil || 0 }} min jouées, le joueur reçoit {{ form.jetons_attribues || 0 }} jeton(s).
+        </p>
 
         <label class="flex items-center gap-3 cursor-pointer">
           <input type="checkbox" v-model="form.actif" class="w-5 h-5 rounded bg-bg-surface border-white/20 text-neon-violet" />
@@ -143,7 +158,7 @@ import { api } from '@/utils/api'
 import { toast } from 'vue-sonner'
 import Loader from '@/components/ui/Loader.vue'
 import Modal from '@/components/ui/Modal.vue'
-import { formatDate } from '@/utils/helpers'
+import { formatDate, formatCurrency } from '@/utils/helpers'
 import { Plus, Pencil, Trash2, Coins, Search } from 'lucide-vue-next'
 import { isValidId, isValidJetonType, isValidQuantite, isValidRegleType, isValidSeuil, isValidJetonsAttribues, sanitizeInput } from '@/utils/validators'
 

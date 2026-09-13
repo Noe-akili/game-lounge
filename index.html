@@ -2,7 +2,9 @@
 <html lang="fr" class="dark" data-font="gaming">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <!-- viewport-fit=cover : nécessaire pour dessiner edge-to-edge (Android) et
+         recevoir les insets via le patch natif --safe-area-inset-* -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Game Lounge — Gestion de Salle de Jeu</title>
     <meta name="theme-color" content="#0a0a0f" />
     <meta name="mobile-web-app-capable" content="yes" />

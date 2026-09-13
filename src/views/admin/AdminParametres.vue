@@ -23,7 +23,10 @@
           <Settings class="w-5 h-5" :class="p.actif ? 'text-neon-green' : 'text-txt-dim'" />
         </div>
         <div class="flex-1 min-w-0">
-          <p class="font-medium truncate">{{ p.regle_type === 'temps' ? 'Temps de jeu' : 'Montant dépensé' }} — Seuil: {{ p.seuil }} min</p>
+          <p class="font-medium truncate">
+            {{ p.regle_type === 'temps' ? 'Temps de jeu' : 'Montant dépensé' }} —
+            {{ p.regle_type === 'temps' ? `Seuil : ${p.seuil} min` : `Montant : ${formatCurrency(p.seuil)}` }}
+          </p>
           <p class="text-xs text-txt-dim">{{ p.jetons_attribues }} jeton(s) attribué(s) · {{ p.actif ? 'Actif' : 'Inactif' }}</p>
         </div>
         <span class="badge shrink-0 max-w-full truncate" :class="p.actif ? 'badge-green' : 'badge-violet'">{{ p.actif ? 'Actif' : 'Inactif' }}</span>
@@ -144,8 +147,15 @@
             <option value="montant">Montant (bonus selon dépense)</option>
           </select>
           <div>
-            <label class="text-sm text-txt-muted">Seuil (minutes)</label>
-            <input v-model.number="form.seuil" type="number" placeholder="Ex: 60" class="input-field" />
+            <label class="text-sm text-txt-muted">
+              {{ form.regle_type === 'montant' ? 'Montant (FC)' : 'Seuil (minutes)' }}
+            </label>
+            <input
+              v-model.number="form.seuil"
+              type="number"
+              :placeholder="form.regle_type === 'montant' ? 'Ex: 5000' : 'Ex: 60'"
+              class="input-field"
+            />
           </div>
           <div>
             <label class="text-sm text-txt-muted">Jetons attribués</label>
@@ -168,7 +178,10 @@
         <h3 class="font-gaming text-xl font-bold mb-4">Détails paramètre #{{ selected.id }}</h3>
         <div class="space-y-3">
           <div class="flex justify-between"><span class="text-txt-dim">Type</span><span>{{ selected.regle_type }}</span></div>
-          <div class="flex justify-between"><span class="text-txt-dim">Seuil</span><span>{{ selected.seuil }} min</span></div>
+          <div class="flex justify-between">
+            <span class="text-txt-dim">{{ selected.regle_type === 'montant' ? 'Montant' : 'Seuil' }}</span>
+            <span>{{ selected.regle_type === 'montant' ? formatCurrency(selected.seuil) : `${selected.seuil} min` }}</span>
+          </div>
           <div class="flex justify-between"><span class="text-txt-dim">Jetons</span><span class="font-gaming font-bold text-neon-yellow">{{ selected.jetons_attribues }}</span></div>
           <div class="flex justify-between"><span class="text-txt-dim">Actif</span><span class="badge" :class="selected.actif ? 'badge-green' : 'badge-red'">{{ selected.actif ? 'Oui' : 'Non' }}</span></div>
         </div>
@@ -192,7 +205,7 @@ import Modal from '@/components/ui/Modal.vue'
 import { Plus, Pencil, Trash2, Settings, Moon, Sun, Cloud, CloudOff, RefreshCw } from 'lucide-vue-next'
 import { isValidRegleType, isValidSeuil, isValidJetonsAttribues } from '@/utils/validators'
 import { useSettingsStore } from '@/stores/settings'
-import { formatDate } from '@/utils/helpers'
+import { formatDate, formatCurrency } from '@/utils/helpers'
 
 const settings = useSettingsStore()
 const loading = ref(true)

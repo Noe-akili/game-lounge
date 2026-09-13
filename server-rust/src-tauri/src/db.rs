@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, email TEXT UNIQUE, pas
 CREATE TABLE IF NOT EXISTS consoles (id INTEGER PRIMARY KEY, nom TEXT, type TEXT, etat TEXT DEFAULT 'disponible', poste_numero INTEGER, date_ajout TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS jeux (id INTEGER PRIMARY KEY, titre TEXT, genre TEXT, console_id INTEGER, actif INTEGER DEFAULT 1, jaquette_url TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS joueurs (id INTEGER PRIMARY KEY, nom TEXT, telephone TEXT, email TEXT, jetons_solde INTEGER DEFAULT 0, date_inscription TEXT, derniere_visite TEXT, deleted INTEGER DEFAULT 0);
-CREATE TABLE IF NOT EXISTS sessions_jeu (id INTEGER PRIMARY KEY, console_id INTEGER, joueur_id INTEGER, jeu_id INTEGER, employe_id INTEGER, tarif_id INTEGER, debut TEXT, fin TEXT, duree_minutes INTEGER, montant INTEGER, tarif_prix INTEGER, jetons_gagnes INTEGER DEFAULT 0, statut TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS sessions_jeu (id INTEGER PRIMARY KEY, console_id INTEGER, joueur_id INTEGER, jeu_id INTEGER, employe_id INTEGER, tarif_id INTEGER, debut TEXT, fin TEXT, duree_minutes INTEGER, duree_allouee INTEGER DEFAULT 60, montant INTEGER, tarif_prix INTEGER, jetons_gagnes INTEGER DEFAULT 0, statut TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS tarifs (id INTEGER PRIMARY KEY, nom TEXT, type TEXT, prix INTEGER, duree_minutes INTEGER, description TEXT, actif INTEGER DEFAULT 1, console_type TEXT, jeu TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS factures (id INTEGER PRIMARY KEY, numero_facture TEXT UNIQUE, session_id INTEGER, joueur_id INTEGER, montant_ht REAL, taux_tva REAL DEFAULT 20, montant_tva REAL, montant_ttc REAL, mode_paiement TEXT, statut TEXT, date_paiement TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS jetons_transactions (id INTEGER PRIMARY KEY, joueur_id INTEGER, quantite INTEGER, type TEXT, raison TEXT, session_id INTEGER, created_at TEXT, deleted INTEGER DEFAULT 0);
@@ -86,6 +86,20 @@ pub fn now_iso() -> String {
 /// Date du jour au format YYYYMMDD (pour les numéros de facture).
 pub fn today_str() -> String {
     chrono::Utc::now().format("%Y%m%d").to_string()
+}
+
+/// Session actuellement EN COURS (pour le watcher d'expiration) :
+/// (id, console_id, duree_allouee, duree_minutes). None si aucune session active.
+pub fn find_active_session(
+    conn: &rusqlite::Connection,
+) -> Option<(i64, Option<i64>, i64, i64)> {
+    conn.query_row(
+        "SELECT id, console_id, COALESCE(duree_allouee, duree_minutes, 60), COALESCE(duree_minutes, 0) \
+         FROM sessions_jeu WHERE statut = 'en_cours' AND COALESCE(deleted, 0) = 0 LIMIT 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )
+    .ok()
 }
 
 // Alphabet Crockford base32 (ULID) : pas de I, L, O, U pour éviter les confusions.
@@ -241,6 +255,9 @@ impl Db {
         );
         // Soft-delete : colonne deleted sur les bases existantes (idempotent, erreurs ignorées)
         let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
+        // Durée allouée par le tarif (sessions créées avant cette version) :
+        // c'est elle qui déclenche l'expiration automatique. Idempotent.
+        let _ = conn.execute_batch("ALTER TABLE sessions_jeu ADD COLUMN duree_allouee INTEGER DEFAULT 60;");
         apply_pragmas(&conn);
         // Test écriture immédiate pour détecter disque plein / permission early
         let _ = conn.execute_batch("CREATE TABLE IF NOT EXISTS __healthcheck (id INTEGER PRIMARY KEY); DROP TABLE IF EXISTS __healthcheck;");
@@ -259,8 +276,8 @@ impl Db {
              ALTER TABLE consoles ADD COLUMN date_ajout TEXT; \
              ALTER TABLE joueurs ADD COLUMN derniere_visite TEXT; \
              ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER;",
-        );
-        let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
+        );            let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
+        let _ = conn.execute_batch("ALTER TABLE sessions_jeu ADD COLUMN duree_allouee INTEGER DEFAULT 60;");
         apply_pragmas(&conn);
         Ok(Db(Mutex::new(conn), Mutex::new(std::collections::HashMap::new()), Mutex::new(None)))
     }

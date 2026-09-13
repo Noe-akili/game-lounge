@@ -32,10 +32,19 @@
           </div>
           <div class="flex-1 min-w-0">
             <p class="font-medium truncate">{{ s.console_nom || 'Console' }} — {{ s.jeu_nom || 'Jeu' }}</p>
-            <p class="text-sm text-txt-dim truncate">{{ s.joueur_nom || 'Joueur' }} · {{ formatDuration(s.duree_minutes * 60) }}</p>
+            <p class="text-sm text-txt-dim truncate">{{ s.joueur_nom || 'Joueur' }} · {{ formatCurrency(s.montant || 0) }}</p>
           </div>
-          <div class="text-right sm:text-right w-full sm:w-auto flex sm:block justify-between items-center gap-2 min-w-0">
-            <p class="font-gaming font-bold text-neon-green truncate">{{ formatCurrency(s.montant || 0) }}</p>
+          <div class="text-right w-full sm:w-auto flex flex-col items-end gap-0.5 shrink-0">
+            <!-- Temps qui s'écoule EN DIRECT : écoulé (ou restant quand la fin
+                 approche) — s'arrête à l'allocation, puis passe en rouge "+X". -->
+            <LiveSessionTimer
+              :session-debut="s.debut"
+              :duree-allouee="s.duree_allouee || 0"
+              :accumulee="s.duree_minutes || 0"
+              :statut="s.statut"
+              :mode="remainingMode(s)"
+              class="text-lg"
+            />
             <span class="badge shrink-0" :class="s.statut === 'en_cours' ? 'badge-green' : 'badge-yellow'">
               {{ s.statut === 'en_cours' ? 'En cours' : 'En pause' }}
             </span>
@@ -171,6 +180,7 @@ import { toast } from 'vue-sonner'
 import { PlayCircle, PauseCircle, Square, CheckCircle2, RefreshCw, Plus, Pencil, Trash2 } from 'lucide-vue-next'
 import Loader from '@/components/ui/Loader.vue'
 import Modal from '@/components/ui/Modal.vue'
+import LiveSessionTimer from '@/components/ui/LiveSessionTimer.vue'
 import { isValidId, isValidDuree, isValidPrix, isValidSessionStatut } from '@/utils/validators'
 
 const loading = ref(false)
@@ -285,5 +295,14 @@ onUnmounted(() => window.removeEventListener('sync-poll', onSyncPoll))
 function onSyncPoll(e: Event) {
   const d = (e as CustomEvent).detail?.changes
   if (d?.sessions_jeu || d?.consoles || d?.jeux || d?.joueurs) { fetchData(); fetchRefs() }
+}
+
+// Compte à rebours quand ≤ 5 min restent (sinon chrono écoulé classique).
+function remainingMode(s) {
+  if (!s.duree_allouee || s.statut === 'pause') return 'elapsed'
+  const start = new Date(s.debut).getTime()
+  if (Number.isNaN(start)) return 'elapsed'
+  const restant = s.duree_allouee * 60 - ((s.duree_minutes || 0) * 60 + Math.floor((Date.now() - start) / 1000))
+  return restant <= 5 * 60 ? 'remaining' : 'elapsed'
 }
 </script>

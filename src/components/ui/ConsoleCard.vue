@@ -29,9 +29,32 @@
         </div>
       </div>
 
-      <div class="flex items-center gap-2 bg-bg-surface rounded-xl p-3 min-w-0">
-        <Timer class="w-5 h-5 text-neon-blue shrink-0" />
-        <span class="font-gaming text-lg sm:text-xl font-bold text-neon-blue truncate">{{ timerDisplay }}</span>
+      <!-- Temps RÉEL + progression vers la fin de la session : la barre avance
+           chaque seconde et se remplit à mesure que le temps alloué s'écoule.
+           Temps dépassé = barre et chrono en rouge (+X pulsé) : la session sera
+           terminée automatiquement par le backend (notification Android envoyée). -->
+      <div class="bg-bg-surface rounded-xl p-3 min-w-0">
+        <div class="flex items-center gap-2">
+          <Timer class="w-5 h-5 shrink-0" :class="depasse ? 'text-neon-red' : 'text-neon-blue'" />
+          <LiveSessionTimer
+            ref="liveTimer"
+            :session-debut="console.session_debut"
+            :duree-allouee="console.duree_allouee || 0"
+            :accumulee="console.duree_minutes || 0"
+            :statut="console.session_statut || 'en_cours'"
+            class="text-lg sm:text-xl truncate"
+          />
+          <span v-if="restantAffiche" class="ml-auto text-xs shrink-0" :class="depasse ? 'text-neon-red' : 'text-txt-dim'">
+            {{ depasse ? 'Terminaison auto…' : `Reste ${restantAffiche}` }}
+          </span>
+        </div>
+        <div v-if="hasAllocation" class="mt-2 h-1.5 rounded-full bg-white/5 overflow-hidden">
+          <div
+            class="h-full rounded-full transition-all duration-1000"
+            :class="depasse ? 'bg-neon-red' : restant < 5 * 60 ? 'bg-neon-yellow' : 'bg-neon-blue'"
+            :style="{ width: progressPct + '%' }"
+          />
+        </div>
       </div>
 
       <div v-if="isOccupied" class="flex items-center gap-2 text-sm text-txt-dim min-w-0">
@@ -71,10 +94,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { motion } from 'motion-v'
 import { Monitor, User, Timer, TrendingUp, Play, Pause, Square } from 'lucide-vue-next'
 import { formatCurrency, formatDuration } from '@/utils/helpers'
+import LiveSessionTimer from './LiveSessionTimer.vue'
 
 const props = defineProps({
   console: { type: Object, required: true },
@@ -82,37 +106,27 @@ const props = defineProps({
 
 defineEmits(['start', 'pause', 'resume', 'end'])
 
-const elapsed = ref(0)
-let timer = null
+// Chrono temps réel partagé (LiveSessionTimer expose elapsedSeconds/restant).
+const liveTimer = ref(null)
+const elapsed = computed(() => liveTimer.value?.elapsedSeconds ?? 0)
+const restant = computed(() => liveTimer.value?.restant ?? 0)
+const depasse = computed(() => liveTimer.value?.depasse ?? false)
+const hasAllocation = computed(() => (props.console.duree_allouee || 0) > 0)
+const progressPct = computed(() => {
+  if (!hasAllocation.value) return 0
+  return Math.min(100, Math.max(0, (elapsed.value / (props.console.duree_allouee * 60)) * 100))
+})
+const restantAffiche = computed(() =>
+  hasAllocation.value ? formatDuration(Math.max(0, restant.value)) : ''
+)
 
 const isActive = computed(() => props.console.session_statut === 'en_cours' || props.console.session_statut === 'pause' || props.console.etat === 'occupee' || props.console.etat === 'pause')
 const isOccupied = computed(() => props.console.session_statut === 'en_cours' || props.console.etat === 'occupee')
 const isPaused = computed(() => props.console.session_statut === 'pause' || props.console.etat === 'pause')
 const isFree = computed(() => props.console.etat === 'disponible' && !props.console.session_id)
 
-function startTimer() {
-  if (timer) clearInterval(timer)
-  if (!props.console.session_debut) { elapsed.value = 0; return }
-
-  const computeElapsed = () => {
-    if (props.console.session_statut === 'pause') {
-      return (props.console.duree_minutes || 0) * 60
-    }
-    const debut = new Date(props.console.session_debut).getTime()
-    return Math.floor((Date.now() - debut) / 1000)
-  }
-
-  elapsed.value = computeElapsed()
-  if (isOccupied.value) {
-    timer = setInterval(() => { elapsed.value++ }, 1000)
-  }
-}
-
-onMounted(startTimer)
-onUnmounted(() => { if (timer) clearInterval(timer) })
-
-const timerDisplay = computed(() => formatDuration(elapsed.value))
 const montantActuel = computed(() => {
+  // Même règle que le backend : tarif horaire prorata à la MINUTE.
   const minutes = elapsed.value / 60
   const tarif = props.console.tarif_prix || 2000
   return Math.ceil(minutes / 60) * tarif

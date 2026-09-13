@@ -1,13 +1,14 @@
 <template>
   <div id="game-lounge-app" class="h-full overflow-hidden bg-bg">
-    <!-- Barre de progression de chargement d'onglet : SOUS le header (top-16 = h-16 du
-         header), et après la sidebar desktop (lg:left-64) -->
+    <!-- Barre de progression de chargement d'onglet : SOUS le header (safe-top
+         = barre de statut Android + h-20 du header), et après la sidebar
+         desktop (lg:left-64) -->
     <motion.div
       v-if="routeLoading"
       :initial="{ scaleX: 0 }"
       :animate="{ scaleX: 1 }"
       :transition="{ duration: 0.8, ease: 'easeInOut' }"
-      class="fixed top-16 left-0 right-0 lg:left-64 h-0.5 bg-neon-violet z-[60] origin-left shadow-neon-violet"
+      class="fixed left-0 right-0 lg:left-64 h-0.5 bg-neon-violet z-[60] origin-left shadow-neon-violet safe-top header-offset"
       style="transform-origin: left"
     />
     <motion.div

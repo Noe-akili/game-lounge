@@ -212,7 +212,8 @@ async function testSupabaseConnection() {
 }
 
 const diagResult = ref('')
-const refreshRustLogsAfter = false
+// Ref (et non constante) : le template l'assigne avant de recharger les logs.
+const refreshRustLogsAfter = ref(false)
 
 async function diagUsers() {
   diagResult.value = 'Diagnostic en cours...'

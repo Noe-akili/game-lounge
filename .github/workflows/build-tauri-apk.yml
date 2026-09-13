@@ -74,6 +74,9 @@ jobs:
         working-directory: server-rust
         run: npm run android:init
 
+      - name: Patch edge-to-edge (interface sous la barre de statut)
+        run: bash scripts/patch-android-edge-to-edge.sh
+
       - name: Build Android APK (tauri android build --apk, universal)
         working-directory: server-rust
         run: npm run android:build

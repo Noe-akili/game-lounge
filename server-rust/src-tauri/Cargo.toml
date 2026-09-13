@@ -29,6 +29,8 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-store = "2"
+# Notifications natives (Android) : fin de session automatique (temps écoulé)
+tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # bundled compile sqlite pour Android (lourd mais sûr) ; limite à 1 target pour accélérer build

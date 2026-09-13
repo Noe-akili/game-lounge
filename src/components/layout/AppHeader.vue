@@ -1,18 +1,23 @@
 <template>
-  <header class="sticky top-0 z-30 bg-bg/80 backdrop-blur-xl border-b border-white/5">
-    <div class="flex items-center justify-between px-4 lg:px-6 h-16">
-      <div class="flex items-center gap-4">
-        <button @click="$emit('toggleSidebar')" class="p-2 rounded-xl hover:bg-bg-hover text-txt-dim lg:hidden">
+  <!-- safe-top : le contenu commence SOUS la barre de statut Android
+       (insets injectés par le patch natif, fallback env(safe-area-inset-*)). -->
+  <header class="sticky top-0 z-30 bg-bg/80 backdrop-blur-xl border-b border-white/5 safe-top">
+    <!-- h-20 (au lieu de h-16) : les longs titres (ex. "Catalogue des jeux",
+         "Paramétrage des tarifs") ne débordent plus ; ils sont aussi tronqués
+         avec des points de suspension en dernier recours. -->
+    <div class="flex items-center justify-between gap-3 px-4 lg:px-6 h-20">
+      <div class="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
+        <button @click="$emit('toggleSidebar')" class="p-2 rounded-xl hover:bg-bg-hover text-txt-dim lg:hidden shrink-0">
           <Menu v-if="!sidebarOpen" class="w-5 h-5" />
           <X v-else class="w-5 h-5" />
         </button>
-        <div>
-          <h2 class="font-gaming text-lg font-bold">{{ pageTitle }}</h2>
-          <p class="text-xs text-txt-dim">Gestion des sessions en temps réel</p>
+        <div class="min-w-0">
+          <h2 class="font-gaming text-lg font-bold truncate">{{ pageTitle }}</h2>
+          <p class="text-xs text-txt-dim truncate">Gestion des sessions en temps réel</p>
         </div>
       </div>
 
-      <div class="flex items-center gap-4">
+      <div class="flex items-center gap-3 sm:gap-4 shrink-0">
         <!-- Delta sync discret (mission §12) : le dashboard reste utilisable pendant
              la synchronisation en arrière-plan. visible = admin (statut) ou tous
              (progression émise par Rust pendant un delta/en init). -->
