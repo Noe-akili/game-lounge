@@ -229,7 +229,17 @@ function openCreate() {
 
 function editSession(s) {
   editingId.value = s.id
-  Object.assign(form, { console_id: s.console_id, joueur_id: s.joueur_id, jeu_id: s.jeu_id, duree_minutes: s.duree_minutes || 0, montant: s.montant || 0, statut: s.statut })
+  // Session ACTIVE : le champ durée = temps ALLOUÉ (prolonger/raccourcir),
+  // pas le temps déjà joué. Session terminée : durée facturée.
+  const active = s.statut === 'en_cours' || s.statut === 'pause'
+  Object.assign(form, {
+    console_id: s.console_id,
+    joueur_id: s.joueur_id,
+    jeu_id: s.jeu_id,
+    duree_minutes: active ? (s.duree_allouee || s.duree_minutes || 0) : (s.duree_minutes || 0),
+    montant: s.montant || 0,
+    statut: s.statut,
+  })
   showForm.value = true
   fetchRefs()
 }

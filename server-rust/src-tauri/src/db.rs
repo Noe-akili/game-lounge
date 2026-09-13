@@ -258,6 +258,14 @@ impl Db {
         // Durée allouée par le tarif (sessions créées avant cette version) :
         // c'est elle qui déclenche l'expiration automatique. Idempotent.
         let _ = conn.execute_batch("ALTER TABLE sessions_jeu ADD COLUMN duree_allouee INTEGER DEFAULT 60;");
+        // NORMALISATION UNIQUE : les sessions actives créées par l'ANCIEN code
+        // avaient la durée du tarif pré-remplie dans duree_minutes (accumulator).
+        // Au nouveau modèle, duree_minutes = temps déjà joué -> on remet à zéro
+        // pour que le watcher n'expire pas instantanément ces sessions.
+        let _ = conn.execute_batch(
+            "UPDATE sessions_jeu SET duree_minutes = 0 WHERE statut IN ('en_cours','pause') AND (SELECT COUNT(*) FROM app_settings WHERE key = 'sessions_accum_reset_v1') = 0; \
+             INSERT OR REPLACE INTO app_settings (key, value) VALUES ('sessions_accum_reset_v1', '1');",
+        );
         apply_pragmas(&conn);
         // Test écriture immédiate pour détecter disque plein / permission early
         let _ = conn.execute_batch("CREATE TABLE IF NOT EXISTS __healthcheck (id INTEGER PRIMARY KEY); DROP TABLE IF EXISTS __healthcheck;");
@@ -278,6 +286,10 @@ impl Db {
              ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER;",
         );            let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
         let _ = conn.execute_batch("ALTER TABLE sessions_jeu ADD COLUMN duree_allouee INTEGER DEFAULT 60;");
+        let _ = conn.execute_batch(
+            "UPDATE sessions_jeu SET duree_minutes = 0 WHERE statut IN ('en_cours','pause') AND (SELECT COUNT(*) FROM app_settings WHERE key = 'sessions_accum_reset_v1') = 0; \
+             INSERT OR REPLACE INTO app_settings (key, value) VALUES ('sessions_accum_reset_v1', '1');",
+        );
         apply_pragmas(&conn);
         Ok(Db(Mutex::new(conn), Mutex::new(std::collections::HashMap::new()), Mutex::new(None)))
     }

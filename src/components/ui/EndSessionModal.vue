@@ -102,6 +102,7 @@ const loading = ref(false)
 const session = ref(null)
 const elapsed = ref(0)
 const paiementMode = ref('especes')
+const fidelite = ref(null)
 let timer = null
 
 const modesPaiement = [
@@ -114,15 +115,25 @@ const modesPaiement = [
   const sessionId = computed(() => props.console?.session_id || props.console?.id || null)
   const timerDisplay = computed(() => formatDuration(elapsed.value))
 
+  // Aperçu de facturation = MÊME règle que le backend (compute_montant) :
+  // forfait choisi + dépassement prorata. Pas de plancher artificiel de 500 FC.
   const montantTotal = computed(() => {
-    const minutes = elapsed.value / 60
+    const minutes = Math.max(1, Math.ceil(elapsed.value / 60))
     const tarif = session.value?.tarif_prix || props.console?.tarif_prix || 2000
-    return Math.max(500, Math.ceil(minutes / 60) * tarif)
+    const allouee = session.value?.duree_allouee ?? props.console?.duree_allouee ?? 0
+    if (allouee > 0) {
+      if (minutes <= allouee) return tarif
+      const depassement = minutes - allouee
+      return tarif + Math.ceil((depassement * tarif) / allouee)
+    }
+    return Math.ceil(minutes / 60) * tarif
   })
 
+  // Aperçu jetons = vraie règle de fidélité (temps OU montant), comme le backend.
   const jetonsGagnes = computed(() => {
     const minutes = elapsed.value / 60
-    return Math.max(1, Math.floor(minutes / 60) || 1)
+    const montant = montantTotal.value
+    return calcJetonsEarned(minutes, fidelite.value, montant)
   })
 
   watch(() => props.open, async (v) => {
@@ -139,6 +150,7 @@ const modesPaiement = [
         if (!elapsed.value && session.value.debut) {
           elapsed.value = Math.floor((Date.now() - new Date(session.value.debut).getTime()) / 1000)
         }
+        try { fidelite.value = await api.get('/parametres/fidelite') } catch {}
       } catch (e: any) {
         // Fallback: use console data directly if session fetch fails
         console.warn('Session fetch failed, using console data', e)

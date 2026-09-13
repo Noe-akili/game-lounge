@@ -17,6 +17,7 @@ use game_lounge_rust_lib::commands::{
     admin_only as _admin_only, get_by_id as _get_by_id, jmap, row_id, sort_desc_by_created_at,
     user_public,
 };
+use game_lounge_rust_lib::commands::compute_montant;
 use game_lounge_rust_lib::db::{Db, now_iso, today_str};
 use game_lounge_rust_lib::error::{ApiError, ApiResult};
 use game_lounge_rust_lib::validators;
@@ -756,7 +757,9 @@ async fn sessions_get(
         let duree_minutes = s.get("duree_minutes").and_then(Value::as_i64).unwrap_or(0);
         let now_ms = chrono::Utc::now().timestamp_millis();
         let duree_secondes = if statut == "en_cours" {
-            now_ms.checked_sub(parse_iso_ms(debut).unwrap_or(now_ms)).unwrap_or(0) / 1000
+            // Temps accumulé + temps depuis la (re)prise (cohérent avec l'app).
+            duree_minutes * 60
+                + now_ms.checked_sub(parse_iso_ms(debut).unwrap_or(now_ms)).unwrap_or(0) / 1000
         } else if statut == "pause" {
             duree_minutes * 60
         } else {
@@ -828,7 +831,10 @@ async fn sessions_create(
         row.insert("tarif_id".into(), json!(tarif_id_val));
         row.insert("debut".into(), json!(now_iso()));
         row.insert("fin".into(), json!(Value::Null));
-        row.insert("duree_minutes".into(), json!(duree_minutes));
+        // Même modèle que l'app Tauri : duree_minutes = temps DÉJÀ JOUÉ (0 au
+        // démarrage), la durée du tarif va dans duree_allouee.
+        row.insert("duree_minutes".into(), json!(0));
+        row.insert("duree_allouee".into(), json!(duree_minutes));
         row.insert("montant".into(), json!(tarif_prix));
         row.insert("tarif_prix".into(), json!(tarif_prix));
         row.insert("jetons_gagnes".into(), json!(0));
@@ -935,7 +941,9 @@ async fn sessions_terminer(
         } else { 0 };
         let total_secondes = duree_minutes * 60 + elapsed;
         let duree_minutes_final = ((total_secondes as f64) / 60.0).ceil().max(1.0) as i64;
-        let montant = (((duree_minutes_final as f64) / 60.0).ceil() as i64) * tarif_prix;
+        // Forfait choisi + dépassement prorata (même règle que l'app).
+        let allouee = s.get("duree_allouee").and_then(Value::as_i64).unwrap_or(0);
+        let montant = compute_montant(tarif_prix, allouee, duree_minutes_final);
 
         let mut upd_session = jmap();
         upd_session.insert("statut".into(), json!("terminee"));

@@ -13,6 +13,23 @@ fn parse_iso_ms(s: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.timestamp_millis())
 }
 
+/// Montant d'une session (règle UNIQUE partagée par l'affichage et la facture) :
+/// le joueur paie le forfait choisi (duree_allouee minutes pour tarif_prix FC).
+/// Dépassement : prorata sur le taux du forfait (tarif_prix / duree_allouee).
+/// Ex : 90 min à 3000 FC jouées 90 min -> 3000 FC (et non 6000 !).
+pub fn compute_montant(tarif_prix: i64, allouee: i64, jouee_min: i64) -> i64 {
+    if allouee > 0 {
+        if jouee_min <= allouee {
+            tarif_prix
+        } else {
+            let depassement = jouee_min - allouee;
+            tarif_prix + (depassement * tarif_prix + allouee - 1) / allouee
+        }
+    } else {
+        ((jouee_min + 59) / 60) * tarif_prix
+    }
+}
+
 fn enrich_session(
     s: &Value,
     consoles: &[Value],
@@ -129,10 +146,14 @@ pub fn sessions_get(state: State<'_, AppState>, token: Option<String>, id: i64) 
 
     let now_ms = chrono::Utc::now().timestamp_millis();
     let duree_secondes = if statut == "en_cours" {
-        now_ms
-            .checked_sub(parse_iso_ms(debut).unwrap_or(now_ms))
-            .unwrap_or(0)
-            / 1000
+        // Temps déjà accumulé (pauses, reprises) + temps écoulé depuis la
+        // (re)départ — duree_minutes N'EST PAS la durée du tarif : c'est le
+        // temps déjà joué.
+        duree_minutes * 60
+            + now_ms
+                .checked_sub(parse_iso_ms(debut).unwrap_or(now_ms))
+                .unwrap_or(0)
+                / 1000
     } else if statut == "pause" {
         duree_minutes * 60
     } else {
@@ -213,7 +234,11 @@ pub fn sessions_create(
     row.insert("tarif_id".into(), json!(tarif_id_val));
     row.insert("debut".into(), json!(now_iso()));
     row.insert("fin".into(), json!(Value::Null));
-    row.insert("duree_minutes".into(), json!(duree_minutes));
+    // duree_minutes = temps DÉJÀ JOUÉ (accumulée, ex. pauses). On démarre à 0 :
+    // la durée du tarif va UNIQUEMENT dans duree_allouee. Avant, la présélection
+    // à la durée du tarif faisait afficher 1:00:00 dès le démarrage (chrono
+    // "bizarre") et déclarait la session expirée immédiatement.
+    row.insert("duree_minutes".into(), json!(0));
     // Durée ALLOUÉE par le tarif : c'est elle qui déclenche la terminaison
     // automatique (notification) quand le temps est écoulé.
     row.insert("duree_allouee".into(), json!(duree_minutes));
@@ -377,7 +402,13 @@ pub(crate) fn finalize_session(
         Some(d) if d > 0 => d,
         _ => ((total_secondes as f64) / 60.0).ceil().max(1.0) as i64,
     };
-    let montant = (((duree_minutes_final as f64) / 60.0).ceil() as i64) * tarif_prix;
+    // Forfait choisi + dépassement prorata (voir compute_montant).
+    let allouee = s
+        .get("duree_allouee")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .max(if duree_imposee.is_some() { duree_minutes } else { 0 });
+    let montant = compute_montant(tarif_prix, allouee, duree_minutes_final);
 
     // Terminer la session. En AUTO (temps écoulé), l'heure de fin est calculée
     // exactement à l'expiration : debut + (durée imposée - déjà accumulée),
@@ -577,10 +608,20 @@ pub fn sessions_update(
         if !validators::is_valid_duree(d) {
             return Err(ApiError::bad_request("Durée invalide (1-1000)"));
         }
-        updates.insert("duree_minutes".into(), json!(d));
-        // Modifier la durée d'une session active = modifier son temps alloué
-        // (prolonger/raccourcir) : l'expiration automatique suit.
-        updates.insert("duree_allouee".into(), json!(d));
+        // Sur une session ACTIVE, la durée éditable = le temps ALLOUÉ
+        // (prolonger/raccourcir la session) : le temps déjà joué ne doit PAS
+        // être écrasé. Sur une session terminée, on modifie la durée facturée.
+        let statut = get_by_id(db(&state), "sessions_jeu", id, "Session non trouvée")?
+            .get("statut")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if statut == "en_cours" || statut == "pause" {
+            updates.insert("duree_allouee".into(), json!(d));
+        } else {
+            updates.insert("duree_minutes".into(), json!(d));
+            updates.insert("duree_allouee".into(), json!(d));
+        }
     }
     if let Some(m) = montant {
         if !validators::is_valid_prix(m) {

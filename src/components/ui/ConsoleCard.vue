@@ -126,10 +126,16 @@ const isPaused = computed(() => props.console.session_statut === 'pause' || prop
 const isFree = computed(() => props.console.etat === 'disponible' && !props.console.session_id)
 
 const montantActuel = computed(() => {
-  // Même règle que le backend : tarif horaire prorata à la MINUTE.
-  const minutes = elapsed.value / 60
+  // MÊME règle que le backend (compute_montant) : forfait choisi + dépassement
+  // prorata sur le taux du forfait. Avant : montant "horaire" qui démarrait à
+  // 0 FC et grimpait -> contre-sens pour un forfait déjà payé d'avance.
   const tarif = props.console.tarif_prix || 2000
-  return Math.ceil(minutes / 60) * tarif
+  const allouee = props.console.duree_allouee || 0
+  if (allouee <= 0) return Math.ceil(elapsed.value / 3600) * tarif
+  const joueeMin = Math.ceil(elapsed.value / 60)
+  if (joueeMin <= allouee) return tarif
+  const depassement = joueeMin - allouee
+  return tarif + Math.ceil((depassement * tarif) / allouee)
 })
 
 const statusLabel = computed(() => {
