@@ -294,7 +294,6 @@ pub fn run() {
             commands::auth_refresh,
             commands::auth_debug_info,
             commands::auth_debug_supabase_users,
-            commands::device_debug_info,
             // ==== CONSOLES ====
             commands::consoles_list,
             commands::consoles_get,
@@ -344,6 +343,7 @@ pub fn run() {
             commands::factures_list,
             commands::factures_get,
             commands::factures_pdf,
+            commands::factures_save_pdf,
             commands::factures_annuler,
             commands::factures_update,
             commands::factures_create,
@@ -373,11 +373,6 @@ pub fn run() {
             commands::sync_run,
             commands::sync_poll,
             commands::sync::sync_initial_status,
-            // ==== DEBUG / IMPORT (appareil dev uniquement) ====
-            commands::supabase_status,
-            commands::get_rust_logs,
-            commands::get_memory_logs,
-            commands::test_supabase_connection,
         ])
         .run(tauri::generate_context!())
         .expect("erreur lors de l'exécution de Tauri");

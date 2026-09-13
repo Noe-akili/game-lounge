@@ -136,6 +136,88 @@ pub fn factures_pdf(state: State<'_, AppState>, token: Option<String>, id: i64) 
     Ok(json!({ "pdf_base64": b64 }))
 }
 
+/// POST factures_save_pdf : enregistre le PDF d'une facture dans un dossier de
+/// l'appareil (par défaut /storage/emulated/0/Documents/GameLounge/Factures).
+///
+/// Android 10+ bloque l'accès direct au stockage partagé -> si l'écriture directe
+/// échoue (permission), on passe par le SAF (Storage Access Framework) côté
+/// Android : l'appareil retourne `saf_required: true` et le frontend demande à
+/// l'utilisateur de choisir le dossier via le sélecteur système (le script de
+/// patch Android déclare le répertoire via ACTION_OPEN_DOCUMENT_TREE ; les
+/// écritures suivantes utilisent les URIs persistés). Le dossier choisi est
+/// mémorisé côté frontend (localStorage gl_pdf_dir) pour les exports suivants.
+#[tauri::command]
+pub fn factures_save_pdf(
+    state: State<'_, AppState>,
+    token: Option<String>,
+    id: i64,
+    folder: Option<String>,
+    filename: Option<String>,
+) -> ApiResult<Value> {
+    claims(&state, &token)?;
+    if !validators::is_valid_id(id) {
+        return Err(ApiError::bad_request("ID invalide"));
+    }
+    let db = db(&state);
+    let f = get_by_id(db, "factures", id, "Facture non trouvée")?;
+    let joueur = f
+        .get("joueur_id")
+        .and_then(Value::as_i64)
+        .and_then(|jid| db.find_one("joueurs", |j| row_id(j) == Some(jid)).ok().flatten());
+    let lignes: Vec<Value> = db
+        .query_all("lignes_facture")?
+        .into_iter()
+        .filter(|l| l.get("facture_id").and_then(Value::as_i64) == Some(id))
+        .collect();
+
+    let pdf = crate::pdf::facture_pdf(&f, joueur.as_ref(), &lignes)
+        .map_err(|e| ApiError::internal(format!("Erreur génération PDF: {e}")))?;
+
+    // Dossier par défaut : /storage/emulated/0/Documents/GameLounge/Factures
+    let dir = folder
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("/storage/emulated/0/Documents/GameLounge/Factures");
+    // Nom de fichier sûr : numero de facture + .pdf (sanitize basique).
+    let numero = f.get("numero_facture").and_then(Value::as_str).unwrap_or("facture");
+    let safe = |s: &str| -> String {
+        s.chars()
+            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+            .collect()
+    };
+    let name = safe(filename.as_deref().unwrap_or(&format!("{}.pdf", numero)));
+    let name = if name.ends_with(".pdf") { name } else { format!("{}.pdf", name) };
+
+    let full = format!("{}/{}", dir.trim_end_matches('/'), name);
+    // Crée les dossiers parents (ignorer l'erreur si le FS le refuse : on
+    // remonte l'erreur d'écriture réelle ensuite).
+    let _ = std::fs::create_dir_all(dir);
+    match std::fs::write(&full, &pdf) {
+        Ok(_) => Ok(json!({
+            "success": true,
+            "path": full,
+            "size": pdf.len(),
+        })),
+        Err(e) => {
+            // Android 10+ : écriture directe refusée -> le frontend doit passer
+            // par le SAF (sélecteur de dossier système). On renvoie le PDF en
+            // base64 pour que l'écriture SAF se fasse côté frontend via le
+            // DocumentFile créé par le sélecteur.
+            crate::logger::log("pdf", &format!("écriture directe refusée ({}), fallback SAF", e));
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&pdf);
+            Ok(json!({
+                "success": false,
+                "saf_required": true,
+                "suggested_path": full,
+                "filename": name,
+                "pdf_base64": b64,
+                "error": format!("Accès direct refusé ({e}) — utilisez le sélecteur de dossier Android"),
+            }))
+        }
+    }
+}
+
 /// PUT /api/factures/:id/annuler
 #[tauri::command]
 pub fn factures_annuler(

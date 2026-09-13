@@ -5,7 +5,7 @@
       <h3 class="font-gaming text-lg font-bold">Outils Développeur</h3>
       <span class="badge bg-amber-500/20 text-amber-400 border-amber-500/30">Debug uniquement</span>
     </div>
-    <p class="text-sm text-txt-dim">Testez le login, Supabase et consultez les logs pour identifier les erreurs avec précision (Android 14).</p>
+    <p class="text-sm text-txt-dim">Test du login et diagnostic auth (local + cloud). Toute opération passe par l'authentification réelle admin.</p>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <div class="card">
@@ -21,14 +21,10 @@
       </div>
 
       <div class="card">
-        <h4 class="font-bold mb-3 flex items-center gap-2"><Cloud class="w-4 h-4 text-neon-blue" /> Test Cloud (Supabase)</h4>
-        <div class="space-y-3">
-          <button @click="testSupabase" :disabled="loadingSupabase" class="btn-neon-violet w-full">
-            {{ loadingSupabase ? 'Test en cours...' : 'Tester Supabase (pull/push)' }}
-          </button>
-          <button @click="testSync" :disabled="loadingSupabase" class="btn-neon-outline w-full">Lancer sync_run</button>
-          <div v-if="supabaseResult" class="p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap max-h-32 overflow-auto">{{ supabaseResult }}</div>
-        </div>
+        <h4 class="font-bold mb-3 flex items-center gap-2"><KeyRound class="w-4 h-4 text-amber-400" /> Diagnostic auth</h4>
+        <button @click="diagUsers" class="btn-neon-outline text-sm w-full">Diag users local+cloud</button>
+        <p class="text-xs text-txt-dim mt-2">Compare les comptes de la base locale et du cloud Supabase (utile quand le login échoue). Les opérations sont journalisées côté backend.</p>
+        <div v-if="diagResult" class="mt-3 p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap max-h-64 overflow-auto">{{ diagResult }}</div>
       </div>
     </div>
 
@@ -44,64 +40,19 @@
         <div v-if="logs.length===0" class="text-txt-dim">Aucun log - les logs BOOT/TRANSPORT/TAURI/AUTH s'affichent ici</div>
       </div>
     </div>
-
-    <div class="card">
-      <h4 class="font-bold mb-3 flex items-center gap-2"><Server class="w-4 h-4" /> Logs Backend (Rust) - 1.log</h4>
-      <p class="text-xs text-txt-dim mb-2">Tous les logs Rust capturés dans <code>1.log</code> (aucun logcat nécessaire)</p>
-      <div class="flex gap-2">
-        <button @click="fetchBackendLogs" class="btn-neon-outline flex-1">Statut cloud</button>
-        <button @click="fetchRustLogs" class="btn-neon-violet flex-1">Voir 1.log (Rust)</button>
-      </div>
-      <div v-if="backendStatus" class="mt-3 p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap max-h-32 overflow-auto">{{ backendStatus }}</div>
-      <div v-if="rustLogs" class="mt-3 p-3 rounded-xl bg-black/50 text-xs font-mono whitespace-pre-wrap max-h-64 overflow-auto">{{ rustLogs }}</div>
-      <button @click="testSupabaseConnection" class="btn-neon-outline w-full mt-3">Tester connexion cloud (où ça bloque)</button>
-      <div v-if="supabaseTestResult" class="mt-2 p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap">{{ supabaseTestResult }}</div>
-    </div>
-
-    <div class="card">
-      <h4 class="font-bold mb-3">Actions rapides</h4>
-      <div class="grid grid-cols-1 gap-2">
-        <button @click="clearData" class="btn-neon-outline text-sm">Clear local DB</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <h4 class="font-bold mb-3 flex items-center gap-2"><KeyRound class="w-4 h-4 text-amber-400" /> Diagnostic login</h4>
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <button @click="diagUsers" class="btn-neon-outline text-sm">Diag users local+cloud</button>
-        <button @click="refreshRustLogsAfter = true; fetchRustLogs()" class="btn-neon-outline text-sm">Voir logs auth</button>
-      </div>
-      <div v-if="diagResult" class="mt-3 p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap max-h-64 overflow-auto">{{ diagResult }}</div>
-    </div>
-
-    <div class="card">
-      <h4 class="font-bold mb-3 flex items-center gap-2"><Smartphone class="w-4 h-4 text-neon-blue" /> Identité de cet appareil (debug)</h4>
-      <p class="text-xs text-txt-dim mb-2">Le débogage est autorisé par deviceId (ULID) dans Supabase : table app_settings, clé <code>debug_devices</code>. Aucune donnée n'est embarquée dans l'APK — tout vient de Supabase, connexion requise au premier login.</p>
-      <button @click="showDeviceId" class="btn-neon-violet text-sm w-full">Afficher mon deviceId + statut debug</button>
-      <div v-if="deviceInfo" class="mt-3 p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap">{{ deviceInfo }}</div>
-    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { api } from '@/utils/api'
-import { Bug, LogIn, Cloud, FileText, Server, KeyRound, Smartphone } from 'lucide-vue-next'
-
-function adminToken() {
-  return localStorage.getItem('gl_token') || undefined
-}
+import { Bug, LogIn, FileText, KeyRound } from 'lucide-vue-next'
 
 const testEmail = ref('')
 const testPassword = ref('')
 const loadingLogin = ref(false)
 const loginResult = ref('')
-const loadingSupabase = ref(false)
-const supabaseResult = ref('')
 const logs = ref<string[]>([])
-const backendStatus = ref('')
-const rustLogs = ref('')
-const supabaseTestResult = ref('')
 
 function logColor(l: string) {
   if (l.includes('[BOOT]') || l.includes('[DASHBOARD_START]')) return 'text-neon-green'
@@ -126,9 +77,6 @@ onMounted(() => {
   console.log = (...a: any[]) => { captureLog(...a); origLog(...a) }
   console.warn = (...a: any[]) => { captureLog('WARN', ...a); origWarn(...a) }
   console.error = (...a: any[]) => { captureLog('ERROR', ...a); origError(...a) }
-  // Test initial
-  fetchBackendLogs()
-  // Capture BOOT logs déjà présents
   captureLog('[DEV] Outils développeur chargés')
 })
 
@@ -149,71 +97,11 @@ async function testLogin() {
   } finally { loadingLogin.value = false }
 }
 
-async function testSupabase() {
-  loadingSupabase.value = true
-  supabaseResult.value = ''
-  try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    const status = await invoke('supabase_status', { token: adminToken() })
-    supabaseResult.value = `supabase_status:\n${JSON.stringify(status, null, 2)}`
-  } catch (e: any) {
-    supabaseResult.value = `❌ Supabase test échoué: ${e.message || String(e)}`
-  } finally { loadingSupabase.value = false }
-}
-
-async function testSync() {
-  loadingSupabase.value = true
-  supabaseResult.value = ''
-  try {
-    const res = await api.post('/sync/run')
-    if (res.started === false) { supabaseResult.value = `⏳ Sync déjà en cours`; return }
-    // Sync en arrière-plan : on poll jusqu'au résultat final
-    let last: any = null
-    for (let i = 0; i < 80; i++) {
-      await new Promise(r => setTimeout(r, 1500))
-      try { last = (await api.get('/sync/poll')).last_sync } catch {}
-      if (last && last.running !== true) break
-    }
-    supabaseResult.value = `✅ sync_run (arrière-plan):\n${JSON.stringify(last || res, null, 2)}`
-  } catch (e: any) {
-    supabaseResult.value = `❌ sync_run échoué: ${e.message}`
-  } finally { loadingSupabase.value = false }
-}
-
-async function fetchBackendLogs() {
-  try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    const s = await invoke('supabase_status', { token: adminToken() })
-    backendStatus.value = JSON.stringify(s, null, 2)
-  } catch (e: any) {
-    backendStatus.value = `Erreur: ${e.message}`
-  }
-}
-async function fetchRustLogs() {
-  try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    rustLogs.value = await invoke('get_rust_logs', { token: adminToken() })
-    if (!rustLogs.value) rustLogs.value = await invoke('get_memory_logs', { token: adminToken() }).then((a: string[]) => a.join('\n'))
-  } catch (e: any) {
-    rustLogs.value = `Erreur get_rust_logs: ${e.message}`
-  }
-}
-async function testSupabaseConnection() {
-  supabaseTestResult.value = 'Test en cours...'
-  try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    const res = await invoke('test_supabase_connection', { token: adminToken() })
-    supabaseTestResult.value = JSON.stringify(res, null, 2)
-    // Rafraîchit aussi les logs Rust
-    fetchRustLogs()
-  } catch (e: any) {
-    supabaseTestResult.value = `❌ Erreur: ${e.message}`
-  }
+function adminToken() {
+  return localStorage.getItem('gl_token') || undefined
 }
 
 const diagResult = ref('')
-// Ref (et non constante) : le template l'assigne avant de recharger les logs.
-const refreshRustLogsAfter = ref(false)
 
 async function diagUsers() {
   diagResult.value = 'Diagnostic en cours...'
@@ -233,34 +121,9 @@ async function diagUsers() {
   }
 }
 
-const deviceInfo = ref('')
-
-async function showDeviceId() {
-  deviceInfo.value = 'Lecture en cours...'
-  try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    const info = await invoke('device_debug_info', { token: adminToken() })
-    deviceInfo.value = JSON.stringify(info, null, 2)
-  } catch (e: any) {
-    deviceInfo.value = `❌ Erreur: ${e?.message || e}`
-  }
-}
-
 function clearLogs() { logs.value = [] }
 function copyLogs() {
   const text = logs.value.join('\n')
   navigator.clipboard?.writeText(text).then(() => alert('Logs copiés')).catch(() => {})
-}
-async function clearData() {
-  if (!confirm('Vider localStorage et secureStore ?')) return
-  localStorage.clear()
-  try {
-    const { Store } = await import('@tauri-apps/plugin-store')
-    const store = await Store.load('secure.dat')
-    await store.clear()
-    await store.save()
-  } catch {}
-  alert('Données vidées, redémarrage...')
-  location.reload()
 }
 </script>

@@ -2,7 +2,6 @@
 
 pub mod auth;
 pub mod consoles;
-pub mod debug;
 pub mod factures;
 pub mod jetons;
 pub mod jeux;
@@ -18,7 +17,6 @@ pub mod users;
 
 pub use auth::*;
 pub use consoles::*;
-pub use debug::*;
 pub use factures::*;
 pub use jetons::*;
 pub use jeux::*;

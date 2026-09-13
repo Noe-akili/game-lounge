@@ -114,6 +114,7 @@ const ROUTES: RouteDef[] = [
   // ===== FACTURES =====
   { m: 'GET', p: '/factures', f: ({ token, query }) => ({ cmd: 'factures_list', args: { token, statut: query.statut, joueurId: num(query.joueur_id), dateStart: query.date_start, dateEnd: query.date_end } }) },
   { m: 'GET', p: '/factures/:id/pdf', f: ({ token, segs }) => ({ cmd: 'factures_pdf', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/factures/:id/save-pdf', f: ({ token, segs, body }) => ({ cmd: 'factures_save_pdf', args: { token, id: num(segs.id), folder: val(body, 'folder'), filename: val(body, 'filename') } }) },
   { m: 'GET', p: '/factures/:id', f: ({ token, segs }) => ({ cmd: 'factures_get', args: { token, id: num(segs.id) } }) },
   { m: 'POST', p: '/factures', f: ({ token, body }) => ({ cmd: 'factures_create', args: { token, sessionId: num(val(body, 'session_id')), joueurId: num(val(body, 'joueur_id')), montantHt: num(val(body, 'montant_ht')), tauxTva: num(val(body, 'taux_tva')), montantTva: num(val(body, 'montant_tva')), montantTtc: num(val(body, 'montant_ttc')), modePaiement: val(body, 'mode_paiement'), statut: val(body, 'statut') } }) },
   { m: 'PUT', p: '/factures/:id/annuler', f: ({ token, segs }) => ({ cmd: 'factures_annuler', args: { token, id: num(segs.id) } }) },

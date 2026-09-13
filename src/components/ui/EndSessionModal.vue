@@ -1,6 +1,32 @@
 <template>
   <Modal :open="open" size="lg" @close="$emit('close')">
-    <div class="p-6" v-if="session">
+    <!-- Facture générée : proposition d'export / impression -->
+    <div class="p-6" v-if="endedFacture">
+      <div class="flex flex-col items-center text-center py-4">
+        <div class="w-14 h-14 rounded-2xl bg-neon-green/20 flex items-center justify-center mb-4">
+          <CheckCircle class="w-8 h-8 text-neon-green" />
+        </div>
+        <h2 class="font-gaming text-xl font-bold mb-1">Session terminée</h2>
+        <p class="text-txt-dim mb-6">
+          Facture <span class="font-bold text-txt-base">{{ endedFacture.numero_facture }}</span>
+          — <span class="font-gaming text-neon-green">{{ formatCurrency(endedFacture.montant) }}</span>
+        </p>
+        <div class="flex flex-col sm:flex-row gap-3 w-full max-w-sm">
+          <button @click="exportPdf" :disabled="pdfBusy"
+            class="btn-neon-outline flex-1 flex items-center justify-center gap-2">
+            <Loader2 v-if="pdfBusy" class="w-4 h-4 animate-spin" />
+            <Download v-else class="w-4 h-4" /> Exporter PDF
+          </button>
+          <button @click="printPdf" :disabled="pdfBusy"
+            class="btn-neon-violet flex-1 flex items-center justify-center gap-2">
+            <Printer class="w-4 h-4" /> Imprimer
+          </button>
+        </div>
+        <button @click="closeAfterEnd" class="mt-4 text-sm text-txt-dim hover:text-txt-base underline">Fermer</button>
+      </div>
+    </div>
+
+    <div class="p-6" v-else-if="session">
       <h2 class="font-gaming text-2xl font-bold mb-6 flex items-center gap-3">
         <div class="w-10 h-10 rounded-xl bg-neon-red/20 flex items-center justify-center">
           <Square class="w-5 h-5 text-neon-red" />
@@ -92,8 +118,9 @@ import { api } from '@/utils/api'
 import { formatCurrency, formatDuration, calcJetonsEarned } from '@/utils/helpers'
 import { toast } from 'vue-sonner'
 import Modal from './Modal.vue'
-import { Square, Trophy, CheckCircle, Loader2, Banknote, CreditCard, Smartphone, Coins } from 'lucide-vue-next'
+import { Square, Trophy, CheckCircle, Loader2, Banknote, CreditCard, Smartphone, Coins, Download, Printer } from 'lucide-vue-next'
 import { isValidModePaiement } from '@/utils/validators'
+import { saveFacturePdf, openFacturePdf } from '@/lib/clientPdf'
 
 const props = defineProps({ open: Boolean, console: Object })
 const emit = defineEmits(['close', 'ended'])
@@ -103,6 +130,8 @@ const session = ref(null)
 const elapsed = ref(0)
 const paiementMode = ref('especes')
 const fidelite = ref(null)
+const endedFacture = ref<any>(null)
+const pdfBusy = ref(false)
 let timer = null
 
 const modesPaiement = [
@@ -143,6 +172,7 @@ const modesPaiement = [
       session.value = null
       elapsed.value = 0
       paiementMode.value = 'especes'
+      endedFacture.value = null
 
       try {
         session.value = await api.get(`/sessions/${sessionId.value}`)
@@ -202,12 +232,47 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       })
       toast.success(`Facture ${result.facture?.numero_facture} générée — ${formatCurrency(result.montant)}`)
       emit('ended')
-      emit('close')
+      // Garde la modale ouverte pour proposer Exporter/Imprimer la facture.
+      if (result.facture?.id) {
+        endedFacture.value = { ...result.facture, montant: result.montant }
+      } else {
+        emit('close')
+      }
     } catch (e: any) {
       console.error('Erreur terminaison session:', e)
       toast.error(e.message || 'Erreur lors de la terminaison')
     } finally {
       loading.value = false
     }
+  }
+
+  async function exportPdf() {
+    if (!endedFacture.value?.id) return
+    pdfBusy.value = true
+    try {
+      const res = await saveFacturePdf(endedFacture.value.id, { filename: `${endedFacture.value.numero_facture}.pdf` })
+      toast.success(res.path ? `PDF enregistré : ${res.path}` : 'PDF enregistré')
+    } catch (e: any) {
+      toast.error(e?.message || 'Erreur export PDF')
+    } finally {
+      pdfBusy.value = false
+    }
+  }
+
+  async function printPdf() {
+    if (!endedFacture.value?.id) return
+    pdfBusy.value = true
+    try {
+      await openFacturePdf(endedFacture.value.id)
+    } catch (e: any) {
+      toast.error(e?.message || 'Erreur impression')
+    } finally {
+      pdfBusy.value = false
+    }
+  }
+
+  function closeAfterEnd() {
+    endedFacture.value = null
+    emit('close')
   }
 </script>

@@ -43,8 +43,11 @@
           <button @click="viewDetail(f)" class="p-2 rounded-lg hover:bg-bg-hover text-txt-dim" title="Voir">
             <Eye class="w-4 h-4" />
           </button>
-          <button @click="downloadPdf(f)" class="p-2 rounded-lg hover:bg-neon-blue/10 text-neon-blue" title="PDF">
+          <button @click="downloadPdf(f)" class="p-2 rounded-lg hover:bg-neon-blue/10 text-neon-blue" title="Exporter PDF">
             <Download class="w-4 h-4" />
+          </button>
+          <button @click="printPdf(f)" class="p-2 rounded-lg hover:bg-neon-violet/10 text-neon-violet" title="Imprimer">
+            <Printer class="w-4 h-4" />
           </button>
         </div>
       </div>
@@ -81,7 +84,10 @@
         <div class="flex gap-3">
           <button @click="showDetail = false" class="btn-neon-outline flex-1">Fermer</button>
           <button @click="downloadPdf(selected)" class="btn-neon-blue flex-1 flex items-center justify-center gap-2">
-            <Download class="w-4 h-4" /> Télécharger PDF
+            <Download class="w-4 h-4" /> Exporter PDF
+          </button>
+          <button @click="printPdf(selected)" class="btn-neon-outline flex-1 flex items-center justify-center gap-2">
+            <Printer class="w-4 h-4" /> Imprimer
           </button>
         </div>
       </div>
@@ -92,11 +98,11 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api } from '@/utils/api'
-import { getFacturePdfBlob } from '@/lib/clientPdf'
+import { getFacturePdfBlob, saveFacturePdf } from '@/lib/clientPdf'
 import { formatCurrency, formatDate } from '@/utils/helpers'
 import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
-import { CheckCircle, Clock, XCircle, Receipt, RefreshCw, Eye, Download } from 'lucide-vue-next'
+import { CheckCircle, Clock, XCircle, Receipt, RefreshCw, Eye, Download, Printer } from 'lucide-vue-next'
 import Loader from '@/components/ui/Loader.vue'
 
 const factures = ref([])
@@ -119,33 +125,26 @@ async function viewDetail(f) {
 }
 
 async function downloadPdf(f) {
+  // Enregistre dans le dossier choisi (mémorisé) ; fallback ouverture si
+  // Android refuse l'accès direct (Scoped Storage -> SAF).
+  try {
+    const res = await saveFacturePdf(f.id, { filename: `${f.numero_facture}.pdf` })
+    if (res.path) toast.success(`PDF enregistré : ${res.path}`)
+    else if (res.opened) toast.info('PDF ouvert — utilisez "Enregistrer" du viewer')
+  } catch (e: any) {
+    console.error('[pdf] save failed', e)
+    toast.error(e?.message || 'Erreur enregistrement PDF')
+  }
+}
+
+async function printPdf(f) {
   try {
     const blob = await getFacturePdfBlob(f.id)
-    // Sur Android WebView, a.click() peut être bloqué (pas de download manager)
-    // On essaie d'abord l'ancrage classique, sinon on ouvre le PDF dans le viewer système
     const url = URL.createObjectURL(blob)
-    try {
-      const a = document.createElement('a'); a.href = url; a.download = `${f.numero_facture}.pdf`
-      // Android nécessite que l'élément soit dans le DOM
-      document.body.appendChild(a); a.click(); a.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 2000)
-      toast.success('PDF téléchargé')
-    } catch (e) {
-      // Fallback : ouvrir dans nouvel onglet (Android viewer)
-      window.open(url, '_blank')
-      setTimeout(() => URL.revokeObjectURL(url), 5000)
-    }
-    // Tauri opener (si APK) : tente d'ouvrir avec l'app externe
-    try {
-      const w: any = window as any
-      if (w.__TAURI__?.opener?.openUrl) {
-        // On laisse le download classique, opener en plus si disponible
-      }
-    } catch {}
-  } catch (e: any) {
-    console.error('[pdf] download failed', e)
-    toast.error(e?.message || 'Erreur téléchargement PDF')
-  }
+    const w = window.open(url, '_blank')
+    if (!w) toast.error('Autorisez les fenêtres pop-up pour imprimer')
+    setTimeout(() => URL.revokeObjectURL(url), 8000)
+  } catch (e: any) { toast.error(e?.message || 'Erreur ouverture PDF') }
 }
 
 onMounted(fetchData)
