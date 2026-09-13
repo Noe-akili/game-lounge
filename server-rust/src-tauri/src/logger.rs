@@ -56,7 +56,10 @@ pub fn init() {
 }
 
 pub fn log(target: &str, msg: &str) {
-    let line = format!("[{}] {} - {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"), target, msg);
+    // Heure LOCALE dans les logs : c'est l'heure que lit l'utilisateur sur le
+    // téléphone. Avant (UTC), une session démarrée à 18:51 locales loggait
+    // "16:51" -> l'historique/logs semblaient afficher une autre heure.
+    let line = format!("[{}] {} - {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"), target, msg);
     // Mémoire
     if let Some(buf) = LOG_BUF.get() {
         if let Ok(mut guard) = buf.lock() {

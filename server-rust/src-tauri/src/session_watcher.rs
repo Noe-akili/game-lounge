@@ -48,9 +48,8 @@ fn check_expired_sessions(app: &tauri::AppHandle, db: &Db) {
             else {
                 break;
             };
-            // Le chrono est `debut + duree_minutes (déjà accumulée, ex. pauses)`.
-            // Pour simplifier et rester EXACT dans le cas général (aucune pause),
-            // une session est expirée si debut + allouée - accumulée < maintenant.
+            // Le chrono = `debut + secondes accumulées (pauses) + allocation
+            // restante`. Une session est expirée si cet instant est passé.
             let debut_ms = conn
                 .query_row(
                     "SELECT debut FROM sessions_jeu WHERE id = ?1",
@@ -71,7 +70,7 @@ fn check_expired_sessions(app: &tauri::AppHandle, db: &Db) {
             }
             // Durée EXACTE à facturer, À LA SECONDE : allocation entière +
             // dépassement réel (reste_s est négatif = secondes de retard du
-            // watcher, PAS un temps joué : on ne l'arrondit plus à la minute).
+            // watcher, PAS du temps joué : on ne l'arrondit plus à la minute).
             let depassement_s = (-reste_s).max(0);
             let duree_totale_s = allouee * 60 + depassement_s;
             expired.push((id, duree_totale_s));
