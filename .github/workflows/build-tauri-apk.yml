@@ -78,7 +78,7 @@ jobs:
 
       - name: Build Android APK (tauri android build --apk, arm64 only)
         working-directory: server-rust
-        run: npm run android:build -- --target aarch64-linux-android
+        run: npm run android:build -- --target aarch64
 
       - name: Decode signing keystore
         if: env.KEYSTORE_BASE64 != ''
