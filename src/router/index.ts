@@ -37,11 +37,11 @@ const router = createRouter({
   routes
 })
 
-router.beforeEach((to, _from, next) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
-  if (to.path !== '/login' && to.path !== '/initialisation' && !auth.isAuthenticated) return next('/login')
-  if (to.path === '/login' && auth.isAuthenticated) return next(auth.user?.role === 'admin' ? '/admin' : '/dashboard')
-  next()
+  await auth.restoreSession()
+  if (to.path !== '/login' && !auth.isAuthenticated) return '/login'
+  if (to.path === '/login' && auth.isAuthenticated) return auth.user?.role === 'admin' ? '/admin' : '/dashboard'
 })
 
 export default router

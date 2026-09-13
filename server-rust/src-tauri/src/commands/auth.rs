@@ -28,6 +28,12 @@ fn record_failure(state: &State<'_, AppState>, key: &str) {
     }
 }
 
+fn clear_failures(state: &State<'_, AppState>, key: &str) {
+    if let Ok(mut map) = state.login_attempts.lock() {
+        map.remove(key);
+    }
+}
+
 fn too_many_failures(state: &State<'_, AppState>, key: &str) -> bool {
     let now = now_ms();
     match state.login_attempts.lock() {
@@ -106,10 +112,10 @@ async fn try_supabase_login(app: &tauri::AppHandle, state: &State<'_, AppState>,
             map.insert("role".into(), json!(supabase_user.role));
             map.insert("nom".into(), json!(supabase_user.nom));
             if let Some(ca) = supabase_user.created_at { map.insert("created_at".into(), json!(ca)); }
-            // Persiste en local : met à jour role/nom mais NE REMPLACE PAS un hash local
-            // existant par le hash Supabase (algos possiblement incompatibles).
+            // Après validation cloud, conserve le hash distant localement pour permettre
+            // une connexion hors ligne ; il est ensuite migré vers Argon2id localement.
             let database = db(state);
-            match database.find_one_all("users", |r| r.get("email").and_then(Value::as_str) == Some(email)) {
+            match database.find_one_all("users", |r| r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(email))) {
                 Ok(Some(existing)) => {
                     // Utilisateur soft-deleted : login refusé, on ne le ressuscite pas
                     if existing.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1 {
@@ -119,6 +125,7 @@ async fn try_supabase_login(app: &tauri::AppHandle, state: &State<'_, AppState>,
                     let mut updates = jmap();
                     updates.insert("role".into(), json!(supabase_user.role));
                     updates.insert("nom".into(), json!(supabase_user.nom));
+                    updates.insert("password_hash".into(), json!(supabase_user.password_hash));
                     if let Some(id) = existing.get("id").and_then(Value::as_i64) {
                         let _ = database.update("users", id, &updates);
                         if let Ok(Some(u)) = database.find_one("users", |r| r.get("id").and_then(Value::as_i64) == Some(id)) { return Ok(Some(u)); }
@@ -144,6 +151,8 @@ async fn try_supabase_login(_app: &tauri::AppHandle, _state: &State<'_, AppState
 
 #[tauri::command(async)]
 pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email: String, password: String) -> ApiResult<Value> {
+    let email = email.trim().to_ascii_lowercase();
+    let rate_key = format!("email:{}", email);
     let t0 = now_ms();
     // Étapes de diagnostic chronométrées (mission §1) : permettent de dire exactement
     // "Login total: Xs, Supabase Auth: Ys, SQLite: Zs" dans 1.log. AUCUN mot de
@@ -159,14 +168,14 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
     if !validators::is_valid_password(&password) {
         return Err(ApiError::bad_request("Mot de passe invalide (min 6 caractères, au moins une lettre)"));
     }
-    if too_many_failures(&state, "local") {
+    if too_many_failures(&state, &rate_key) {
         crate::logger::log_auth("login refusé: trop d'échecs (rate limit)");
         return Err(ApiError::new(429, "Trop de tentatives, réessayez plus tard"));
     }
 
     let database = db(&state);
     let t_find = now_ms();
-    let local_user = database.find_one("users", |r| r.get("email").and_then(Value::as_str) == Some(email.as_str()))?;
+    let local_user = database.find_one("users", |r| r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(&email)))?;
     crate::logger::log_auth(&format!("AUTH_DB_LOOKUP {} ms, trouvé={}", t_find - t0, local_user.is_some()));
     crate::logger::log_auth("AUTH_START");
 
@@ -200,7 +209,7 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
             match supabase_result? {
                 Some(nu) => { user = Some(nu); was_supabase = true; }
                 None => {
-                    record_failure(&state, "local");
+                    record_failure(&state, &rate_key);
                     return Err(ApiError::unauthorized("Identifiants incorrects"));
                 }
             }
@@ -212,13 +221,14 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
         match supabase_result? {
             Some(nu) => { user = Some(nu); was_supabase = true; }
             None => {
-                record_failure(&state, "local");
+                record_failure(&state, &rate_key);
                 return Err(ApiError::unauthorized("Identifiants incorrects"));
             }
         }
     }
 
     let user = user.ok_or_else(|| ApiError::unauthorized("Identifiants incorrects"))?;
+    clear_failures(&state, &rate_key);
     crate::logger::log_auth(&format!("AUTH_SUCCESS ({} ms)", now_ms() - t0));
     let stored = user.get("password_hash").and_then(Value::as_str).unwrap_or("");
 

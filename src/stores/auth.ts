@@ -18,6 +18,7 @@ function loadToken() {
 export const useAuthStore = defineStore('auth', () => {
   const user = ref(loadUser())
   const token = ref(loadToken())
+  const sessionReady = ref(false)
 
   const isAuthenticated = computed(() => !!token.value && !!user.value)
   const isAdmin = computed(() => user.value?.role === 'admin')
@@ -32,13 +33,33 @@ export const useAuthStore = defineStore('auth', () => {
     return data.user
   }
 
-  async function logout() {
-    try { await api.post('/auth/logout') } catch {}
+  function clearSession() {
     token.value = null
     user.value = null
-    localStorage.removeItem('gl_token')
-    localStorage.removeItem('gl_user')
-    localStorage.removeItem('gl_refresh_token')
+    try {
+      localStorage.removeItem('gl_token')
+      localStorage.removeItem('gl_user')
+      localStorage.removeItem('gl_refresh_token')
+    } catch {}
+  }
+
+  async function restoreSession() {
+    if (sessionReady.value) return isAuthenticated.value
+    try {
+      if (!token.value || !user.value) { clearSession(); return false }
+      await fetchMe()
+      return true
+    } catch {
+      clearSession()
+      return false
+    } finally {
+      sessionReady.value = true
+    }
+  }
+
+  async function logout() {
+    try { await api.post('/auth/logout') } catch {}
+    clearSession()
   }
 
   async function fetchMe() {
@@ -47,5 +68,9 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('gl_user', JSON.stringify(data.user))
   }
 
-  return { user, token, isAuthenticated, isAdmin, login, logout, fetchMe }
+  if (typeof window !== 'undefined') {
+    window.addEventListener('gl:unauthorized', clearSession)
+  }
+
+  return { user, token, sessionReady, isAuthenticated, isAdmin, login, logout, fetchMe, restoreSession, clearSession }
 })

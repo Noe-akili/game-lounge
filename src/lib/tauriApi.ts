@@ -227,7 +227,7 @@ export async function handleTauriRequest(
         }
       }
       if (status === 401) {
-        try { localStorage.removeItem('gl_token'); localStorage.removeItem('gl_user') } catch {}
+        try { localStorage.removeItem('gl_token'); localStorage.removeItem('gl_user'); localStorage.removeItem('gl_refresh_token'); window.dispatchEvent(new Event('gl:unauthorized')) } catch {}
       }
       console.warn(`[tauriApi] ${cmd} failed:`, { status, message, raw: e })
       return { status, body: { message } }

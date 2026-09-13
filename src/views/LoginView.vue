@@ -57,7 +57,7 @@ async function handleLogin() {
   error.value = ''
   success.value = false
   try {
-    await auth.login(form.email.trim().toLowerCase(), form.password.trim())
+    await auth.login(form.email.trim().toLowerCase(), form.password)
     success.value = true // "Connexion réussie ✓" (mission §17)
 
     // Première installation ? -> écran d'initialisation avec progression réelle.

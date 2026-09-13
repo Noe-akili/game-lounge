@@ -167,10 +167,10 @@ pub fn run() {
                 eprintln!("Final DB move panicked, emergency in-memory");
                 Db::open_in_memory().unwrap_or_else(|e| panic!("emergency in-memory failed: {e}"))
             });
-            let jwt_secret = runtime_jwt_secret();
-            // Charge .env si présent (pour DATABASE_URL Supabase)
+            // Charge .env avant de lire JWT_SECRET (desktop/diagnostic).
             #[cfg(feature = "supabase-sync")]
             let _ = dotenvy::dotenv();
+            let jwt_secret = runtime_jwt_secret();
             // Canal de réveil de la sync instantanée : créé AVANT le move de `db` dans
             // AppState (le sender est branché dans Db, le receiver va au worker).
             #[cfg(feature = "supabase-sync")]
