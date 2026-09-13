@@ -5,6 +5,9 @@ import { useAuthStore } from '@/stores/auth'
 
 const routes = [
   { path: '/login', name: 'Login', component: () => import('@/views/LoginView.vue') },
+  // Écran de première synchronisation (progression réelle du SyncEngine Rust) —
+  // affiché une seule fois, entre le login et le dashboard (mission §6).
+  { path: '/initialisation', name: 'Initialisation', component: () => import('@/views/InitialisationView.vue') },
   {
     path: '/',
     component: () => import('@/components/layout/AppLayout.vue'),
@@ -36,7 +39,7 @@ const router = createRouter({
 
 router.beforeEach((to, _from, next) => {
   const auth = useAuthStore()
-  if (to.path !== '/login' && !auth.isAuthenticated) return next('/login')
+  if (to.path !== '/login' && to.path !== '/initialisation' && !auth.isAuthenticated) return next('/login')
   if (to.path === '/login' && auth.isAuthenticated) return next(auth.user?.role === 'admin' ? '/admin' : '/dashboard')
   next()
 })

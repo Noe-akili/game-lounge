@@ -13,7 +13,18 @@
       </div>
 
       <div class="flex items-center gap-4">
-        <div v-if="syncEnabled" class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-neon-green/10 border border-neon-green/20" title="Sync cloud active">
+        <!-- Delta sync discret (mission §12) : le dashboard reste utilisable pendant
+             la synchronisation en arrière-plan. visible = admin (statut) ou tous
+             (progression émise par Rust pendant un delta/en init). -->
+        <div
+          v-if="syncBadgeVisible"
+          class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-neon-green/10 border border-neon-green/20"
+          :title="sync.message || 'Synchronisation cloud'"
+        >
+          <RefreshCw class="w-3.5 h-3.5 text-neon-green" :class="{ 'animate-spin': sync.isBusy }" />
+          <span class="text-[10px] font-medium text-neon-green">{{ syncBadgeText }}</span>
+        </div>
+        <div v-else-if="syncEnabled" class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-neon-green/10 border border-neon-green/20" title="Sync cloud active">
           <Cloud class="w-3.5 h-3.5 text-neon-green" :class="{ 'animate-pulse': syncActive }" />
           <span class="text-[10px] font-medium text-neon-green">Sync</span>
         </div>
@@ -33,15 +44,17 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { Menu, X, Bell, Cloud } from 'lucide-vue-next'
+import { Menu, X, Bell, Cloud, RefreshCw } from 'lucide-vue-next'
 import { api } from '@/utils/api'
 import { useAuthStore } from '@/stores/auth'
+import { useSyncStore, PHASE_LABELS } from '@/stores/sync'
 
 defineProps({ sidebarOpen: Boolean })
 defineEmits(['toggleSidebar'])
 
 const route = useRoute()
 const auth = useAuthStore()
+const sync = useSyncStore()
 const now = ref(new Date())
 let timer = null
 let syncTimer = null
@@ -62,8 +75,18 @@ onMounted(() => {
   timer = setInterval(() => { now.value = new Date() }, 1000)
   checkSync()
   syncTimer = setInterval(checkSync, 30000)
+  sync.bindListeners() // événements Rust sync-progress etc. (delta sync visible)
 })
 onUnmounted(() => { clearInterval(timer); clearInterval(syncTimer) })
+
+// Badge delta sync : "↻ Sync" pendant un delta, "N changements" restants, "⚠" en erreur.
+const syncBadgeVisible = computed(() => sync.isBusy || sync.status === 'error')
+const syncBadgeText = computed(() => {
+  if (sync.status === 'error') return 'Sync échouée'
+  if (sync.phase && PHASE_LABELS[sync.phase]) return PHASE_LABELS[sync.phase]
+  if (sync.total > 0) return `Sync ${sync.current}/${sync.total}`
+  return 'Synchronisation…'
+})
 
 const currentTime = computed(() =>
   now.value.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })

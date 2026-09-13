@@ -41,9 +41,13 @@ import { useRouter } from 'vue-router'
 import { motion } from 'motion-v'
 import { Toaster } from 'vue-sonner'
 import { useAuthStore } from '@/stores/auth'
+import { useSyncStore } from '@/stores/sync'
 
 const router = useRouter()
 const auth = useAuthStore()
+// Écoute GLOBALE des événements Rust (sync-progress, sync-completed, sync-error) :
+// posée au niveau App pour que le store soit à jour sur toutes les vues.
+useSyncStore().bindListeners()
 const routeLoading = ref(false)
 const isMobile = typeof window !== 'undefined' && window.innerWidth < 640
 

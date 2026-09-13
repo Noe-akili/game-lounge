@@ -2,6 +2,58 @@
 use serde_json::{Value, json};
 use crate::error::{ApiError, ApiResult};
 
+use tauri::{AppHandle, Emitter};
+
+/// Payload standard de progression de sync (envoyé au WebView via emit).
+/// Tous les chiffres viennent du travail RÉELLEMENT effectué (spec mission.md §7) :
+/// jamais de compteur simulé.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SyncProgress {
+    pub phase: String,
+    pub current: u64,
+    pub total: u64,
+    pub percent: u32,
+    pub processed: u64,
+    pub message: String,
+    pub status: String,
+}
+
+impl SyncProgress {
+    pub fn new(phase: &str, message: &str, status: &str) -> Self {
+        SyncProgress { phase: phase.into(), current: 0, total: 0, percent: 0, processed: 0, message: message.into(), status: status.into() }
+    }
+    pub fn with_counts(mut self, current: u64, total: u64, processed: u64) -> Self {
+        self.current = current;
+        self.total = total;
+        self.processed = processed;
+        self.percent = if total == 0 { if self.status == "completed" { 100 } else { 0 } } else { ((current * 100) / total).min(100) as u32 };
+        self
+    }
+}
+
+/// Émet un événement de progression au WebView (fire-and-forget : jamais
+/// d'erreur si aucun listener). Message = "sync-progress" (phase intermédiaire)
+/// ou "sync-completed" / "sync-error" (fin).
+pub fn emit_progress(app: &AppHandle, p: &SyncProgress, final_event: Option<&str>) {
+    let payload = json!({
+        "phase": p.phase,
+        "current": p.current,
+        "total": p.total,
+        "percent": p.percent,
+        "processed": p.processed,
+        "message": p.message,
+        "status": p.status,
+    });
+    let ev = final_event.unwrap_or("sync-progress");
+    if let Err(e) = app.emit(ev, payload.clone()) {
+        eprintln!("[sync] emit {} failed: {}", ev, e);
+    }
+    if final_event.is_some() {
+        // Les vues qui n'écoutent que sync-progress reçoivent quand même l'état final.
+        let _ = app.emit("sync-progress", payload);
+    }
+}
+
 #[cfg(feature = "supabase-sync")]
 use tokio_postgres::{Client, NoTls};
 
@@ -453,6 +505,26 @@ pub async fn sync_max_sequence(pool: &SupabasePool) -> Result<i64, String> {
     }
 }
 
+/// Nombre de changements restants dans le journal après un curseur (delta sync).
+/// Sert au TOTAL de la barre de progression delta — un seul COUNT au lieu de
+/// télécharger la base (mission §4 : ne jamais re-télécharger tout).
+#[cfg(feature = "supabase-sync")]
+pub async fn sync_changes_count_after(pool: &SupabasePool, after: i64) -> Result<i64, String> {
+    let sql = format!("SELECT COUNT(*) FROM sync_changes WHERE sequence > {}", after);
+    match supabase_query(pool, &sql, &[]).await {
+        Ok(rows) => {
+            if rows.is_empty() {
+                Ok(0)
+            } else {
+                Ok(pg_col_to_string_pub(&rows[0], 0)
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .unwrap_or(0))
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Script SQL d'UN événement outbox : journal sync_changes (idempotent via
 /// ON CONFLICT DO NOTHING) + application à la table cible (upsert ou tombstone).
 /// Retourne None si l'événement est invalide. Protocole SIMPLE (batch_execute).
@@ -699,6 +771,37 @@ pub async fn pull_all(pool: &SupabasePool) -> ApiResult<std::collections::HashMa
 
 /// Fallback résilient : pull table par table (une table absente ne bloque pas les autres).
 /// Seule une erreur sur TOUTES les tables (connexion morte) est propagée.
+#[cfg(feature = "supabase-sync")]
+pub async fn pull_table(pool: &SupabasePool, table: &str) -> ApiResult<Vec<Value>> {
+    let sql = format!("SELECT COALESCE(json_agg(t)::text, '[]') FROM (SELECT * FROM \"{}\") t", table);
+    match supabase_query(pool, &sql, &[]).await {
+        Ok(jrows) => {
+            let mut vec = Vec::new();
+            if !jrows.is_empty() {
+                if let Ok(s) = jrows[0].try_get::<_, String>(0) {
+                    if let Ok(v) = serde_json::from_str::<Value>(&s) {
+                        if let Some(arr) = v.as_array() {
+                            for item in arr {
+                                let deleted = item.get("deleted").map(is_deleted_value).unwrap_or(false);
+                                if deleted { continue; }
+                                vec.push(item.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(vec)
+        }
+        Err(e) => {
+            // Table absente du schéma cloud (base neuve) -> vide, pas une erreur
+            if e.contains("does not exist") {
+                return Ok(Vec::new());
+            }
+            Err(ApiError::internal(format!("pull {table}: {e}")))
+        }
+    }
+}
+
 #[cfg(feature = "supabase-sync")]
 async fn pull_all_fallback(pool: &SupabasePool, tables: &[&str]) -> ApiResult<std::collections::HashMap<String, Vec<Value>>> {
     let mut all = std::collections::HashMap::new();

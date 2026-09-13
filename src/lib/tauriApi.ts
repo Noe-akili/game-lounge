@@ -168,6 +168,8 @@ const ROUTES: RouteDef[] = [
   { m: 'POST', p: '/sync/toggle', f: ({ token, body }) => ({ cmd: 'sync_toggle', args: { token, enabled: !!val(body, 'enabled') } }) },
   { m: 'POST', p: '/sync/run', f: ({ token }) => ({ cmd: 'sync_run', args: { token } }) },
   { m: 'GET', p: '/sync/poll', f: ({ token }) => ({ cmd: 'sync_poll', args: { token } }) },
+  // État de l'initial (première sync faite ? quelles tables ?) — mission §5
+  { m: 'GET', p: '/sync/initial-status', f: ({ token }) => ({ cmd: 'sync_initial_status', args: { token } }) },
 ]
 
 function compile(pattern: string): RegExp {

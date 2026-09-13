@@ -127,7 +127,10 @@ async fn try_supabase_login(_app: &tauri::AppHandle, _state: &State<'_, AppState
 #[tauri::command(async)]
 pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email: String, password: String) -> ApiResult<Value> {
     let t0 = now_ms();
-    crate::logger::log_auth(&format!("login début pour {}", email));
+    // Étapes de diagnostic chronométrées (mission §1) : permettent de dire exactement
+    // "Login total: Xs, Supabase Auth: Ys, SQLite: Zs" dans 1.log. AUCUN mot de
+    // passe ni hash n'apparaît jamais dans ces logs (mission §15).
+    crate::logger::log_auth(&format!("LOGIN_START {} ({} ms)", email, now_ms() - t0));
 
     if email.is_empty() || password.is_empty() {
         return Err(ApiError::bad_request("Email et mot de passe requis"));
@@ -146,7 +149,8 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
     let database = db(&state);
     let t_find = now_ms();
     let local_user = database.find_one("users", |r| r.get("email").and_then(Value::as_str) == Some(email.as_str()))?;
-    crate::logger::log_auth(&format!("lookup local: {} ms, trouvé={}", t_find - t0, local_user.is_some()));
+    crate::logger::log_auth(&format!("AUTH_DB_LOOKUP {} ms, trouvé={}", t_find - t0, local_user.is_some()));
+    crate::logger::log_auth("AUTH_START");
 
     let user: Option<Value>;
     let mut was_supabase = false;
@@ -197,6 +201,7 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
     }
 
     let user = user.ok_or_else(|| ApiError::unauthorized("Identifiants incorrects"))?;
+    crate::logger::log_auth(&format!("AUTH_SUCCESS ({} ms)", now_ms() - t0));
     let stored = user.get("password_hash").and_then(Value::as_str).unwrap_or("");
 
     // Rehash Argon2 seulement si hash local reconnu mais legacy (scrypt/bcrypt) :
@@ -223,7 +228,8 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
         exp: 0,
     };
     let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
-    crate::logger::log_auth(&format!("login OK pour {} via {} (total {} ms)", email, if was_supabase { "supabase" } else { "local" }, now_ms() - t0));
+    crate::logger::log_auth(&format!("SESSION_SAVED ({} ms)", now_ms() - t0));
+    crate::logger::log_auth(&format!("LOGIN_RETURN {} via {} (login total {} ms)", email, if was_supabase { "supabase" } else { "local" }, now_ms() - t0));
 
     Ok(json!({
         "token": access,

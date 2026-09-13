@@ -542,13 +542,19 @@ impl Db {
     }
 
     /// Curseur de réception : dernière séquence reçue du cloud (0 = jamais syncé).
+    /// IMPORTANT : `last_received` est une colonne TEXT (héritage ISO strings) ; la
+    /// lire comme i64 faisait échouer le décodage rusqlite -> l'erreur était avalée
+    /// par unwrap_or(0) partout -> le curseur restait à 0 -> PULL COMPLET à CHAQUE
+    /// sync (téléchargement de toute la base = le vrai responsable des timeouts
+    /// réseau/IPC après login). On CAST explicitement en INTEGER et on prend MAX()
+    /// sur la valeur numérique (MAX textuel comparait "9" > "10").
     pub fn sync_cursor_get(&self) -> ApiResult<i64> {
         let conn = match self.0.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
         let mut stmt = conn
-            .prepare("SELECT COALESCE(MAX(last_received), 0) FROM sync_state")
+            .prepare("SELECT COALESCE(MAX(CAST(last_received AS INTEGER)), 0) FROM sync_state")
             .map_err(|e| ApiError::internal(format!("cursor get: {e}")))?;
         let n = stmt
             .query_row([], |r| r.get::<_, i64>(0))
@@ -562,7 +568,7 @@ impl Db {
             Err(p) => p.into_inner(),
         };
         let device = self.device_id_conn(&*conn)?;
-        let params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(n), Box::new(device)];
+        let params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(n.to_string()), Box::new(device)];
         conn.execute("UPDATE sync_state SET last_received = ? WHERE device_id = ?", rusqlite::params_from_iter(params))
             .map_err(|e| ApiError::internal(format!("cursor set: {e}")))?;
         Ok(())

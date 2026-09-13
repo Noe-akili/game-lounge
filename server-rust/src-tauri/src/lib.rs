@@ -347,6 +347,7 @@ pub fn run() {
             commands::sync_toggle,
             commands::sync_run,
             commands::sync_poll,
+            commands::sync::sync_initial_status,
             // ==== DEBUG / IMPORT (appareil dev uniquement) ====
             commands::supabase_status,
             commands::get_rust_logs,

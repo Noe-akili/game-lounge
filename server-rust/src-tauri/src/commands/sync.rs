@@ -78,12 +78,23 @@ pub fn sync_toggle(
 /// IMPORTANT : la sync complète (11 tables pull + 11 tables push, ~40 requêtes Supabase
 /// séquentielles) dépasse le timeout IPC Android WebView (~20s) si on attend la fin.
 /// On lance donc le travail EN ARRIÈRE-PLAN et on retourne immédiatement ; le
-/// frontend suit la progression via /sync/poll.
+/// frontend suit la progression via /sync/poll ET les événements sync-progress.
+///
+/// Mission §12 : un appareil NEUF (première installation) doit pouvoir initialiser
+/// sa base même connecté en tant qu'employé. La commande admin_only reste réservée
+/// aux resynchronisations manuelles ; l'initialisation est permise à tout
+/// utilisateur authentifié tant que initial_sync_completed = false.
 #[tauri::command(async)]
 pub async fn sync_run(app: tauri::AppHandle, state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
-    admin_only(&user)?;
-    eprintln!("[sync] sync_run demandé par {}", user.email);
+    #[cfg(feature = "supabase-sync")]
+    let initial_pending = !initial_sync_completed(db(&state));
+    #[cfg(not(feature = "supabase-sync"))]
+    let initial_pending = false;
+    if !initial_pending {
+        admin_only(&user)?;
+    }
+    eprintln!("[sync] sync_run demandé par {} (initial_pending={})", user.email, initial_pending);
 
     #[cfg(feature = "supabase-sync")]
     {
@@ -155,38 +166,104 @@ pub async fn sync_run(app: tauri::AppHandle, state: State<'_, AppState>, token: 
     }
 }
 
-/// Travail réel de la sync (pull + push), exécuté en arrière-plan.
-/// Pub : utilisé aussi par la sync automatique (boucle du setup).
-#[cfg(feature = "supabase-sync")]
-/// Applique un pull complet (tables -> local) SANS journaliser dans l'outbox
+/// Applique les lignes d'une table venue du cloud SANS journaliser dans l'outbox
 /// (les données viennent du cloud, les renvoyer serait un aller-retour inutile)
 /// et SANS écraser un changement local non envoyé (conflits gérés par Db).
-fn apply_pull_all(db: &crate::db::Db, all: &std::collections::HashMap<String, Vec<Value>>) -> usize {
-    let mut total = 0;
-    for (table, rows) in all {
-        let mut applied = 0;
-        for row in rows {
-            let Some(obj) = row.as_object() else { continue };
-            let id = obj.get("id").and_then(Value::as_i64).unwrap_or(0);
-            if id == 0 {
-                continue;
-            }
-            match db.apply_remote_change(table, id, obj, "", "") {
-                Ok(status) => {
-                    if status == "applied" || status == "tombstone" {
-                        applied += 1;
-                    }
-                }
-                Err(e) => eprintln!("[sync] pull {} #{} failed: {}", table, id, e.message),
-            }
+/// Compte uniquement les changements RÉELS (applied/tombstone) pour une
+/// progression vraie (mission §7).
+#[cfg(feature = "supabase-sync")]
+fn apply_rows(db: &crate::db::Db, table: &str, rows: &[Value]) -> usize {
+    let mut applied = 0;
+    for row in rows {
+        let Some(obj) = row.as_object() else { continue };
+        let id = obj.get("id").and_then(Value::as_i64).unwrap_or(0);
+        if id == 0 {
+            continue;
         }
-        eprintln!("[sync] pull {}: {} rows écrites", table, applied);
-        total += applied;
+        match db.apply_remote_change(table, id, obj, "", "") {
+            Ok(status) => {
+                if status == "applied" || status == "tombstone" {
+                    applied += 1;
+                }
+            }
+            Err(e) => eprintln!("[sync] pull {} #{} failed: {}", table, id, e.message),
+        }
     }
-    total
+    if applied > 0 {
+        eprintln!("[sync] pull {}: {} rows écrites", table, applied);
+    }
+    applied
+}
+
+/// Tables de la sync initiale dans l'ordre (données de référence d'abord, puis
+/// données d'exploitation). Dérivé de crate::db::TABLES — aucune table inventée.
+#[cfg(feature = "supabase-sync")]
+const SYNC_PHASES: [&str; 11] = [
+    "users", "consoles", "jeux", "joueurs", "tarifs", "parametres_fidelite",
+    "messages", "sessions_jeu", "jetons_transactions", "factures", "lignes_facture",
+];
+
+/// Tables d'init déjà terminées (persistées dans app_settings, JSON array).
+/// Reprise après interruption : à 62 % puis fermeture de l'app, on ne redémarre
+/// PAS depuis zéro (mission §11) — les tables cochées sont sautées.
+#[cfg(feature = "supabase-sync")]
+fn init_tables_done(db: &crate::db::Db) -> Vec<String> {
+    let raw = db.get_setting("initial_sync_tables_done").ok().and_then(|o| o).unwrap_or_default();
+    serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default()
+}
+
+#[cfg(feature = "supabase-sync")]
+fn mark_init_table_done(db: &crate::db::Db, table: &str) {
+    let mut done = init_tables_done(db);
+    if !done.iter().any(|t| t == table) {
+        done.push(table.to_string());
+        let _ = db.set_setting("initial_sync_tables_done", &serde_json::to_string(&done).unwrap_or_default());
+    }
+}
+
+/// La première synchronisation (restauration complète) est-elle déjà terminée ?
+#[cfg(feature = "supabase-sync")]
+fn initial_sync_completed(db: &crate::db::Db) -> bool {
+    db.get_setting("initial_sync_completed").ok().and_then(|o| o).unwrap_or_default() == "1"
+}
+
+/// Expose l'état d'initialisation au frontend (mission §5) : réutilise la structure
+/// existante (app_settings + curseur sync_state), ne crée AUCUNE nouvelle table.
+#[tauri::command]
+pub fn sync_initial_status(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    let _ = claims(&state, &token)?;
+    #[cfg(feature = "supabase-sync")]
+    let (completed, tables_done) = {
+        let database = db(&state);
+        (initial_sync_completed(database), init_tables_done(database))
+    };
+    #[cfg(not(feature = "supabase-sync"))]
+    let (completed, tables_done) = (true, Vec::<String>::new());
+    Ok(json!({
+        "initialSyncCompleted": completed,
+        "tablesDone": tables_done,
+        "phases": SYNC_PHASES,
+    }))
+}
+
+#[cfg(feature = "supabase-sync")]
+fn set_step(state: &State<'_, AppState>, step: &str, message: &str) {
+    set_sync_state(state, json!({
+        "running": true,
+        "step": step,
+        "message": message,
+    }));
 }
 
 pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) -> ApiResult<Value> {
+    // Ce run est-il la première synchronisation (restauration complète) ? L'événement
+    // final sync-completed est alors déjà émis par la branche initiale (mission §8 :
+    // pas d'événement dupliqué).
+    let was_initial_sync = {
+        let cur = db(state).sync_cursor_get().unwrap_or(0);
+        let completed = initial_sync_completed(db(state));
+        cur == 0 && !completed
+    };
     let pool_opt = {
         let guard = state.supabase_pool.lock().map_err(|_| crate::error::ApiError::internal("supabase lock"))?;
         guard.clone()
@@ -227,8 +304,15 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
     //    Si le réseau coupe au milieu, les non-ACKés restent PENDING : le prochain
     //    cycle reprend exactement où il s'est arrêté (spec §6) et l'upsert cloud est
     //    idempotent (spec §7) : un changement renvoyé est simplement re-ACKé.
-    set_sync_state(state, json!({ "running": true, "step": "upload", "message": "Envoi des changements locaux..." }));
+    set_step(state, "upload", "Envoi des changements locaux...");
     let mut uploaded = 0;
+    // Progression upload : total = PENDING actuels (lu UNE fois, l'outbox se vide
+    // pendant l'envoi ; les nouveaux changements partiront au cycle suivant).
+    let upload_total = db(state).outbox_pending_count().unwrap_or(0) as u64;
+    if upload_total > 0 {
+        let up = crate::supabase::SyncProgress::new("envoi", "Envoi des changements locaux", "uploading");
+        crate::supabase::emit_progress(app, &up.with_counts(0, upload_total, 0), None);
+    }
     loop {
         let batch = db(state).outbox_pending(100).unwrap_or_default();
         if batch.is_empty() {
@@ -239,6 +323,10 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
                 db(state).outbox_mark(&acked, "ACKED").ok();
                 db(state).outbox_mark(&failed, "FAILED").ok();
                 uploaded += acked.len();
+                if upload_total > 0 {
+                    let up = crate::supabase::SyncProgress::new("envoi", "Envoi des changements locaux", "uploading");
+                    crate::supabase::emit_progress(app, &up.with_counts(uploaded as u64, upload_total, uploaded as u64), None);
+                }
                 eprintln!("[sync] upload lot: {} ACKed, {} FAILED", acked.len(), failed.len());
                 if acked.is_empty() {
                     break; // échec réseau/applicatif : reprise au prochain cycle
@@ -256,33 +344,87 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
     // 3) DOWNLOAD delta : uniquement les changements après le curseur (spec §4).
     let mut cursor = db(state).sync_cursor_get().unwrap_or(0);
     let mut downloaded = 0;
-    if cursor == 0 {
-        // PREMIÈRE SYNC : pull complet (restauration) puis seed de l'outbox avec
-        // les données locales pré-existantes (elles n'ont jamais été journalisées).
-        set_sync_state(state, json!({ "running": true, "step": "pull", "message": "Première synchronisation (restauration complète)..." }));
-        match crate::supabase::pull_all(&pool).await {
-            Ok(all) => {
-                downloaded = apply_pull_all(db(state), &all);
-                let seeded = db(state).outbox_seed().unwrap_or(0);
-                eprintln!("[sync] première sync: {} reçues, {} événements seedés", downloaded, seeded);
-                let max_seq = crate::supabase::sync_max_sequence(&pool).await.unwrap_or(0);
-                db(state).sync_cursor_set(max_seq).ok();
+    if cursor == 0 && !initial_sync_completed(db(state)) {
+        // ===== PREMIÈRE SYNC (mission §6-§11) =====
+        // Restauration par TABLE, avec progression RÉELLE émise au WebView et
+        // reprise après interruption (tables déjà faites persistées dans
+        // app_settings). Réutilise pull_table (fallback résilient existant) :
+        // une table absente du cloud (base neuve) est simplement vide.
+        set_sync_state(state, json!({ "running": true, "step": "initial", "message": "Première synchronisation..." }));
+        let progress = crate::supabase::SyncProgress::new("préparation", "Préparation de la synchronisation initiale", "downloading");
+        crate::supabase::emit_progress(app, &progress.with_counts(0, SYNC_PHASES.len() as u64, 0), Some("sync-started"));
+
+        let mut done = init_tables_done(db(state));
+        let phases_total = SYNC_PHASES.len() as u64;
+        let mut phase_idx: u64 = 0;
+        for table in SYNC_PHASES {
+            phase_idx += 1;
+            if done.iter().any(|t| t == table) {
+                continue; // déjà fait lors d'une session précédente -> reprise (mission §11)
             }
-            Err(e) => {
-                eprintln!("[sync] pull_all failed: {}", e.message);
-                crate::logger::log_cloud(&format!("sync_run: pull_all failed: {} -> reconnexion", e.message));
-                crate::supabase::schedule_reconnect(app);
-                return Ok(json!({
-                    "success": false,
-                    "step": "erreur",
-                    "message": format!("Sync cloud échouée (connexion perdue): {}. Reconnexion en arrière-plan, réessayez.", e.message),
-                    "timestamp": now_iso()
-                }));
+            let label = format!("Téléchargement de {}", table.replace('_', " "));
+            let p = crate::supabase::SyncProgress::new(table, &label, "downloading");
+            crate::supabase::emit_progress(app, &p.clone().with_counts(phase_idx - 1, phases_total, downloaded as u64), None);
+            set_step(state, "initial", &label);
+            crate::logger::log_sync(&format!("initial sync: pull {} (phase {}/{})", table, phase_idx, phases_total));
+
+            match crate::supabase::pull_table(&pool, table).await {
+                Ok(rows) => {
+                    downloaded += apply_rows(db(state), table, &rows);
+                    mark_init_table_done(db(state), table);
+                    done.push(table.to_string());
+                    let pf = crate::supabase::SyncProgress::new(table, &label, "phase_done");
+                    crate::supabase::emit_progress(app, &pf.with_counts(phase_idx, phases_total, downloaded as u64), None);
+                    crate::logger::log_sync(&format!("initial sync: {} -> {} lignes reçues (total {})", table, rows.len(), downloaded));
+                }
+                Err(e) => {
+                    // Réseau coupé / timeout / Supabase indisponible : on s'arrête
+                    // PROPREMENT. Les tables déjà terminées sont persistées -> la
+                    // reprise (Réessayer ou relance de l'app) continue la table
+                    // suivante sans rien recommencer ni rien supprimer (mission §10-11).
+                    eprintln!("[sync] initial pull {} failed: {}", table, e.message);
+                    crate::logger::log_sync(&format!("initial sync interrompue à {} : {}", table, e.message));
+                    let err = crate::supabase::SyncProgress::new(table, &format!("Impossible de récupérer les données : {}", e.message), "error");
+                    crate::supabase::emit_progress(app, &err.with_counts(phase_idx - 1, phases_total, downloaded as u64), Some("sync-error"));
+                    set_sync_state(state, json!({
+                        "running": false,
+                        "step": "erreur",
+                        "started_at": now_iso(),
+                        "finished_at": now_iso(),
+                        "success": false,
+                        "message": format!("Synchronisation initiale interrompue à {}: {}", table, e.message),
+                    }));
+                    return Ok(json!({
+                        "success": false,
+                        "step": "erreur",
+                        "initialSync": true,
+                        "phase": table,
+                        "message": format!("Impossible de récupérer les données : {}. Réessayez.", e.message),
+                        "timestamp": now_iso()
+                    }));
+                }
             }
         }
+
+        // Toutes les tables sont faites : seed de l'outbox avec les données locales
+        // pré-existantes (elles n'ont jamais été journalisées) puis curseur -> fin du
+        // journal cloud (les prochains logins passeront en DELTA, mission §4/§12).
+        let seeded = db(state).outbox_seed().unwrap_or(0);
+        let max_seq = crate::supabase::sync_max_sequence(&pool).await.unwrap_or(0);
+        db(state).sync_cursor_set(max_seq).ok();
+        let _ = db(state).set_setting("initial_sync_completed", "1");
+        eprintln!("[sync] première sync terminée: {} reçues, {} événements seedés, curseur {}", downloaded, seeded, max_seq);
+        let done_p = crate::supabase::SyncProgress::new("finalisation", "Synchronisation terminée", "completed");
+        crate::supabase::emit_progress(app, &done_p.with_counts(phases_total, phases_total, downloaded as u64), Some("sync-completed"));
     } else {
         // SYNC DELTA : boucle de batches de 500 changements.
-        set_sync_state(state, json!({ "running": true, "step": "pull", "message": "Réception des nouveaux changements..." }));
+        set_step(state, "pull", "Réception des nouveaux changements...");
+        // Progression delta : total = changements restants dans le journal cloud.
+        let delta_total = crate::supabase::sync_changes_count_after(&pool, cursor).await.unwrap_or(0).max(0) as u64;
+        if delta_total > 0 {
+            let dl = crate::supabase::SyncProgress::new("delta", "Réception des nouveaux changements", "downloading");
+            crate::supabase::emit_progress(app, &dl.with_counts(0, delta_total, 0), None);
+        }
         loop {
             let batch = crate::supabase::pull_delta(&pool, cursor, 500).await.unwrap_or_default();
             if batch.is_empty() {
@@ -296,7 +438,9 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
                 eprintln!("[sync] trou de séquence (curseur {}, reçu {}) -> SNAPSHOT_REQUIRED", cursor, first_seq);
                 match crate::supabase::pull_all(&pool).await {
                     Ok(all) => {
-                        downloaded += apply_pull_all(db(state), &all);
+                        for (table, rows) in &all {
+                            downloaded += apply_rows(db(state), table, rows);
+                        }
                         let max_seq = crate::supabase::sync_max_sequence(&pool).await.unwrap_or(0);
                         db(state).sync_cursor_set(max_seq).ok();
                         eprintln!("[sync] snapshot appliqué, curseur remis à {}", max_seq);
@@ -336,6 +480,12 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
             }
             db(state).sync_cursor_set(last_seq).ok();
             cursor = last_seq;
+            // Progression RÉELLE du delta (mission §7-8) : current = changements
+            // effectivement traités, total = count initial du journal cloud.
+            if delta_total > 0 {
+                let dl = crate::supabase::SyncProgress::new("delta", "Réception des nouveaux changements", "downloading");
+            crate::supabase::emit_progress(app, &dl.with_counts(downloaded as u64, delta_total, downloaded as u64), None);
+            }
             if batch_len < 500 {
                 break;
             }
@@ -366,6 +516,12 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
         "pending": pending,
         "timestamp": now_iso()
     }));
+    // Événement final (delta sync discret : le dashboard affiche "Synchronisation..."
+    // pendant running=true, puis un toast peut réagir à sync-completed).
+    if !was_initial_sync {
+        let fin = crate::supabase::SyncProgress::new("terminé", &msg, "completed");
+        crate::supabase::emit_progress(app, &fin.with_counts(downloaded as u64, (downloaded + uploaded).max(1) as u64, (downloaded + uploaded) as u64), Some("sync-completed"));
+    }
     Ok(json!({
         "success": true,
         "step": "terminé",
