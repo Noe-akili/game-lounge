@@ -227,6 +227,10 @@ fn enrich_consoles(state: &AppState) -> ApiResult<Vec<Value>> {
                 "session_id": session.and_then(|s| s.get("id")).cloned().unwrap_or(Value::Null),
                 "session_statut": session.and_then(|s| s.get("statut")).cloned().unwrap_or(Value::Null),
                 "session_debut": session.and_then(|s| s.get("debut")).cloned().unwrap_or(Value::Null),
+                // Secondes exactes déjà jouées + allocation (chrono temps réel).
+                "duree_allouee": session.and_then(|s| s.get("duree_allouee")).cloned().unwrap_or(Value::Null),
+                "duree_minutes": session.and_then(|s| s.get("duree_minutes")).cloned().unwrap_or(Value::Null),
+                "duree_secondes": session.and_then(|s| s.get("duree_secondes")).cloned().unwrap_or(Value::Null),
                 "joueur_id": joueur_id.map(Value::from).unwrap_or(Value::Null),
                 "jeu_id": jeu_id.map(Value::from).unwrap_or(Value::Null),
                 "tarif_prix": session.and_then(|s| s.get("tarif_prix")).cloned().unwrap_or(Value::Null),
@@ -756,12 +760,14 @@ async fn sessions_get(
         let fin = s.get("fin").and_then(Value::as_str).unwrap_or("");
         let duree_minutes = s.get("duree_minutes").and_then(Value::as_i64).unwrap_or(0);
         let now_ms = chrono::Utc::now().timestamp_millis();
+        // Précision seconde : duree_secondes si présent, sinon fallback minutes*60.
+        let accum_secondes = s.get("duree_secondes").and_then(Value::as_i64).unwrap_or(duree_minutes * 60);
         let duree_secondes = if statut == "en_cours" {
-            // Temps accumulé + temps depuis la (re)prise (cohérent avec l'app).
-            duree_minutes * 60
+            // Temps accumulé (secondes exactes) + temps depuis la (re)prise.
+            accum_secondes
                 + now_ms.checked_sub(parse_iso_ms(debut).unwrap_or(now_ms)).unwrap_or(0) / 1000
         } else if statut == "pause" {
-            duree_minutes * 60
+            accum_secondes
         } else {
             parse_iso_ms(fin).and_then(|f| parse_iso_ms(debut).map(|d| (f - d) / 1000)).unwrap_or(0)
         };
@@ -834,6 +840,7 @@ async fn sessions_create(
         // Même modèle que l'app Tauri : duree_minutes = temps DÉJÀ JOUÉ (0 au
         // démarrage), la durée du tarif va dans duree_allouee.
         row.insert("duree_minutes".into(), json!(0));
+        row.insert("duree_secondes".into(), json!(0));
         row.insert("duree_allouee".into(), json!(duree_minutes));
         row.insert("montant".into(), json!(tarif_prix));
         row.insert("tarif_prix".into(), json!(tarif_prix));
@@ -869,14 +876,17 @@ async fn sessions_pause(
             return Err(ApiError::bad_request("Session non en cours"));
         }
         let debut = s.get("debut").and_then(Value::as_str).unwrap_or("");
+        // Accumulation en SECONDES : ne plus perdre les secondes à chaque pause.
         let duree_minutes = s.get("duree_minutes").and_then(Value::as_i64).unwrap_or(0);
+        let accum_secondes = s.get("duree_secondes").and_then(Value::as_i64).unwrap_or(duree_minutes * 60);
         let now_ms = chrono::Utc::now().timestamp_millis();
         let elapsed = now_ms.checked_sub(parse_iso_ms(debut).unwrap_or(now_ms)).unwrap_or(0) / 1000;
-        let total_secondes = duree_minutes * 60 + elapsed;
+        let total_secondes = accum_secondes + elapsed;
         let console_id = s.get("console_id").and_then(Value::as_i64).ok_or_else(|| ApiError::internal("Console ID manquant"))?;
         let mut upd = jmap();
         upd.insert("statut".into(), json!("pause"));
         upd.insert("duree_minutes".into(), json!(total_secondes / 60));
+        upd.insert("duree_secondes".into(), json!(total_secondes));
         d.update("sessions_jeu", id, &upd)?;
         let mut upd_console = jmap();
         upd_console.insert("etat".into(), json!("pause"));
@@ -931,6 +941,8 @@ async fn sessions_terminer(
         let statut = s.get("statut").and_then(Value::as_str).unwrap_or("");
         let debut = s.get("debut").and_then(Value::as_str).unwrap_or("");
         let duree_minutes = s.get("duree_minutes").and_then(Value::as_i64).unwrap_or(0);
+        // Précision seconde : duree_secondes si présent, sinon fallback minutes*60.
+        let accum_secondes = s.get("duree_secondes").and_then(Value::as_i64).unwrap_or(duree_minutes * 60);
         let tarif_prix = s.get("tarif_prix").and_then(Value::as_i64).unwrap_or(2000);
         let console_id = s.get("console_id").and_then(Value::as_i64).ok_or_else(|| ApiError::internal("Console ID manquant"))?;
         let joueur_id = s.get("joueur_id").and_then(Value::as_i64).ok_or_else(|| ApiError::internal("Joueur ID manquant"))?;
@@ -939,16 +951,20 @@ async fn sessions_terminer(
         let elapsed = if statut == "en_cours" {
             now_ms.checked_sub(parse_iso_ms(debut).unwrap_or(now_ms)).unwrap_or(0) / 1000
         } else { 0 };
-        let total_secondes = duree_minutes * 60 + elapsed;
-        let duree_minutes_final = ((total_secondes as f64) / 60.0).ceil().max(1.0) as i64;
-        // Forfait choisi + dépassement prorata (même règle que l'app).
+        let total_secondes = accum_secondes + elapsed;
+        // Durée facturée à la seconde (plus d'arrondi minutes) ; duree_minutes
+        // reste une compat en minutes (ceil).
+        let duree_secondes_final = total_secondes.max(1);
+        let duree_minutes_final = (duree_secondes_final + 59) / 60;
+        // Forfait choisi + dépassement prorata À LA SECONDE (même règle que l'app).
         let allouee = s.get("duree_allouee").and_then(Value::as_i64).unwrap_or(0);
-        let montant = compute_montant(tarif_prix, allouee, duree_minutes_final);
+        let montant = compute_montant(tarif_prix, allouee, duree_secondes_final);
 
         let mut upd_session = jmap();
         upd_session.insert("statut".into(), json!("terminee"));
         upd_session.insert("fin".into(), json!(now_iso()));
         upd_session.insert("duree_minutes".into(), json!(duree_minutes_final));
+        upd_session.insert("duree_secondes".into(), json!(duree_secondes_final));
         upd_session.insert("montant".into(), json!(montant));
         d.update("sessions_jeu", id, &upd_session)?;
 
@@ -1099,7 +1115,17 @@ async fn sessions_update(
             if !validators::is_valid_duree(d) {
                 return Err(ApiError::bad_request("Durée invalide (1-1000)"));
             }
-            updates.insert("duree_minutes".into(), json!(d));
+            // Session ACTIVE : la durée éditable = temps ALLOUÉ (comme l'app).
+            // Terminée : durée facturée (compat minutes + secondes).
+            let statut = get_by_id(&state, "sessions_jeu", id, "Session non trouvée")?
+                .get("statut").and_then(Value::as_str).unwrap_or("").to_string();
+            if statut == "en_cours" || statut == "pause" {
+                updates.insert("duree_allouee".into(), json!(d));
+            } else {
+                updates.insert("duree_minutes".into(), json!(d));
+                updates.insert("duree_secondes".into(), json!(d * 60));
+                updates.insert("duree_allouee".into(), json!(d));
+            }
         }
         if let Some(m) = body.get("montant").and_then(Value::as_f64) {
             if !validators::is_valid_prix(m) {

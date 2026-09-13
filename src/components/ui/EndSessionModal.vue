@@ -116,17 +116,18 @@ const modesPaiement = [
   const timerDisplay = computed(() => formatDuration(elapsed.value))
 
   // Aperçu de facturation = MÊME règle que le backend (compute_montant) :
-  // forfait choisi + dépassement prorata. Pas de plancher artificiel de 500 FC.
+  // forfait choisi + dépassement prorata À LA SECONDE (pas d'arrondi minutes).
   const montantTotal = computed(() => {
-    const minutes = Math.max(1, Math.ceil(elapsed.value / 60))
+    const sec = Math.max(1, elapsed.value)
     const tarif = session.value?.tarif_prix || props.console?.tarif_prix || 2000
     const allouee = session.value?.duree_allouee ?? props.console?.duree_allouee ?? 0
     if (allouee > 0) {
-      if (minutes <= allouee) return tarif
-      const depassement = minutes - allouee
-      return tarif + Math.ceil((depassement * tarif) / allouee)
+      const alloueeS = allouee * 60
+      if (sec <= alloueeS) return tarif
+      const depassementS = sec - alloueeS
+      return tarif + Math.ceil((depassementS * tarif) / alloueeS)
     }
-    return Math.ceil(minutes / 60) * tarif
+    return Math.ceil(sec / 3600) * tarif
   })
 
   // Aperçu jetons = vraie règle de fidélité (temps OU montant), comme le backend.
@@ -145,8 +146,9 @@ const modesPaiement = [
 
       try {
         session.value = await api.get(`/sessions/${sessionId.value}`)
-        elapsed.value = session.value.duree_secondes ?? session.value.duree_minutes * 60 ?? 0
-        // fallback if duree_secondes not provided, compute from debut
+        // duree_secondes = secondes EXACTES déjà accumulées (backend) ; fallback
+        // minutes*60 puis calcul depuis debut (anciennes lignes).
+        elapsed.value = session.value.duree_secondes ?? session.value.duree_secondes_from_min ?? (session.value.duree_minutes || 0) * 60
         if (!elapsed.value && session.value.debut) {
           elapsed.value = Math.floor((Date.now() - new Date(session.value.debut).getTime()) / 1000)
         }

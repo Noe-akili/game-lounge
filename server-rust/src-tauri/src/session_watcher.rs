@@ -69,12 +69,12 @@ fn check_expired_sessions(app: &tauri::AppHandle, db: &Db) {
             if reste_s > 0 {
                 break; // session la plus ancienne pas encore expirée -> rien à faire
             }
-            // Durée totale à facturer = allocation ENTIÈRE + dépassement (arrondi
-            // à la minute supérieure). L'accumulée (pauses) fait déjà partie de
-            // l'allocation — elle ne s'ajoute pas.
+            // Durée EXACTE à facturer, À LA SECONDE : allocation entière +
+            // dépassement réel (reste_s est négatif = secondes de retard du
+            // watcher, PAS un temps joué : on ne l'arrondit plus à la minute).
             let depassement_s = (-reste_s).max(0);
-            let depassement_min = (depassement_s + 59) / 60;
-            expired.push((id, allouee + depassement_min));
+            let duree_totale_s = allouee * 60 + depassement_s;
+            expired.push((id, duree_totale_s));
             // Marque immédiatement comme traitée pour ne pas reprendre la même
             // au prochain passage de boucle si la finalisation échoue.
             let _ = conn.execute(

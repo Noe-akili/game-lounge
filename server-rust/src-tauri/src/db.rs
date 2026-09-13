@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, email TEXT UNIQUE, pas
 CREATE TABLE IF NOT EXISTS consoles (id INTEGER PRIMARY KEY, nom TEXT, type TEXT, etat TEXT DEFAULT 'disponible', poste_numero INTEGER, date_ajout TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS jeux (id INTEGER PRIMARY KEY, titre TEXT, genre TEXT, console_id INTEGER, actif INTEGER DEFAULT 1, jaquette_url TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS joueurs (id INTEGER PRIMARY KEY, nom TEXT, telephone TEXT, email TEXT, jetons_solde INTEGER DEFAULT 0, date_inscription TEXT, derniere_visite TEXT, deleted INTEGER DEFAULT 0);
-CREATE TABLE IF NOT EXISTS sessions_jeu (id INTEGER PRIMARY KEY, console_id INTEGER, joueur_id INTEGER, jeu_id INTEGER, employe_id INTEGER, tarif_id INTEGER, debut TEXT, fin TEXT, duree_minutes INTEGER, duree_allouee INTEGER DEFAULT 60, montant INTEGER, tarif_prix INTEGER, jetons_gagnes INTEGER DEFAULT 0, statut TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS sessions_jeu (id INTEGER PRIMARY KEY, console_id INTEGER, joueur_id INTEGER, jeu_id INTEGER, employe_id INTEGER, tarif_id INTEGER, debut TEXT, fin TEXT, duree_minutes INTEGER, duree_secondes INTEGER DEFAULT 0, duree_allouee INTEGER DEFAULT 60, montant INTEGER, tarif_prix INTEGER, jetons_gagnes INTEGER DEFAULT 0, statut TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS tarifs (id INTEGER PRIMARY KEY, nom TEXT, type TEXT, prix INTEGER, duree_minutes INTEGER, description TEXT, actif INTEGER DEFAULT 1, console_type TEXT, jeu TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS factures (id INTEGER PRIMARY KEY, numero_facture TEXT UNIQUE, session_id INTEGER, joueur_id INTEGER, montant_ht REAL, taux_tva REAL DEFAULT 20, montant_tva REAL, montant_ttc REAL, mode_paiement TEXT, statut TEXT, date_paiement TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS jetons_transactions (id INTEGER PRIMARY KEY, joueur_id INTEGER, quantite INTEGER, type TEXT, raison TEXT, session_id INTEGER, created_at TEXT, deleted INTEGER DEFAULT 0);
@@ -94,7 +94,7 @@ pub fn find_active_session(
     conn: &rusqlite::Connection,
 ) -> Option<(i64, Option<i64>, i64, i64)> {
     conn.query_row(
-        "SELECT id, console_id, COALESCE(duree_allouee, duree_minutes, 60), COALESCE(duree_minutes, 0) \
+        "SELECT id, console_id, COALESCE(duree_allouee, duree_minutes, 60), COALESCE(duree_secondes, duree_minutes * 60, 0) \
          FROM sessions_jeu WHERE statut = 'en_cours' AND COALESCE(deleted, 0) = 0 LIMIT 1",
         [],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
@@ -258,6 +258,9 @@ impl Db {
         // Durée allouée par le tarif (sessions créées avant cette version) :
         // c'est elle qui déclenche l'expiration automatique. Idempotent.
         let _ = conn.execute_batch("ALTER TABLE sessions_jeu ADD COLUMN duree_allouee INTEGER DEFAULT 60;");
+        // Précision SECONDE du temps joué (duree_minutes reste pour compat sync) :
+        // les arrondis à la minute faussaient progressivement le chrono.
+        let _ = conn.execute_batch("ALTER TABLE sessions_jeu ADD COLUMN duree_secondes INTEGER DEFAULT 0;");
         // NORMALISATION UNIQUE : les sessions actives créées par l'ANCIEN code
         // avaient la durée du tarif pré-remplie dans duree_minutes (accumulator).
         // Au nouveau modèle, duree_minutes = temps déjà joué -> on remet à zéro
@@ -265,6 +268,11 @@ impl Db {
         let _ = conn.execute_batch(
             "UPDATE sessions_jeu SET duree_minutes = 0 WHERE statut IN ('en_cours','pause') AND (SELECT COUNT(*) FROM app_settings WHERE key = 'sessions_accum_reset_v1') = 0; \
              INSERT OR REPLACE INTO app_settings (key, value) VALUES ('sessions_accum_reset_v1', '1');",
+        );
+        // Seed des secondes pour les sessions actives créées avant cette colonne.
+        let _ = conn.execute_batch(
+            "UPDATE sessions_jeu SET duree_secondes = duree_minutes * 60 WHERE statut IN ('en_cours','pause') AND (SELECT COUNT(*) FROM app_settings WHERE key = 'sessions_seconds_seed_v1') = 0; \
+             INSERT OR REPLACE INTO app_settings (key, value) VALUES ('sessions_seconds_seed_v1', '1');",
         );
         apply_pragmas(&conn);
         // Test écriture immédiate pour détecter disque plein / permission early
@@ -286,9 +294,14 @@ impl Db {
              ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER;",
         );            let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
         let _ = conn.execute_batch("ALTER TABLE sessions_jeu ADD COLUMN duree_allouee INTEGER DEFAULT 60;");
+        let _ = conn.execute_batch("ALTER TABLE sessions_jeu ADD COLUMN duree_secondes INTEGER DEFAULT 0;");
         let _ = conn.execute_batch(
             "UPDATE sessions_jeu SET duree_minutes = 0 WHERE statut IN ('en_cours','pause') AND (SELECT COUNT(*) FROM app_settings WHERE key = 'sessions_accum_reset_v1') = 0; \
              INSERT OR REPLACE INTO app_settings (key, value) VALUES ('sessions_accum_reset_v1', '1');",
+        );
+        let _ = conn.execute_batch(
+            "UPDATE sessions_jeu SET duree_secondes = duree_minutes * 60 WHERE statut IN ('en_cours','pause') AND (SELECT COUNT(*) FROM app_settings WHERE key = 'sessions_seconds_seed_v1') = 0; \
+             INSERT OR REPLACE INTO app_settings (key, value) VALUES ('sessions_seconds_seed_v1', '1');",
         );
         apply_pragmas(&conn);
         Ok(Db(Mutex::new(conn), Mutex::new(std::collections::HashMap::new()), Mutex::new(None)))

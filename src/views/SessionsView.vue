@@ -23,24 +23,29 @@
     </div>
 
     <div v-else class="space-y-3 w-full max-w-full min-w-0">
-      <div v-for="s in activeSessions" :key="s.id" class="card flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden hover:border-neon-violet/20 transition-colors cursor-pointer" @click="viewDetail(s)">
-        <div class="flex items-center gap-3 sm:gap-4 w-full sm:w-auto min-w-0 flex-1">
-          <div class="w-12 h-12 rounded-xl flex items-center justify-center shrink-0"
-            :class="s.statut === 'en_cours' ? 'bg-neon-green/20' : 'bg-neon-yellow/20'">
-            <component :is="s.statut === 'en_cours' ? PlayCircle : PauseCircle" class="w-6 h-6"
-              :class="s.statut === 'en_cours' ? 'text-neon-green' : 'text-neon-yellow'" />
+      <div v-for="s in activeSessions" :key="s.id" class="card w-full max-w-full min-w-0 overflow-hidden hover:border-neon-violet/20 transition-colors cursor-pointer" @click="viewDetail(s)">
+        <div class="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 w-full max-w-full min-w-0">
+          <div class="flex items-center gap-3 sm:gap-4 w-full sm:w-auto min-w-0 flex-1">
+            <div class="w-12 h-12 rounded-xl flex items-center justify-center shrink-0"
+              :class="s.statut === 'en_cours' ? 'bg-neon-green/20' : 'bg-neon-yellow/20'">
+              <component :is="s.statut === 'en_cours' ? PlayCircle : PauseCircle" class="w-6 h-6"
+                :class="s.statut === 'en_cours' ? 'text-neon-green' : 'text-neon-yellow'" />
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="font-medium truncate">{{ s.console_nom || 'Console' }} — {{ s.jeu_nom || 'Jeu' }}</p>
+              <p class="text-sm text-txt-dim truncate">{{ s.joueur_nom || 'Joueur' }} · {{ formatCurrency(s.montant || 0) }}</p>
+            </div>
           </div>
-          <div class="flex-1 min-w-0">
-            <p class="font-medium truncate">{{ s.console_nom || 'Console' }} — {{ s.jeu_nom || 'Jeu' }}</p>
-            <p class="text-sm text-txt-dim truncate">{{ s.joueur_nom || 'Joueur' }} · {{ formatCurrency(s.montant || 0) }}</p>
-          </div>
-          <div class="text-right w-full sm:w-auto flex flex-col items-end gap-0.5 shrink-0">
+          <!-- Timer + statut : bloc dédié, jamais écrasé par le texte à gauche
+               (avant, timer/statut sortaient de l'écran sur petit téléphone). -->
+          <div class="flex items-center justify-between gap-2 w-full sm:w-auto sm:flex-col sm:items-end shrink-0">
             <!-- Temps qui s'écoule EN DIRECT : écoulé (ou restant quand la fin
                  approche) — s'arrête à l'allocation, puis passe en rouge "+X". -->
             <LiveSessionTimer
               :session-debut="s.debut"
               :duree-allouee="s.duree_allouee || 0"
-              :accumulee="s.duree_minutes || 0"
+              :accum-sec="s.duree_secondes ?? -1"
+              :accumulee-min="s.duree_minutes || 0"
               :statut="s.statut"
               :mode="remainingMode(s)"
               class="text-lg"
@@ -49,23 +54,23 @@
               {{ s.statut === 'en_cours' ? 'En cours' : 'En pause' }}
             </span>
           </div>
-        </div>
-        <div class="flex gap-2 flex-wrap sm:flex-nowrap w-full sm:w-auto justify-end shrink-0" @click.stop>
-          <button v-if="s.statut === 'en_cours'" @click="pauseSession(s)" class="p-2 rounded-lg bg-neon-yellow/10 text-neon-yellow hover:bg-neon-yellow/20 transition-colors" title="Pause">
-            <PauseCircle class="w-4 h-4" />
-          </button>
-          <button v-else @click="resumeSession(s)" class="p-2 rounded-lg bg-neon-blue/10 text-neon-blue hover:bg-neon-blue/20 transition-colors" title="Reprendre">
-            <PlayCircle class="w-4 h-4" />
-          </button>
-          <button @click="endSession(s)" class="p-2 rounded-lg bg-neon-red/10 text-neon-red hover:bg-neon-red/20 transition-colors" title="Terminer">
-            <Square class="w-4 h-4" />
-          </button>
-          <button @click="editSession(s)" class="p-2 rounded-lg hover:bg-bg-hover text-txt-dim" title="Modifier">
-            <Pencil class="w-4 h-4" />
-          </button>
-          <button @click="deleteSession(s.id)" class="p-2 rounded-lg hover:bg-neon-red/10 text-neon-red" title="Supprimer">
-            <Trash2 class="w-4 h-4" />
-          </button>
+          <div class="flex gap-2 flex-wrap sm:flex-nowrap w-full sm:w-auto justify-end shrink-0" @click.stop>
+            <button v-if="s.statut === 'en_cours'" @click="pauseSession(s)" class="p-2 rounded-lg bg-neon-yellow/10 text-neon-yellow hover:bg-neon-yellow/20 transition-colors" title="Pause">
+              <PauseCircle class="w-4 h-4" />
+            </button>
+            <button v-else @click="resumeSession(s)" class="p-2 rounded-lg bg-neon-blue/10 text-neon-blue hover:bg-neon-blue/20 transition-colors" title="Reprendre">
+              <PlayCircle class="w-4 h-4" />
+            </button>
+            <button @click="endSession(s)" class="p-2 rounded-lg bg-neon-red/10 text-neon-red hover:bg-neon-red/20 transition-colors" title="Terminer">
+              <Square class="w-4 h-4" />
+            </button>
+            <button @click="editSession(s)" class="p-2 rounded-lg hover:bg-bg-hover text-txt-dim" title="Modifier">
+              <Pencil class="w-4 h-4" />
+            </button>
+            <button @click="deleteSession(s.id)" class="p-2 rounded-lg hover:bg-neon-red/10 text-neon-red" title="Supprimer">
+              <Trash2 class="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -308,11 +313,13 @@ function onSyncPoll(e: Event) {
 }
 
 // Compte à rebours quand ≤ 5 min restent (sinon chrono écoulé classique).
+// Base en secondes exactes (duree_secondes), fallback minutes (anciennes lignes).
 function remainingMode(s) {
   if (!s.duree_allouee || s.statut === 'pause') return 'elapsed'
   const start = new Date(s.debut).getTime()
   if (Number.isNaN(start)) return 'elapsed'
-  const restant = s.duree_allouee * 60 - ((s.duree_minutes || 0) * 60 + Math.floor((Date.now() - start) / 1000))
+  const accumS = s.duree_secondes != null ? s.duree_secondes : (s.duree_minutes || 0) * 60
+  const restant = s.duree_allouee * 60 - (accumS + Math.floor((Date.now() - start) / 1000))
   return restant <= 5 * 60 ? 'remaining' : 'elapsed'
 }
 </script>

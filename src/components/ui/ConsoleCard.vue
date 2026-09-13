@@ -40,11 +40,12 @@
             ref="liveTimer"
             :session-debut="console.session_debut"
             :duree-allouee="console.duree_allouee || 0"
-            :accumulee="console.duree_minutes || 0"
+            :accum-sec="console.duree_secondes ?? -1"
+            :accumulee-min="console.duree_minutes || 0"
             :statut="console.session_statut || 'en_cours'"
-            class="text-lg sm:text-xl truncate"
+            class="text-lg sm:text-xl tabular-nums"
           />
-          <span v-if="restantAffiche" class="ml-auto text-xs shrink-0" :class="depasse ? 'text-neon-red' : 'text-txt-dim'">
+          <span v-if="restantAffiche" class="ml-auto text-xs shrink-0 text-right" :class="depasse ? 'text-neon-red' : 'text-txt-dim'">
             {{ depasse ? 'Terminaison auto…' : `Reste ${restantAffiche}` }}
           </span>
         </div>

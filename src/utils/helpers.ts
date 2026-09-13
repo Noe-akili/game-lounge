@@ -50,7 +50,7 @@ export function generateInvoiceNumber() {
 export function calcSessionAmount(durationMinutes, tarif) {
   if (!tarif) return 0
   if (tarif.type === 'forfait') return tarif.prix
-  return Math.ceil(durationMinutes / 60) * tarif.prix
+  return Math.ceil((durationMinutes * 60) / 3600) * tarif.prix
 }
 
 export function calcJetonsEarned(durationMinutes, rules, montant) {

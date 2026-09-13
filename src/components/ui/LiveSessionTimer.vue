@@ -14,11 +14,19 @@ import { formatDuration } from '@/utils/helpers'
 const props = defineProps({
   sessionDebut: { type: String, default: '' },
   dureeAllouee: { type: Number, default: 0 },
-  accumulee: { type: Number, default: 0 },
+  // Secondes EXACTES déjà accumulées (pauses comprises). Fallback : accumuleeMin
+  // en minutes (lignes créées avant la précision seconde).
+  accumSec: { type: Number, default: -1 },
+  accumuleeMin: { type: Number, default: 0 },
   statut: { type: String, default: 'en_cours' },
   // 'elapsed' = temps écoulé (+dépassé en rouge) ; 'remaining' = compte à rebours.
   mode: { type: String, default: 'elapsed' },
 })
+
+// Base accumulée en secondes : accumSec si fourni (>= 0), sinon minutes * 60.
+const accumBase = computed(() =>
+  props.accumSec >= 0 ? props.accumSec : (props.accumuleeMin || 0) * 60
+)
 
 const now = ref(Date.now())
 let timer = null
@@ -29,11 +37,11 @@ onMounted(() => {
 onUnmounted(() => { if (timer) clearInterval(timer) })
 
 const elapsedSeconds = computed(() => {
-  if (props.statut === 'pause') return (props.accumulee || 0) * 60
-  if (!props.sessionDebut) return (props.accumulee || 0) * 60
+  if (props.statut === 'pause') return accumBase.value
+  if (!props.sessionDebut) return accumBase.value
   const start = new Date(props.sessionDebut).getTime()
-  if (Number.isNaN(start)) return (props.accumulee || 0) * 60
-  return (props.accumulee || 0) * 60 + Math.max(0, Math.floor((now.value - start) / 1000))
+  if (Number.isNaN(start)) return accumBase.value
+  return accumBase.value + Math.max(0, Math.floor((now.value - start) / 1000))
 })
 
 const restant = computed(() =>

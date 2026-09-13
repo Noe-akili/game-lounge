@@ -37,6 +37,9 @@ fn enrich(
                 // barre de progression de fin de session (ConsoleCard).
                 "duree_allouee": session.and_then(|s| s.get("duree_allouee")).cloned().unwrap_or(Value::Null),
                 "duree_minutes": session.and_then(|s| s.get("duree_minutes")).cloned().unwrap_or(Value::Null),
+                // Secondes exactes déjà jouées : le chrono temps réel reste
+                // correct même après pause (sinon dérive à chaque pause).
+                "duree_secondes": session.and_then(|s| s.get("duree_secondes")).cloned().unwrap_or(Value::Null),
                 "joueur_id": joueur_id.map(Value::from).unwrap_or(Value::Null),
                 "jeu_id": jeu_id.map(Value::from).unwrap_or(Value::Null),
                 "tarif_prix": session.and_then(|s| s.get("tarif_prix")).cloned().unwrap_or(Value::Null),

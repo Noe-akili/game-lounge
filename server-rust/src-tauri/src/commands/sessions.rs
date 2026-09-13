@@ -15,18 +15,21 @@ fn parse_iso_ms(s: &str) -> Option<i64> {
 
 /// Montant d'une session (règle UNIQUE partagée par l'affichage et la facture) :
 /// le joueur paie le forfait choisi (duree_allouee minutes pour tarif_prix FC).
-/// Dépassement : prorata sur le taux du forfait (tarif_prix / duree_allouee).
+/// Dépassement : prorata à la SECONDE sur le taux du forfait (tarif_prix / duree_allouee),
+/// arrondi au franc supérieur UNIQUEMENT (plus d'arrondi minutes -> plus de
+/// quelques secondes de retard transformées en 1 minute facturée).
 /// Ex : 90 min à 3000 FC jouées 90 min -> 3000 FC (et non 6000 !).
-pub fn compute_montant(tarif_prix: i64, allouee: i64, jouee_min: i64) -> i64 {
+pub fn compute_montant(tarif_prix: i64, allouee: i64, jouee_secondes: i64) -> i64 {
     if allouee > 0 {
-        if jouee_min <= allouee {
+        let allouee_s = allouee * 60;
+        if jouee_secondes <= allouee_s {
             tarif_prix
         } else {
-            let depassement = jouee_min - allouee;
-            tarif_prix + (depassement * tarif_prix + allouee - 1) / allouee
+            let depassement_s = jouee_secondes - allouee_s;
+            tarif_prix + (depassement_s * tarif_prix + allouee_s - 1) / allouee_s
         }
     } else {
-        ((jouee_min + 59) / 60) * tarif_prix
+        ((jouee_secondes + 3599) / 3600) * tarif_prix
     }
 }
 
@@ -143,19 +146,22 @@ pub fn sessions_get(state: State<'_, AppState>, token: Option<String>, id: i64) 
     let debut = s.get("debut").and_then(Value::as_str).unwrap_or("");
     let fin = s.get("fin").and_then(Value::as_str).unwrap_or("");
     let duree_minutes = s.get("duree_minutes").and_then(Value::as_i64).unwrap_or(0);
+    let duree_secondes_row = s.get("duree_secondes").and_then(Value::as_i64);
+    // Précision seconde : duree_secondes si présent, sinon fallback minutes*60
+    // (lignes créées avant la colonne).
+    let accum_secondes = duree_secondes_row.unwrap_or(duree_minutes * 60);
 
     let now_ms = chrono::Utc::now().timestamp_millis();
     let duree_secondes = if statut == "en_cours" {
-        // Temps déjà accumulé (pauses, reprises) + temps écoulé depuis la
-        // (re)départ — duree_minutes N'EST PAS la durée du tarif : c'est le
-        // temps déjà joué.
-        duree_minutes * 60
+        // Temps déjà accumulé (secondes exactes, pauses comprises) + temps
+        // écoulé depuis la (re)prise — duree_minutes N'EST PAS la durée du tarif.
+        accum_secondes
             + now_ms
                 .checked_sub(parse_iso_ms(debut).unwrap_or(now_ms))
                 .unwrap_or(0)
                 / 1000
     } else if statut == "pause" {
-        duree_minutes * 60
+        accum_secondes
     } else {
         parse_iso_ms(fin)
             .and_then(|f| parse_iso_ms(debut).map(|d| (f - d) / 1000))
@@ -239,6 +245,8 @@ pub fn sessions_create(
     // à la durée du tarif faisait afficher 1:00:00 dès le démarrage (chrono
     // "bizarre") et déclarait la session expirée immédiatement.
     row.insert("duree_minutes".into(), json!(0));
+    // Précision seconde : base d'accumulation à 0 aussi.
+    row.insert("duree_secondes".into(), json!(0));
     // Durée ALLOUÉE par le tarif : c'est elle qui déclenche la terminaison
     // automatique (notification) quand le temps est écoulé.
     row.insert("duree_allouee".into(), json!(duree_minutes));
@@ -281,13 +289,19 @@ pub fn sessions_pause(
         return Err(ApiError::bad_request("Session non en cours"));
     }
     let debut = s.get("debut").and_then(Value::as_str).unwrap_or("");
+    // Accumulation en SECONDES : tronquer à la minute (total_secondes / 60)
+    // perdait les secondes restantes à chaque pause -> dérive progressive.
     let duree_minutes = s.get("duree_minutes").and_then(Value::as_i64).unwrap_or(0);
+    let accum_secondes = s
+        .get("duree_secondes")
+        .and_then(Value::as_i64)
+        .unwrap_or(duree_minutes * 60);
     let now_ms = chrono::Utc::now().timestamp_millis();
     let elapsed = now_ms
         .checked_sub(parse_iso_ms(debut).unwrap_or(now_ms))
         .unwrap_or(0)
         / 1000;
-    let total_secondes = duree_minutes * 60 + elapsed;
+    let total_secondes = accum_secondes + elapsed;
     let console_id = s
         .get("console_id")
         .and_then(Value::as_i64)
@@ -295,7 +309,10 @@ pub fn sessions_pause(
 
     let mut upd = jmap();
     upd.insert("statut".into(), json!("pause"));
+    // duree_minutes : conservé pour compat (arrondi inférieur), la vraie valeur
+    // est duree_secondes.
     upd.insert("duree_minutes".into(), json!(total_secondes / 60));
+    upd.insert("duree_secondes".into(), json!(total_secondes));
     db.update("sessions_jeu", id, &upd)?;
 
     let mut upd_console = jmap();
@@ -329,6 +346,8 @@ pub fn sessions_reprendre(
     let mut upd = jmap();
     upd.insert("statut".into(), json!("en_cours"));
     upd.insert("debut".into(), json!(now_iso()));
+    // La base secondes est conservée telle quelle (déjà accumulée au pause) :
+    // seule la nouvelle période en cours s'écoule depuis ce nouveau `debut`.
     db.update("sessions_jeu", id, &upd)?;
 
     let mut upd_console = jmap();
@@ -359,9 +378,10 @@ pub fn sessions_terminer(
 /// (règle 'temps' par durée OU règle 'montant' selon le montant de la session)
 /// et renvoie le détail { session, facture, montant, jetonsGagnes, dureeMinutes }.
 ///
-/// `duree_imposee` : durée (minutes) à facturer — utilisée par la terminaison
-/// AUTOMATIQUE (temps écoulé) pour arrêter le chrono à la seconde où la session
-/// a expiré, même si le watcher n'a pu tourner que plus tard.
+/// `duree_imposee` : durée EXACTE en SECONDES à facturer — utilisée par la
+/// terminaison AUTOMATIQUE (temps écoulé). Le watcher transmet le délai de
+/// dépassement réel à la seconde : plus aucun arrondi qui transforme quelques
+/// secondes de retard en 1 minute facturée.
 /// `auto` : true = terminaison automatique -> l'heure de fin est calculée depuis
 /// `debut + durée totale` (et non "maintenant") pour une facturation exacte.
 pub(crate) fn finalize_session(
@@ -377,6 +397,12 @@ pub(crate) fn finalize_session(
     let statut = s.get("statut").and_then(Value::as_str).unwrap_or("");
     let debut = s.get("debut").and_then(Value::as_str).unwrap_or("");
     let duree_minutes = s.get("duree_minutes").and_then(Value::as_i64).unwrap_or(0);
+    // Base accumulée en SECONDES (duree_secondes si présent, sinon fallback
+    // minutes*60 pour les lignes créées avant cette colonne).
+    let accum_secondes = s
+        .get("duree_secondes")
+        .and_then(Value::as_i64)
+        .unwrap_or(duree_minutes * 60);
     let tarif_prix = s.get("tarif_prix").and_then(Value::as_i64).unwrap_or(2000);
     let console_id = s
         .get("console_id")
@@ -397,27 +423,32 @@ pub(crate) fn finalize_session(
     } else {
         0
     };
-    let total_secondes = duree_minutes * 60 + elapsed;
-    let duree_minutes_final = match duree_imposee {
-        Some(d) if d > 0 => d,
-        _ => ((total_secondes as f64) / 60.0).ceil().max(1.0) as i64,
+    let total_secondes = accum_secondes + elapsed;
+    // Durée EXACTE facturée en secondes : soit celle imposée par le watcher
+    // (terminaison auto, à la seconde), soit le temps réellement joué.
+    let facture_secondes = match duree_imposee {
+        Some(sec) if sec > 0 => sec,
+        _ => total_secondes.max(1),
     };
-    // Forfait choisi + dépassement prorata (voir compute_montant).
+    // duree_minutes : colonne de compat (ceil à la minute) — le MONTANT est
+    // calculé à la seconde (compute_montant).
+    let duree_minutes_final = (facture_secondes + 59) / 60;
+    // Forfait choisi + dépassement prorata À LA SECONDE (voir compute_montant).
     let allouee = s
         .get("duree_allouee")
         .and_then(Value::as_i64)
         .unwrap_or(0)
         .max(if duree_imposee.is_some() { duree_minutes } else { 0 });
-    let montant = compute_montant(tarif_prix, allouee, duree_minutes_final);
+    let montant = compute_montant(tarif_prix, allouee, facture_secondes);
 
-    // Terminer la session. En AUTO (temps écoulé), l'heure de fin est calculée
-    // exactement à l'expiration : debut + (durée imposée - déjà accumulée),
-    // PAS "maintenant" — le joueur paie le temps alloué + dépassement réel,
-    // même si le watcher n'a pu tourner que plus tard.
+    // Terminer la session. En AUTO (temps écoulé), l'heure de fin est
+    // l'INSTANT EXACT d'expiration : debut + secondes accumulées + allocation
+    // restante — PAS "maintenant" (le watcher peut tourner en retard, cela ne
+    // doit pas décaler l'heure de fin ni le montant).
     let fin_iso = if auto {
         chrono::DateTime::parse_from_rfc3339(debut)
             .map(|d| {
-                let offset_s = (duree_minutes_final - duree_minutes).max(0) * 60;
+                let offset_s = (facture_secondes - accum_secondes).max(0);
                 (d + chrono::Duration::seconds(offset_s))
                     .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
             })
@@ -429,6 +460,7 @@ pub(crate) fn finalize_session(
     upd_session.insert("statut".into(), json!("terminee"));
     upd_session.insert("fin".into(), json!(fin_iso));
     upd_session.insert("duree_minutes".into(), json!(duree_minutes_final));
+    upd_session.insert("duree_secondes".into(), json!(facture_secondes));
     upd_session.insert("montant".into(), json!(montant));
     if auto {
         // Aligne la durée allouée sur la durée réellement jouée : sinon un pull
@@ -620,6 +652,7 @@ pub fn sessions_update(
             updates.insert("duree_allouee".into(), json!(d));
         } else {
             updates.insert("duree_minutes".into(), json!(d));
+            updates.insert("duree_secondes".into(), json!(d * 60));
             updates.insert("duree_allouee".into(), json!(d));
         }
     }
