@@ -1,122 +1,122 @@
-// NeonDB sync - offline-first via tokio-postgres + rustls 0.19 (pure Rust)
+// Supabase sync - offline-first via tokio-postgres + rustls 0.19 (pure Rust)
 use serde_json::{Value, json};
 use crate::error::{ApiError, ApiResult};
 
-#[cfg(feature = "neon-sync")]
+#[cfg(feature = "supabase-sync")]
 use tokio_postgres::{Client, NoTls};
 
-#[cfg(feature = "neon-sync")]
+#[cfg(feature = "supabase-sync")]
 #[derive(Clone)]
-pub struct NeonPool {
+pub struct SupabasePool {
     pub client: std::sync::Arc<Client>,
 }
 
-// Timeouts courts OBLIGATOIRES : une connexion Neon morte (fermée par le serveur après idle,
+// Timeouts courts OBLIGATOIRES : une connexion Supabase morte (fermée par le serveur après idle,
 // ou changement réseau mobile) fait HANGUER une query pendant des minutes (retransmission TCP).
-// C'était la cause du "Timeout IPC (Android WebView)" : auth_login/test_neon ne répondaient jamais.
-#[cfg(feature = "neon-sync")]
-const NEON_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
-#[cfg(feature = "neon-sync")]
-const NEON_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(6);
+// C'était la cause du "Timeout IPC (Android WebView)" : auth_login/test_supabase_connection ne répondaient jamais.
+#[cfg(feature = "supabase-sync")]
+const SUPABASE_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+#[cfg(feature = "supabase-sync")]
+const SUPABASE_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(6);
 
-/// Message d'erreur Neon LISIBLE : le Display générique des erreurs serveur est
+/// Message d'erreur Supabase LISIBLE : le Display générique des erreurs serveur est
 /// "db error" (Kind::Db) — le VRAI message SQL (ex: "column deleted does not exist",
 /// "COALESCE types integer and boolean cannot be matched") est dans la cause (DbError).
-#[cfg(feature = "neon-sync")]
-fn neon_error_str(e: tokio_postgres::Error) -> String {
+#[cfg(feature = "supabase-sync")]
+fn supabase_error_str(e: tokio_postgres::Error) -> String {
     match e.into_source() {
         Some(src) => format!("{}", src),
         None => "erreur serveur (cause inconnue)".to_string(),
     }
 }
 
-#[cfg(feature = "neon-sync")]
-pub async fn neon_query(pool: &NeonPool, sql: &str, params: &[&(dyn tokio_postgres::types::ToSql + Sync)]) -> Result<Vec<tokio_postgres::Row>, String> {
-    match tokio::time::timeout(NEON_QUERY_TIMEOUT, pool.client.query(sql, params)).await {
+#[cfg(feature = "supabase-sync")]
+pub async fn supabase_query(pool: &SupabasePool, sql: &str, params: &[&(dyn tokio_postgres::types::ToSql + Sync)]) -> Result<Vec<tokio_postgres::Row>, String> {
+    match tokio::time::timeout(SUPABASE_QUERY_TIMEOUT, pool.client.query(sql, params)).await {
         Ok(Ok(rows)) => Ok(rows),
-        Ok(Err(e)) => Err(neon_error_str(e)),
-        Err(_) => Err(format!("timeout après {}s (connexion morte ?)", NEON_QUERY_TIMEOUT.as_secs())),
+        Ok(Err(e)) => Err(supabase_error_str(e)),
+        Err(_) => Err(format!("timeout après {}s (connexion morte ?)", SUPABASE_QUERY_TIMEOUT.as_secs())),
     }
 }
 
-/// Ping rapide de la connexion Neon (SELECT 1 avec timeout court)
-#[cfg(feature = "neon-sync")]
-pub async fn ping(pool: &NeonPool) -> Result<(), String> {
-    match tokio::time::timeout(NEON_QUERY_TIMEOUT, pool.client.query_one("SELECT 1", &[])).await {
+/// Ping rapide de la connexion Supabase (SELECT 1 avec timeout court)
+#[cfg(feature = "supabase-sync")]
+pub async fn ping(pool: &SupabasePool) -> Result<(), String> {
+    match tokio::time::timeout(SUPABASE_QUERY_TIMEOUT, pool.client.query_one("SELECT 1", &[])).await {
         Ok(Ok(_)) => Ok(()),
         Ok(Err(e)) => Err(e.to_string()),
-        Err(_) => Err(format!("timeout après {}s (connexion morte)", NEON_QUERY_TIMEOUT.as_secs())),
+        Err(_) => Err(format!("timeout après {}s (connexion morte)", SUPABASE_QUERY_TIMEOUT.as_secs())),
     }
 }
 
-/// Reconnexion Neon en arrière-plan après connexion morte.
-/// Neon ferme les connexions inactives ; sans ça, le pool reste mort jusqu'au redémarrage de l'app.
-#[cfg(feature = "neon-sync")]
+/// Reconnexion Supabase en arrière-plan après connexion morte.
+/// Supabase ferme les connexions inactives ; sans ça, le pool reste mort jusqu'au redémarrage de l'app.
+#[cfg(feature = "supabase-sync")]
 pub fn schedule_reconnect(app: &tauri::AppHandle) {
     use std::sync::atomic::Ordering;
     use tauri::Manager;
     let Some(state) = app.try_state::<crate::AppState>() else { return };
     // Un seul reconnect à la fois (les commandes en erreur spament toutes reconnect sinon)
-    if state.neon_reconnecting.swap(true, Ordering::SeqCst) { return; }
+    if state.supabase_reconnecting.swap(true, Ordering::SeqCst) { return; }
     // Pool indisponible pendant la reconnexion (les appels passeront en offline au lieu de hanguer)
-    if let Ok(mut guard) = state.neon_pool.lock() {
+    if let Ok(mut guard) = state.supabase_pool.lock() {
         *guard = None;
     }
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        crate::logger::log_neon("reconnexion Neon en arrière-plan...");
+        crate::logger::log_cloud("reconnexion Supabase en arrière-plan...");
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        match init_neon_pool().await {
+        match init_supabase_pool().await {
             Some(pool) => {
-                crate::logger::log_neon("reconnexion Neon OK, pool restauré");
+                crate::logger::log_cloud("reconnexion Supabase OK, pool restauré");
                 if let Some(s) = handle.try_state::<crate::AppState>() {
-                    if let Ok(mut guard) = s.neon_pool.lock() {
+                    if let Ok(mut guard) = s.supabase_pool.lock() {
                         *guard = Some(pool);
                     }
                 }
             }
-            None => crate::logger::log_neon("reconnexion Neon échouée (offline), réessai au prochain usage"),
+            None => crate::logger::log_cloud("reconnexion Supabase échouée (offline), réessai au prochain usage"),
         }
         if let Some(s) = handle.try_state::<crate::AppState>() {
-            s.neon_reconnecting.store(false, Ordering::SeqCst);
+            s.supabase_reconnecting.store(false, Ordering::SeqCst);
         }
     });
 }
 
 /// URL de connexion cloud (Postgres).
-/// SUPABASE (remplace Neon) : on utilise le SESSION POOLER (port 5432) —
+/// SUPABASE (remplace Supabase) : on utilise le SESSION POOLER (port 5432) —
 /// - certificat Let's Encrypt public (vérifié par webpki-roots, pas de CA custom),
 /// - IPv4 (le direct db.xxx.supabase.co est IPv6-only sur les nouveaux projets ->
 ///   ne se connecte jamais depuis Android),
 /// - compatible protocole simple (pas de prepared statements persistants).
 /// L'URL est aussi injectée par le workflow GitHub via la variable DATABASE_URL
 /// (option_env! au build) ; ce fallback garantit que l'APK marche même sans secret.
-#[cfg(feature = "neon-sync")]
+#[cfg(feature = "supabase-sync")]
 pub const FALLBACK_URL: &str = "postgresql://postgres.tyvqidhbgqveaftlvjrn:TkL.w78%265%26-Lr%40_@aws-1-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require";
 
-#[cfg(feature = "neon-sync")]
-pub async fn init_neon_pool() -> Option<NeonPool> {
+#[cfg(feature = "supabase-sync")]
+pub async fn init_supabase_pool() -> Option<SupabasePool> {
     // NOTE : option_env! retiré — le secret GitHub DATABASE_URL contenait encore
-    // l'ancienne URL Neon et aurait pris le dessus sur le fallback Supabase à chaque
+    // l'ancienne URL Supabase et aurait pris le dessus sur le fallback Supabase à chaque
     // build Android. Sur Android il n'y a pas d'env runtime : FALLBACK_URL est
     // autoritaire. Sur desktop, dotenvy charge .env -> std::env::var fonctionne.
     let url = std::env::var("DATABASE_URL").ok().filter(|s| !s.trim().is_empty())
-        .or_else(|| std::env::var("NEON_DATABASE_URL").ok().filter(|s| !s.trim().is_empty()))
+        .or_else(|| std::env::var("SUPABASE_DATABASE_URL").ok().filter(|s| !s.trim().is_empty()))
         .or_else(|| Some(FALLBACK_URL.to_string()));
     let url = match url {
         Some(u) if !u.trim().is_empty() => u,
         _ => {
-            crate::logger::log_neon("DATABASE_URL absent et fallback vide, mode offline");
+            crate::logger::log_cloud("DATABASE_URL absent et fallback vide, mode offline");
             return None;
         }
     };
-    crate::logger::log_neon(&format!("DATABASE_URL présent ({} chars), tentative rustls", url.len()));
+    crate::logger::log_cloud(&format!("DATABASE_URL présent ({} chars), tentative rustls", url.len()));
     // Tente rustls 0.19 - webpki-roots 0.21 fournit TLS_SERVER_ROOTS directement compatible
     // SUPABASE : la chaîne du pooler (*.pooler.supabase.com) remonte à "Supabase Root
     // 2021 CA", une racine PRIVÉE absente des racines publiques Mozilla -> sans l'ajouter
     // le handshake TLS échoue, le fallback NoTls est refusé par le pooler (TLS obligatoire)
     // et l'app restait OFFLINE. On embarque la racine officielle Supabase (certs/).
-    let rustls_result = tokio::time::timeout(NEON_CONNECT_TIMEOUT, async {
+    let rustls_result = tokio::time::timeout(SUPABASE_CONNECT_TIMEOUT, async {
         let mut root_store = rustls::RootCertStore::empty();
         root_store.add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
         let supa_pem: &[u8] = include_bytes!("../certs/supabase-root-ca.pem");
@@ -127,9 +127,9 @@ pub async fn init_neon_pool() -> Option<NeonPool> {
                 for c in certs.iter() {
                     if root_store.add(c).is_ok() { added += 1; }
                 }
-                crate::logger::log_neon(&format!("CA Supabase chargée dans le store TLS ({} certificat(s))", added));
+                crate::logger::log_cloud(&format!("CA Supabase chargée dans le store TLS ({} certificat(s))", added));
             }
-            Err(_) => crate::logger::log_neon("WARNING: échec parsing CA Supabase (TLS Supabase va échouer)"),
+            Err(_) => crate::logger::log_cloud("WARNING: échec parsing CA Supabase (TLS Supabase va échouer)"),
         }
         let mut config = rustls::ClientConfig::new();
         config.root_store = root_store;
@@ -141,74 +141,74 @@ pub async fn init_neon_pool() -> Option<NeonPool> {
         Ok(Ok((client, connection))) => {
             tokio::spawn(async move {
                 if let Err(e) = connection.await {
-                    eprintln!("[neon] connection error (rustls): {}", e);
+                    eprintln!("[supabase] connection error (rustls): {}", e);
                 }
             });
-            match tokio::time::timeout(NEON_QUERY_TIMEOUT, client.query("SELECT 1", &[])).await {
+            match tokio::time::timeout(SUPABASE_QUERY_TIMEOUT, client.query("SELECT 1", &[])).await {
                 Ok(Ok(_)) => {
-                    eprintln!("[neon] pool connecté (rustls)");
-                    return Some(NeonPool { client: std::sync::Arc::new(client) });
+                    eprintln!("[supabase] pool connecté (rustls)");
+                    return Some(SupabasePool { client: std::sync::Arc::new(client) });
                 }
                 Ok(Err(e)) => {
-                    eprintln!("[neon] rustls test query failed: {}, tente NoTls", e);
+                    eprintln!("[supabase] rustls test query failed: {}, tente NoTls", e);
                 }
                 Err(_) => {
-                    eprintln!("[neon] rustls test query timeout, tente NoTls");
+                    eprintln!("[supabase] rustls test query timeout, tente NoTls");
                 }
             }
         }
         Ok(Err(e)) => {
-            crate::logger::log_neon(&format!("rustls connect failed: {} (tente NoTls)", e));
-            eprintln!("[neon] rustls connect failed: {}, tente NoTls", e);
+            crate::logger::log_cloud(&format!("rustls connect failed: {} (tente NoTls)", e));
+            eprintln!("[supabase] rustls connect failed: {}, tente NoTls", e);
         }
         Err(_) => {
-            eprintln!("[neon] rustls connect timeout ({}s), tente NoTls", NEON_CONNECT_TIMEOUT.as_secs());
+            eprintln!("[supabase] rustls connect timeout ({}s), tente NoTls", SUPABASE_CONNECT_TIMEOUT.as_secs());
         }
     }
 
     // Fallback NoTls
-    let no_tls_result = tokio::time::timeout(NEON_CONNECT_TIMEOUT, tokio_postgres::connect(&url, NoTls)).await;
+    let no_tls_result = tokio::time::timeout(SUPABASE_CONNECT_TIMEOUT, tokio_postgres::connect(&url, NoTls)).await;
     match no_tls_result {
         Ok(Ok((client, connection))) => {
             tokio::spawn(async move {
                 if let Err(e) = connection.await {
-                    eprintln!("[neon] connection error (NoTls): {}", e);
+                    eprintln!("[supabase] connection error (NoTls): {}", e);
                 }
             });
-            match tokio::time::timeout(NEON_QUERY_TIMEOUT, client.query("SELECT 1", &[])).await {
+            match tokio::time::timeout(SUPABASE_QUERY_TIMEOUT, client.query("SELECT 1", &[])).await {
                 Ok(Ok(_)) => {
-                    eprintln!("[neon] pool connecté (NoTls)");
-                    Some(NeonPool { client: std::sync::Arc::new(client) })
+                    eprintln!("[supabase] pool connecté (NoTls)");
+                    Some(SupabasePool { client: std::sync::Arc::new(client) })
                 }
                 Ok(Err(e)) => {
-                    eprintln!("[neon] NoTls test query failed: {}, offline", e);
+                    eprintln!("[supabase] NoTls test query failed: {}, offline", e);
                     None
                 }
                 Err(_) => {
-                    eprintln!("[neon] NoTls test query timeout, offline");
+                    eprintln!("[supabase] NoTls test query timeout, offline");
                     None
                 }
             }
         }
         Ok(Err(e)) => {
-            eprintln!("[neon] pool connect failed (offline): {}", e);
+            eprintln!("[supabase] pool connect failed (offline): {}", e);
             None
         }
         Err(_) => {
-            eprintln!("[neon] pool connect timeout ({}s), offline", NEON_CONNECT_TIMEOUT.as_secs());
+            eprintln!("[supabase] pool connect timeout ({}s), offline", SUPABASE_CONNECT_TIMEOUT.as_secs());
             None
         }
     }
 }
 
-#[cfg(not(feature = "neon-sync"))]
-pub async fn init_neon_pool() -> Option<()> {
-    eprintln!("[neon] feature neon-sync désactivée");
+#[cfg(not(feature = "supabase-sync"))]
+pub async fn init_supabase_pool() -> Option<()> {
+    eprintln!("[supabase] feature supabase-sync désactivée");
     None
 }
 
 #[derive(Debug, Clone)]
-pub struct NeonUser {
+pub struct SupabaseUser {
     pub id: i64,
     pub email: String,
     pub password_hash: String,
@@ -219,7 +219,7 @@ pub struct NeonUser {
 
 /// Lecture d'une colonne texte tolérante aux pannes : N'UTILISE PAS row.get (panique si type
 /// Postgres inattendu, ex: TIMESTAMPTZ décodé en String) — un panic ici tue l'app Android.
-#[cfg(feature = "neon-sync")]
+#[cfg(feature = "supabase-sync")]
 pub fn pg_col_to_string_pub(row: &tokio_postgres::Row, idx: usize) -> Option<String> {
     match row.try_get::<_, Option<String>>(idx) {
         Ok(Some(s)) => Some(s),
@@ -228,26 +228,26 @@ pub fn pg_col_to_string_pub(row: &tokio_postgres::Row, idx: usize) -> Option<Str
     }
 }
 
-#[cfg(feature = "neon-sync")]
+#[cfg(feature = "supabase-sync")]
 fn pg_col_to_string(row: &tokio_postgres::Row, idx: usize) -> Option<String> {
     pg_col_to_string_pub(row, idx)
 }
 
-#[cfg(feature = "neon-sync")]
-pub async fn fetch_neon_user(pool: &NeonPool, email: &str) -> ApiResult<Option<NeonUser>> {
+#[cfg(feature = "supabase-sync")]
+pub async fn fetch_supabase_user(pool: &SupabasePool, email: &str) -> ApiResult<Option<SupabaseUser>> {
     // Email en dur (échappé) : les requêtes avec paramètres ($1) passent par le protocole
-    // étendu (prepared statements) que le pooler Neon ne supporte pas -> login cassé
+    // étendu (prepared statements) que le pooler Supabase ne supporte pas -> login cassé
     let sql = format!("SELECT id, email, password_hash, role, nom, created_at FROM users WHERE email = '{}' LIMIT 1", escape_sql(email));
-    let rows = neon_query(pool, &sql, &[])
+    let rows = supabase_query(pool, &sql, &[])
         .await
-        .map_err(|e| ApiError::internal(format!("Neon query user: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Supabase query user: {}", e)))?;
     if rows.is_empty() {
         return Ok(None);
     }
     let row = &rows[0];
     // Décodage défensif : tout panic potentiel est contenu (catch_unwind), jamais propagé
     let decode = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        NeonUser {
+        SupabaseUser {
             id: row.try_get::<_, i64>(0).unwrap_or(0),
             email: pg_col_to_string(row, 1).unwrap_or_default(),
             password_hash: pg_col_to_string(row, 2).unwrap_or_default(),
@@ -259,22 +259,22 @@ pub async fn fetch_neon_user(pool: &NeonPool, email: &str) -> ApiResult<Option<N
     match decode {
         Ok(u) => Ok(Some(u)),
         Err(_) => {
-            crate::logger::log_neon("fetch_neon_user: décodage row paniqué, user ignoré");
+            crate::logger::log_cloud("fetch_supabase_user: décodage row paniqué, user ignoré");
             Ok(None)
         }
     }
 }
 
-#[cfg(not(feature = "neon-sync"))]
-pub async fn fetch_neon_user(_pool: &(), _email: &str) -> ApiResult<Option<NeonUser>> {
+#[cfg(not(feature = "supabase-sync"))]
+pub async fn fetch_supabase_user(_pool: &(), _email: &str) -> ApiResult<Option<SupabaseUser>> {
     Ok(None)
 }
 
-#[cfg(feature = "neon-sync")]
-pub async fn pull_users(pool: &NeonPool) -> ApiResult<Vec<Value>> {
-    let rows = neon_query(pool, "SELECT id, email, password_hash, role, nom, created_at FROM users ORDER BY id", &[])
+#[cfg(feature = "supabase-sync")]
+pub async fn pull_users(pool: &SupabasePool) -> ApiResult<Vec<Value>> {
+    let rows = supabase_query(pool, "SELECT id, email, password_hash, role, nom, created_at FROM users ORDER BY id", &[])
         .await
-        .map_err(|e| ApiError::internal(format!("Neon pull users: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Supabase pull users: {}", e)))?;
     // Décodage défensif : try_get + String partout (pas de chrono), catch_unwind par ligne.
     // Avant : row.get::<_, Option<chrono::NaiveDateTime>>(5) PANIQUAIT si la colonne Postgres
     // est TIMESTAMPTZ (déjà mappé chrono) mais type inattendu -> app tuée en background.
@@ -293,34 +293,34 @@ pub async fn pull_users(pool: &NeonPool) -> ApiResult<Vec<Value>> {
         match decoded {
             Ok(v) => out.push(v),
             Err(_) => {
-                crate::logger::log_neon("pull_users: ligne paniquée au décodage, ignorée");
+                crate::logger::log_cloud("pull_users: ligne paniquée au décodage, ignorée");
             }
         }
     }
     Ok(out)
 }
 
-#[cfg(not(feature = "neon-sync"))]
+#[cfg(not(feature = "supabase-sync"))]
 pub async fn pull_users(_pool: &()) -> ApiResult<Vec<Value>> {
     Ok(vec![])
 }
 
 /// Échappe une valeur pour insertion SQL en dur (protocole simple) : ' -> ''
-#[cfg(feature = "neon-sync")]
+#[cfg(feature = "supabase-sync")]
 fn escape_sql(s: &str) -> String {
     s.split("'").collect::<Vec<_>>().join("''")
 }
 
 /// Exécution en protocole SIMPLE (batch_execute) : PAS de prepared statement.
-/// Le pooler Neon (PgBouncer) ne supporte pas les prepared statements persistants
+/// Le pooler Supabase (PgBouncer) ne supporte pas les prepared statements persistants
 /// de tokio-postgres ("prepared statement PGBOUNCER_N does not exist") — le protocole
 /// simple les évite totalement.
-#[cfg(feature = "neon-sync")]
-async fn neon_batch_execute(pool: &NeonPool, sql: &str) -> Result<(), String> {
-    match tokio::time::timeout(NEON_QUERY_TIMEOUT, pool.client.batch_execute(sql)).await {
+#[cfg(feature = "supabase-sync")]
+async fn supabase_batch_execute(pool: &SupabasePool, sql: &str) -> Result<(), String> {
+    match tokio::time::timeout(SUPABASE_QUERY_TIMEOUT, pool.client.batch_execute(sql)).await {
         Ok(Ok(())) => Ok(()),
-        Ok(Err(e)) => Err(neon_error_str(e)),
-        Err(_) => Err(format!("timeout après {}s (connexion morte ?)", NEON_QUERY_TIMEOUT.as_secs())),
+        Ok(Err(e)) => Err(supabase_error_str(e)),
+        Err(_) => Err(format!("timeout après {}s (connexion morte ?)", SUPABASE_QUERY_TIMEOUT.as_secs())),
     }
 }
 
@@ -340,8 +340,8 @@ async fn neon_batch_execute(pool: &NeonPool, sql: &str) -> Result<(), String> {
 /// - montants REAL en DOUBLE PRECISION : le push envoie des textes '12.5' qui ne
 ///   castent pas en INTEGER mais castent en DOUBLE PRECISION.
 /// - deleted INTEGER 0/1 : identique au local (is_deleted_value gère aussi boolean).
-#[cfg(feature = "neon-sync")]
-pub async fn ensure_cloud_schema(pool: &NeonPool) -> Result<(), String> {
+#[cfg(feature = "supabase-sync")]
+pub async fn ensure_cloud_schema(pool: &SupabasePool) -> Result<(), String> {
     let ddl = r#"
 CREATE TABLE IF NOT EXISTS "users" (id BIGINT PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY, email TEXT UNIQUE, password_hash TEXT, nom TEXT, role TEXT DEFAULT 'employe', created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS "consoles" (id BIGINT PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY, nom TEXT, type TEXT, etat TEXT DEFAULT 'disponible', poste_numero BIGINT, date_ajout TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
@@ -355,15 +355,16 @@ CREATE TABLE IF NOT EXISTS "messages" (id BIGINT PRIMARY KEY GENERATED BY DEFAUL
 CREATE TABLE IF NOT EXISTS "parametres_fidelite" (id BIGINT PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY, regle_type TEXT, seuil INTEGER, jetons_attribues INTEGER, actif INTEGER DEFAULT 1, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS "lignes_facture" (id BIGINT PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY, facture_id BIGINT, description TEXT, quantite INTEGER, prix_unitaire INTEGER, total_ligne INTEGER, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS "hangouts" (id BIGINT PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY, titre TEXT, activite TEXT, prix INTEGER, actif INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS "app_settings" (key TEXT PRIMARY KEY, value TEXT);
 "#;
-    match neon_batch_execute(pool, ddl).await {
+    match supabase_batch_execute(pool, ddl).await {
         Ok(_) => {
-            crate::logger::log_neon("migration schéma cloud OK (tables créées/vérifiées)");
+            crate::logger::log_cloud("migration schéma cloud OK (tables créées/vérifiées)");
             Ok(())
         }
         Err(e) => {
-            eprintln!("[neon] migration schéma cloud failed: {}", e);
-            crate::logger::log_neon(&format!("migration schéma cloud failed: {}", e));
+            eprintln!("[supabase] migration schéma cloud failed: {}", e);
+            crate::logger::log_cloud(&format!("migration schéma cloud failed: {}", e));
             Err(e)
         }
     }
@@ -372,26 +373,26 @@ CREATE TABLE IF NOT EXISTS "hangouts" (id BIGINT PRIMARY KEY GENERATED BY DEFAUL
 /// Index unique sur id (anti-doublons upsert). Exécuté une seule fois par table via
 /// le flag cloud_migration_v2 : les tables créées par ensure_cloud_schema ont déjà
 /// id PRIMARY KEY, l'index ne sert que pour les bases cloud anciennes.
-#[cfg(feature = "neon-sync")]
-pub async fn ensure_table_unique_id(pool: &NeonPool, table: &str) -> Result<(), String> {
+#[cfg(feature = "supabase-sync")]
+pub async fn ensure_table_unique_id(pool: &SupabasePool, table: &str) -> Result<(), String> {
     let sql = format!("CREATE UNIQUE INDEX IF NOT EXISTS uq_{}_id ON \"{}\" (id)", table, table);
-    match neon_batch_execute(pool, &sql).await {
+    match supabase_batch_execute(pool, &sql).await {
         Ok(_) => Ok(()),
         Err(e) => Err(e),
     }
 }
 
-/// Ajoute la colonne soft-delete `deleted` sur les tables Neon (idempotent).
-/// Rien n'est JAMAIS supprimé physiquement sur Neon : une ligne supprimée passe
+/// Ajoute la colonne soft-delete `deleted` sur les tables Supabase (idempotent).
+/// Rien n'est JAMAIS supprimé physiquement sur Supabase : une ligne supprimée passe
 /// deleted=1 et est simplement cachée (pull exclut deleted=true).
-#[cfg(feature = "neon-sync")]
-pub async fn ensure_deleted_columns(pool: &NeonPool) {
+#[cfg(feature = "supabase-sync")]
+pub async fn ensure_deleted_columns(pool: &SupabasePool) {
     let tables = ["users", "consoles", "jeux", "joueurs", "sessions_jeu", "tarifs", "factures", "jetons_transactions", "messages", "parametres_fidelite", "lignes_facture"];
     for table in tables {
         let sql = format!("ALTER TABLE \"{}\" ADD COLUMN IF NOT EXISTS deleted INTEGER NOT NULL DEFAULT 0", table);
-        match neon_batch_execute(pool, &sql).await {
+        match supabase_batch_execute(pool, &sql).await {
             Ok(_) => {}
-            Err(e) => eprintln!("[neon] ensure deleted {} failed: {}", table, e),
+            Err(e) => eprintln!("[supabase] ensure deleted {} failed: {}", table, e),
         }
     }
 }
@@ -401,8 +402,8 @@ pub async fn ensure_deleted_columns(pool: &NeonPool) {
 /// Schéma du moteur delta sync côté Supabase : journal partagé IMMUABLE
 /// (sync_changes, spec §2) + registre des appareils (sync_peers, pour le
 /// nettoyage §12). Idempotent, exécuté à chaque sync.
-#[cfg(feature = "neon-sync")]
-pub async fn ensure_sync_schema(pool: &NeonPool) -> Result<(), String> {
+#[cfg(feature = "supabase-sync")]
+pub async fn ensure_sync_schema(pool: &SupabasePool) -> Result<(), String> {
     let ddl = r#"
 CREATE TABLE IF NOT EXISTS "sync_changes" (
     sequence BIGSERIAL PRIMARY KEY,
@@ -423,22 +424,22 @@ CREATE TABLE IF NOT EXISTS "sync_peers" (
     last_seen TIMESTAMPTZ DEFAULT now()
 );
 "#;
-    match neon_batch_execute(pool, ddl).await {
+    match supabase_batch_execute(pool, ddl).await {
         Ok(_) => {
-            crate::logger::log_neon("schéma delta sync OK (sync_changes + sync_peers)");
+            crate::logger::log_cloud("schéma delta sync OK (sync_changes + sync_peers)");
             Ok(())
         }
         Err(e) => {
-            eprintln!("[neon] migration delta sync failed: {}", e);
+            eprintln!("[supabase] migration delta sync failed: {}", e);
             Err(e)
         }
     }
 }
 
 /// Dernière séquence du journal cloud (0 si vide) — pour initialiser le curseur.
-#[cfg(feature = "neon-sync")]
-pub async fn sync_max_sequence(pool: &NeonPool) -> Result<i64, String> {
-    match neon_query(pool, "SELECT COALESCE(MAX(sequence), 0) FROM sync_changes", &[]).await {
+#[cfg(feature = "supabase-sync")]
+pub async fn sync_max_sequence(pool: &SupabasePool) -> Result<i64, String> {
+    match supabase_query(pool, "SELECT COALESCE(MAX(sequence), 0) FROM sync_changes", &[]).await {
         Ok(rows) => {
             if rows.is_empty() {
                 Ok(0)
@@ -455,7 +456,7 @@ pub async fn sync_max_sequence(pool: &NeonPool) -> Result<i64, String> {
 /// Script SQL d'UN événement outbox : journal sync_changes (idempotent via
 /// ON CONFLICT DO NOTHING) + application à la table cible (upsert ou tombstone).
 /// Retourne None si l'événement est invalide. Protocole SIMPLE (batch_execute).
-#[cfg(feature = "neon-sync")]
+#[cfg(feature = "supabase-sync")]
 fn build_change_script(
     change: &Value,
     cols_cache: &std::collections::HashMap<String, Vec<String>>,
@@ -530,9 +531,9 @@ fn build_change_script(
 /// invalide (colonne inconnue...), retry événement par événement pour isoler :
 /// les OK partent en ACKED, les erreurs applicatives en FAILED.
 /// Retourne (change_ids ACKed, change_ids en erreur).
-#[cfg(feature = "neon-sync")]
+#[cfg(feature = "supabase-sync")]
 pub async fn push_outbox_batch(
-    pool: &NeonPool,
+    pool: &SupabasePool,
     changes: &Vec<Value>,
 ) -> Result<(Vec<String>, Vec<String>), String> {
     if changes.is_empty() {
@@ -548,7 +549,7 @@ pub async fn push_outbox_batch(
     }
     let mut cols_cache: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
     for t in tables {
-        let cols = neon_table_columns(pool, &t).await.unwrap_or_default();
+        let cols = supabase_table_columns(pool, &t).await.unwrap_or_default();
         cols_cache.insert(t, cols);
     }
     let mut scripts: Vec<String> = Vec::new();
@@ -564,7 +565,7 @@ pub async fn push_outbox_batch(
         .iter()
         .map(|c| c.get("change_id").and_then(Value::as_str).unwrap_or_default().to_string())
         .collect::<Vec<_>>();
-    match neon_batch_execute(pool, &scripts.join("\n")).await {
+    match supabase_batch_execute(pool, &scripts.join("\n")).await {
         Ok(_) => Ok((all_ack, Vec::new())),
         Err(_) => {
             // Échec global : retry un par un pour isoler les erreurs applicatives
@@ -572,7 +573,7 @@ pub async fn push_outbox_batch(
             let mut failed: Vec<String> = Vec::new();
             for change in changes {
                 let Some(script) = build_change_script(change, &cols_cache) else { continue };
-                match neon_batch_execute(pool, &script).await {
+                match supabase_batch_execute(pool, &script).await {
                     Ok(_) => acked.push(change.get("change_id").and_then(Value::as_str).unwrap_or_default().to_string()),
                     Err(_) => failed.push(change.get("change_id").and_then(Value::as_str).unwrap_or_default().to_string()),
                 }
@@ -585,14 +586,14 @@ pub async fn push_outbox_batch(
 /// Pull delta : SEULEMENT les changements plus récents que le curseur (spec §4).
 /// Retourne des objets {sequence, change_id, device_id, operation, entity,
 /// record_id, payload, created_at} triés par séquence croissante.
-#[cfg(feature = "neon-sync")]
-pub async fn pull_delta(pool: &NeonPool, after: i64, limit: i64) -> Result<Vec<Value>, String> {
+#[cfg(feature = "supabase-sync")]
+pub async fn pull_delta(pool: &SupabasePool, after: i64, limit: i64) -> Result<Vec<Value>, String> {
     let sql = format!(
         "SELECT sequence, change_id, device_id, operation, entity, record_id, payload::text, created_at::text FROM sync_changes WHERE sequence > {} ORDER BY sequence ASC LIMIT {}",
         after,
         limit,
     );
-    match neon_query(pool, &sql, &[]).await {
+    match supabase_query(pool, &sql, &[]).await {
         Ok(rows) => {
             let mut out: Vec<Value> = Vec::with_capacity(rows.len());
             for row in rows {
@@ -615,15 +616,15 @@ pub async fn pull_delta(pool: &NeonPool, after: i64, limit: i64) -> Result<Vec<V
 }
 
 /// Enregistre le curseur de cet appareil (pour le nettoyage du journal §12).
-#[cfg(feature = "neon-sync")]
-pub async fn peer_register(pool: &NeonPool, device_id: &str, last_received: i64, last_uploaded: i64) -> Result<(), String> {
+#[cfg(feature = "supabase-sync")]
+pub async fn peer_register(pool: &SupabasePool, device_id: &str, last_received: i64, last_uploaded: i64) -> Result<(), String> {
     let sql = format!(
         "INSERT INTO sync_peers (device_id, last_received, last_uploaded, last_seen) VALUES ('{}', {}, {}, now()) ON CONFLICT (device_id) DO UPDATE SET last_received = EXCLUDED.last_received, last_uploaded = EXCLUDED.last_uploaded, last_seen = now()",
         escape_sql(device_id),
         last_received,
         last_uploaded,
     );
-    match neon_batch_execute(pool, &sql).await {
+    match supabase_batch_execute(pool, &sql).await {
         Ok(_) => Ok(()),
         Err(e) => Err(e),
     }
@@ -632,10 +633,10 @@ pub async fn peer_register(pool: &NeonPool, device_id: &str, last_received: i64,
 /// Nettoyage du journal partagé : supprime les changements que TOUS les
 /// appareils connus ont dépassés (marge 1000). Sûr : si un appareil n'a jamais
 /// reporté son curseur (MIN=0), rien n'est supprimé (spec §12).
-#[cfg(feature = "neon-sync")]
-pub async fn sync_changes_cleanup(pool: &NeonPool) -> Result<(), String> {
+#[cfg(feature = "supabase-sync")]
+pub async fn sync_changes_cleanup(pool: &SupabasePool) -> Result<(), String> {
     let sql = "DELETE FROM sync_changes WHERE sequence < (SELECT COALESCE(MIN(last_received), 0) FROM sync_peers) - 1000 AND (SELECT COALESCE(MIN(last_received), 0) FROM sync_peers) > 1000";
-    match neon_batch_execute(pool, sql).await {
+    match supabase_batch_execute(pool, sql).await {
         Ok(_) => Ok(()),
         Err(e) => Err(e),
     }
@@ -643,21 +644,21 @@ pub async fn sync_changes_cleanup(pool: &NeonPool) -> Result<(), String> {
 
 // Pull toutes les tables pour restauration complète si app data vidé.
 // IMPORTANT : on utilise json_agg (fonction STANDARD Postgres) au lieu de
-// row_to_json (fonction custom qui n'existe pas forcément sur Neon -> la requête
+// row_to_json (fonction custom qui n'existe pas forcément sur Supabase -> la requête
 // échouait -> sync_run abort -> AUCUNE donnée écrite localement).
 // Les lignes soft-deleted (deleted=true) ne sont JAMAIS repullées -> une donnée
 // supprimée ne réapparaît pas après sync.
-// Une table absente du schéma Neon est ignorée (log + continue) ; seule une erreur
+// Une table absente du schéma Supabase est ignorée (log + continue) ; seule une erreur
 // de connexion est propagée (déclenche la reconnexion en arrière-plan).
 /// True si la valeur `deleted` d'une ligne pullée indique une suppression.
-/// Gère les DEUX types possibles côté Neon : boolean (true/false) et integer (1/0).
-#[cfg(feature = "neon-sync")]
+/// Gère les DEUX types possibles côté Supabase : boolean (true/false) et integer (1/0).
+#[cfg(feature = "supabase-sync")]
 fn is_deleted_value(v: &Value) -> bool {
     v.as_bool().unwrap_or(false) || v.as_i64().unwrap_or(0) == 1
 }
 
-#[cfg(feature = "neon-sync")]
-pub async fn pull_all(pool: &NeonPool) -> ApiResult<std::collections::HashMap<String, Vec<Value>>> {
+#[cfg(feature = "supabase-sync")]
+pub async fn pull_all(pool: &SupabasePool) -> ApiResult<std::collections::HashMap<String, Vec<Value>>> {
     let tables = ["users", "consoles", "jeux", "joueurs", "sessions_jeu", "tarifs", "factures", "jetons_transactions", "messages", "parametres_fidelite", "lignes_facture"];
     // RAPIDE : TOUTES les tables en UNE seule requête (UNION ALL de json_agg) ->
     // 1 aller-retour réseau au lieu de 11. Si une table manque (base cloud neuve),
@@ -666,7 +667,7 @@ pub async fn pull_all(pool: &NeonPool) -> ApiResult<std::collections::HashMap<St
         format!("SELECT '{}' AS t, COALESCE(json_agg(s)::text, '[]') AS j FROM (SELECT * FROM \"{}\") s", t, t)
     }).collect::<Vec<_>>().join(" UNION ALL ");
     let mut all = std::collections::HashMap::new();
-    match neon_query(pool, &sql, &[]).await {
+    match supabase_query(pool, &sql, &[]).await {
         Ok(rows) => {
             for row in rows {
                 let table = pg_col_to_string_pub(&row, 0).unwrap_or_default();
@@ -684,13 +685,13 @@ pub async fn pull_all(pool: &NeonPool) -> ApiResult<std::collections::HashMap<St
                         }
                     }
                 }
-                eprintln!("[neon] pull {}: {} rows", table, vec.len());
+                eprintln!("[supabase] pull {}: {} rows", table, vec.len());
                 all.insert(table.to_string(), vec);
             }
             Ok(all)
         }
         Err(e) => {
-            eprintln!("[neon] pull UNION ALL failed ({}), fallback par table", e);
+            eprintln!("[supabase] pull UNION ALL failed ({}), fallback par table", e);
             pull_all_fallback(pool, &tables).await
         }
     }
@@ -698,13 +699,13 @@ pub async fn pull_all(pool: &NeonPool) -> ApiResult<std::collections::HashMap<St
 
 /// Fallback résilient : pull table par table (une table absente ne bloque pas les autres).
 /// Seule une erreur sur TOUTES les tables (connexion morte) est propagée.
-#[cfg(feature = "neon-sync")]
-async fn pull_all_fallback(pool: &NeonPool, tables: &[&str]) -> ApiResult<std::collections::HashMap<String, Vec<Value>>> {
+#[cfg(feature = "supabase-sync")]
+async fn pull_all_fallback(pool: &SupabasePool, tables: &[&str]) -> ApiResult<std::collections::HashMap<String, Vec<Value>>> {
     let mut all = std::collections::HashMap::new();
     let mut errors = 0;
     for table in tables {
         let sql = format!("SELECT COALESCE(json_agg(t)::text, '[]') FROM (SELECT * FROM \"{}\") t", table);
-        match neon_query(pool, &sql, &[]).await {
+        match supabase_query(pool, &sql, &[]).await {
             Ok(jrows) => {
                 let mut vec = Vec::new();
                 if !jrows.is_empty() {
@@ -720,40 +721,40 @@ async fn pull_all_fallback(pool: &NeonPool, tables: &[&str]) -> ApiResult<std::c
                         }
                     }
                 }
-                eprintln!("[neon] pull {}: {} rows", table, vec.len());
+                eprintln!("[supabase] pull {}: {} rows", table, vec.len());
                 all.insert(table.to_string(), vec);
             }
             Err(e) => {
-                eprintln!("[neon] pull {} failed: {}", table, e);
-                crate::logger::log_neon(&format!("pull {} failed: {}", table, e));
+                eprintln!("[supabase] pull {} failed: {}", table, e);
+                crate::logger::log_cloud(&format!("pull {} failed: {}", table, e));
                 errors += 1;
                 all.insert(table.to_string(), Vec::new());
             }
         }
     }
     if errors == tables.len() && !tables.is_empty() {
-        return Err(ApiError::internal("Neon pull: toutes les tables en erreur (connexion morte ?)"));
+        return Err(ApiError::internal("Supabase pull: toutes les tables en erreur (connexion morte ?)"));
     }
     Ok(all)
 }
 
-#[cfg(not(feature = "neon-sync"))]
+#[cfg(not(feature = "supabase-sync"))]
 pub async fn pull_all(_pool: &()) -> ApiResult<std::collections::HashMap<String, Vec<Value>>> {
     Ok(std::collections::HashMap::new())
 }
 
 
 
-/// Colonnes d'une table Neon via information_schema (standard Postgres).
-/// Utilisé pour ne jamais envoyer vers Neon une colonne qui n'existe pas côté cloud
+/// Colonnes d'une table Supabase via information_schema (standard Postgres).
+/// Utilisé pour ne jamais envoyer vers Supabase une colonne qui n'existe pas côté cloud
 /// (sinon erreur SQL silencieuse -> "l'envoi ne fonctionne pas").
 /// SANS paramètre ($1) : les requêtes avec paramètres utilisent le protocole étendu
-/// (prepared statements) que le pooler Neon ne supporte pas — le nom de table est
+/// (prepared statements) que le pooler Supabase ne supporte pas — le nom de table est
 /// mis en dur (échappé par le format).
-#[cfg(feature = "neon-sync")]
-pub async fn neon_table_columns(pool: &NeonPool, table: &str) -> Result<Vec<String>, String> {
+#[cfg(feature = "supabase-sync")]
+pub async fn supabase_table_columns(pool: &SupabasePool, table: &str) -> Result<Vec<String>, String> {
     let sql = format!("SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '{}' ORDER BY ordinal_position", table);
-    let rows = neon_query(pool, &sql, &[]).await;
+    let rows = supabase_query(pool, &sql, &[]).await;
     match rows {
         Ok(rs) => {
             let mut out = Vec::new();
@@ -768,7 +769,7 @@ pub async fn neon_table_columns(pool: &NeonPool, table: &str) -> Result<Vec<Stri
     }
 }
 
-#[cfg(feature = "neon-sync")]
+#[cfg(feature = "supabase-sync")]
 /// Convertit une valeur sérialisée en texte : Postgres caste text -> type de la colonne
 /// cible à l'insert (int, numeric, timestamptz, ...). Évite de devoir construire des
 /// paramètres typés dynamiquement (le protocole tokio-postgres exige des références).
@@ -791,7 +792,7 @@ fn val_to_text(v: &Value) -> String {
 
 /// Valeurs SQL d'une ligne pour l'upsert (protocole simple, échappé).
 /// Une clé absente ou NULL -> littéral NULL (colonne non modifiée).
-#[cfg(feature = "neon-sync")]
+#[cfg(feature = "supabase-sync")]
 fn row_values_sql(obj: &serde_json::Map<String, Value>, cols: &Vec<String>) -> Vec<String> {
     let mut vals: Vec<String> = Vec::with_capacity(cols.len());
     for c in cols {
@@ -806,7 +807,7 @@ fn row_values_sql(obj: &serde_json::Map<String, Value>, cols: &Vec<String>) -> V
 
 /// SQL de l'upsert MULTI-LIGNES d'un lot : UNE seule requête pour toutes les lignes
 /// (INSERT ... VALUES (...),(...) ... ON CONFLICT (id) DO UPDATE SET ...).
-#[cfg(feature = "neon-sync")]
+#[cfg(feature = "supabase-sync")]
 fn build_batch_upsert_sql(table: &str, cols: &Vec<String>, batch: &Vec<Value>) -> Option<String> {
     let mut rows_sql: Vec<String> = Vec::with_capacity(batch.len());
     for row in batch {
@@ -827,13 +828,13 @@ fn build_batch_upsert_sql(table: &str, cols: &Vec<String>, batch: &Vec<Value>) -
 /// Pousse un lot par upsert multi-lignes (1 aller-retour réseau). En cas d'échec du
 /// lot (une ligne invalide ferait échouer tout le lot), on retombe ligne par ligne
 /// pour isoler et journaliser les lignes fautives sans bloquer les autres.
-#[cfg(feature = "neon-sync")]
-async fn push_batch_upsert(pool: &NeonPool, table: &str, cols: &Vec<String>, batch: &Vec<Value>) -> usize {
+#[cfg(feature = "supabase-sync")]
+async fn push_batch_upsert(pool: &SupabasePool, table: &str, cols: &Vec<String>, batch: &Vec<Value>) -> usize {
     match build_batch_upsert_sql(table, cols, batch) {
-        Some(sql) => match neon_batch_execute(pool, &sql).await {
+        Some(sql) => match supabase_batch_execute(pool, &sql).await {
             Ok(_) => batch.len(),
             Err(e) => {
-                eprintln!("[neon] push {} lot de {} lignes failed ({}), retry ligne par ligne", table, batch.len(), e);
+                eprintln!("[supabase] push {} lot de {} lignes failed ({}), retry ligne par ligne", table, batch.len(), e);
                 let mut pushed = 0;
                 for row in batch {
                     let Some(obj) = row.as_object() else { continue };
@@ -848,11 +849,11 @@ async fn push_batch_upsert(pool: &NeonPool, table: &str, cols: &Vec<String>, bat
                         row_values_sql(obj, cols).join(","),
                         updates_sql.join(",")
                     );
-                    match neon_batch_execute(pool, &sql).await {
+                    match supabase_batch_execute(pool, &sql).await {
                         Ok(_) => pushed += 1,
                         Err(e2) => {
-                            eprintln!("[neon] push {} #{} failed: {}", table, id, e2);
-                            crate::logger::log_neon(&format!("push {} #{}: {}", table, id, e2));
+                            eprintln!("[supabase] push {} #{} failed: {}", table, id, e2);
+                            crate::logger::log_cloud(&format!("push {} #{}: {}", table, id, e2));
                         }
                     }
                 }
@@ -871,11 +872,11 @@ async fn push_batch_upsert(pool: &NeonPool, table: &str, cols: &Vec<String>, bat
 ///
 /// IMPORTANT : valeurs échappées en dur + protocole SIMPLE (batch_execute) car le
 /// pooler Supabase (PgBouncer) ne supporte pas les prepared statements persistants.
-#[cfg(feature = "neon-sync")]
-pub async fn push_table(pool: &NeonPool, table: &str, rows: &Vec<Value>) -> ApiResult<usize> {
-    let cols = neon_table_columns(pool, table)
+#[cfg(feature = "supabase-sync")]
+pub async fn push_table(pool: &SupabasePool, table: &str, rows: &Vec<Value>) -> ApiResult<usize> {
+    let cols = supabase_table_columns(pool, table)
         .await
-        .map_err(|e| ApiError::internal(format!("Neon colonnes {}: {}", table, e)))?;
+        .map_err(|e| ApiError::internal(format!("Supabase colonnes {}: {}", table, e)))?;
     let mut pushed = 0;
     let mut batch: Vec<Value> = Vec::with_capacity(100);
     // Colonnes du lot = clés de la première ligne (un SELECT * a le même schéma partout)

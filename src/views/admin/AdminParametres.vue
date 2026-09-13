@@ -54,12 +54,12 @@
         <Cloud class="w-5 h-5 text-neon-blue shrink-0" />
         <h4 class="font-gaming font-bold truncate">Synchronisation cloud (Supabase)</h4>
       </div>
-      <div v-if="!syncStatus.neonEnabled" class="text-center py-6">
+      <div v-if="!syncStatus.supabaseEnabled" class="text-center py-6">
         <CloudOff class="w-10 h-10 text-txt-dim mx-auto mb-2" />
         <p class="text-txt-dim text-sm">Cloud Supabase non configuré</p>
         <p class="text-xs text-txt-dim mt-1">Vérifiez la connexion internet</p>
       </div>
-      <div v-else-if="!syncStatus.neonAvailable" class="text-center py-6">
+      <div v-else-if="!syncStatus.supabaseAvailable" class="text-center py-6">
         <CloudOff class="w-10 h-10 text-amber-400 mx-auto mb-2" />
         <p class="text-amber-400 text-sm">Supabase configuré (offline)</p>
         <p class="text-xs text-txt-dim mt-1">Données locales synchronisées à la reconnexion — {{ syncStatus.mode }}</p>
@@ -203,7 +203,7 @@ const selected = ref(null)
 const editingId = ref(null)
 const form = reactive({ regle_type: 'temps', seuil: 60, jetons_attribues: 1, actif: true })
 const config = reactive({ taux_tva: 20 })
-const syncStatus = ref({ enabled: false, neonEnabled: false, lastSync: null, syncing: false })
+const syncStatus = ref({ enabled: false, supabaseEnabled: false, lastSync: null, syncing: false })
 const syncing = ref(false)
 
 function changeFont(mode: string) {

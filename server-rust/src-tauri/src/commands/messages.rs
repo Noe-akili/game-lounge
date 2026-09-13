@@ -1,4 +1,4 @@
-// /api/messages - CRUD (port sans Neon : stockage 100% local).
+// /api/messages - CRUD (port sans Supabase : stockage 100% local).
 
 use serde_json::{Value, json};
 use tauri::State;

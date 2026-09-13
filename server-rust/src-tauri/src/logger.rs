@@ -15,12 +15,9 @@ fn log_paths() -> Vec<std::path::PathBuf> {
     if let Ok(home) = std::env::var("HOME") {
         paths.push(std::path::PathBuf::from(home).join("1.log"));
     }
-    // Chemins Android
+    // Chemins Android : stockage INTERNE de l'app uniquement (pas de /sdcard :
+    // STORAGE permission inutile, et le dossier "développement" n'existe plus)
     for p in &[
-        "/storage/emulated/0/1.log",
-        "/sdcard/1.log",
-        "/storage/emulated/0/développement/1.log",
-        "/storage/emulated/0/developpement/1.log",
         "/data/data/com.gamelounge.android/files/1.log",
     ] {
         paths.push(std::path::PathBuf::from(p));
@@ -75,14 +72,12 @@ pub fn log(target: &str, msg: &str) {
             let _ = writeln!(guard, "{}", line);
             let _ = guard.flush();
         }
-    }        // Migration Neon -> Supabase : tout ce qui s'affiche "neon" dans les logs est
-        // maintenant Supabase (l'app utilise Supabase Postgres). Le tag devient [cloud].
-        let line = line.replace("neon", "cloud").replace("Neon", "Supabase");
-        // Aussi eprintln pour logcat
-        eprintln!("{}", line);
+    }
+    // Aussi eprintln pour logcat
+    eprintln!("{}", line);
 }
 
-pub fn log_neon(msg: &str) { log("neon", msg); }
+pub fn log_cloud(msg: &str) { log("cloud", msg); }
 pub fn log_auth(msg: &str) { log("auth", msg); }
 pub fn log_import(msg: &str) { log("import", msg); }
 pub fn log_sync(msg: &str) { log("sync", msg); }
@@ -119,13 +114,13 @@ pub fn read_log_file() -> String {
     get_logs(500).join("\n")
 }
 
-// Helper pour logger les erreurs Neon avec contexte
-pub fn log_neon_error(context: &str, err: &str) {
-    log("neon", &format!("{}: {}", context, err));
+// Helper pour logger les erreurs cloud avec contexte
+pub fn log_cloud_error(context: &str, err: &str) {
+    log("cloud", &format!("{}: {}", context, err));
     // Écrit aussi dans fichier dédié pour debug
     for path in log_paths() {
         if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
-            let _ = writeln!(f, "[neon][{}] {}: {}", chrono::Utc::now().format("%H:%M:%S"), context, err);
+            let _ = writeln!(f, "[cloud][{}] {}: {}", chrono::Utc::now().format("%H:%M:%S"), context, err);
         }
     }
 }

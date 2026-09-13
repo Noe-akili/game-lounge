@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS sync_conflicts (id INTEGER PRIMARY KEY, change_id TEX
 "#;
 
 /// Migration soft-delete : ajoute la colonne `deleted` aux bases existantes.
-/// (Neon ne supprime JAMAIS physiquement : une ligne supprimée passe deleted=1,
+/// (Supabase ne supprime JAMAIS physiquement : une ligne supprimée passe deleted=1,
 /// est cachée des listes, et la suppression se propage par la sync.)
 const SOFT_DELETE_MIGRATION: &str = "\
 ALTER TABLE users ADD COLUMN deleted INTEGER DEFAULT 0; \
@@ -70,7 +70,13 @@ ALTER TABLE hangouts ADD COLUMN deleted INTEGER DEFAULT 0;";
 
 /// Base SQLite partagée + dirty set des tables modifiées localement.
 /// Une table ABSENTE du dirty set est considérée dirty (première sync = push complet).
-pub struct Db(pub Mutex<Connection>, pub Mutex<std::collections::HashMap<String, bool>>);
+/// Le 3e champ est le canal de réveil : chaque écriture locale prévient le worker de
+/// sync pour pousser le changement INSTANTANÉMENT (si sync_enabled est actif).
+pub struct Db(
+    pub Mutex<Connection>,
+    pub Mutex<std::collections::HashMap<String, bool>>,
+    pub Mutex<Option<tokio::sync::mpsc::UnboundedSender<()>>>,
+);
 
 /// Horodatage ISO 8601 avec millisecondes, comme `new Date().toISOString()` en JS.
 pub fn now_iso() -> String {
@@ -238,7 +244,7 @@ impl Db {
         apply_pragmas(&conn);
         // Test écriture immédiate pour détecter disque plein / permission early
         let _ = conn.execute_batch("CREATE TABLE IF NOT EXISTS __healthcheck (id INTEGER PRIMARY KEY); DROP TABLE IF EXISTS __healthcheck;");
-        Ok(Db(Mutex::new(conn), Mutex::new(std::collections::HashMap::new())))
+        Ok(Db(Mutex::new(conn), Mutex::new(std::collections::HashMap::new()), Mutex::new(None)))
     }
 
     /// Fallback en mémoire si le fichier est inaccessible (permissions Android, disque plein).
@@ -256,7 +262,7 @@ impl Db {
         );
         let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
         apply_pragmas(&conn);
-        Ok(Db(Mutex::new(conn), Mutex::new(std::collections::HashMap::new())))
+        Ok(Db(Mutex::new(conn), Mutex::new(std::collections::HashMap::new()), Mutex::new(None)))
     }
 
     /// `SELECT * FROM {table}` avec filtre WHERE optionnel (comme le backend JS).
@@ -299,13 +305,13 @@ impl Db {
     }
 
     /// Liste TOUTES les lignes, y compris soft-deleted — utilisé par la sync pour
-    /// propager les suppressions vers Neon (tombstones).
+    /// propager les suppressions vers Supabase (tombstones).
     pub fn query_all_all(&self, table: &str) -> ApiResult<Vec<Value>> {
         self.query_all_impl(table, "")
     }
 
     /// Colonnes de la table locale (PRAGMA table_info) pour filtrer les données venues
-    /// de Neon : si Neon a des colonnes en plus (ou des noms différents), l'insert
+    /// de Supabase : si Supabase a des colonnes en plus (ou des noms différents), l'insert
     /// échouait silencieusement avec "no such column" -> sync "OK" mais rien d'écrit.
     pub fn columns(&self, table: &str) -> ApiResult<Vec<String>> {
         let conn = match self.0.lock() {
@@ -356,9 +362,29 @@ impl Db {
 
     /// Marque une table comme modifiée localement -> à re-pousser vers Supabase.
     /// Appelé par insert/update/remove : aucune écriture locale ne doit être oubliée.
+    /// RÉVEILLE aussi le worker de sync : si la sync est activée, le changement part
+    /// INSTANTANÉMENT vers Supabase (pas d'attente du cycle de 60s).
     pub fn mark_dirty(&self, table: &str) {
         if let Ok(mut guard) = self.1.lock() {
             guard.insert(table.to_string(), true);
+        }
+        self.wake_sync();
+    }
+
+    /// Branche le canal de réveil (appelé une fois au boot après la création de l'AppState).
+    pub fn set_sync_waker(&self, tx: tokio::sync::mpsc::UnboundedSender<()>) {
+        if let Ok(mut guard) = self.2.lock() {
+            *guard = Some(tx);
+        }
+    }
+
+    /// Signal non-bloquant vers le worker de sync. Jamais d'erreur si le canal est
+    /// absent (tests) ou déjà plein (réveil en attente = le worker va tourner).
+    pub fn wake_sync(&self) {
+        if let Ok(guard) = self.2.lock() {
+            if let Some(tx) = guard.as_ref() {
+                let _ = tx.send(());
+            }
         }
     }
 
@@ -917,7 +943,7 @@ impl Db {
     }
 
     /// SOFT-DELETE : rien n'est supprimé physiquement, la ligne passe deleted=1.
-    /// C'est ce qui permet à la sync de propager la suppression vers Neon (qui ne
+    /// C'est ce qui permet à la sync de propager la suppression vers Supabase (qui ne
     /// supprime jamais non plus) sans que la donnée ne réapparaisse au prochain pull.
     pub fn remove(&self, table: &str, id: i64) -> ApiResult<()> {
         let conn = match self.0.lock() {

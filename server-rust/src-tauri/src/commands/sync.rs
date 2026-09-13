@@ -1,4 +1,4 @@
-// /api/sync - statut et synchronisation Neon (offline-first best practice)
+// /api/sync - statut et synchronisation Supabase (offline-first best practice)
 use serde_json::{Value, json};
 use tauri::Manager;
 use tauri::State;
@@ -20,17 +20,17 @@ fn local_status(state: &State<'_, AppState>) -> ApiResult<Value> {
     let has_local = !db(state).query_all("users")?.is_empty();
     // Toggle PERSISTÉ en SQLite : reste activé après sortie des paramètres / redémarrage
     let sync_enabled = db(state).get_setting("sync_enabled").ok().and_then(|o| o).unwrap_or_default() == "1";
-    #[cfg(feature = "neon-sync")]
-    let (neon_enabled, neon_available) = {
-        let pool_opt = state.neon_pool.lock().ok().and_then(|g| g.clone());
-        // Fallback URL hardcodé assure Neon toujours enabled (même sans .env)
+    #[cfg(feature = "supabase-sync")]
+    let (supabase_enabled, supabase_available) = {
+        let pool_opt = state.supabase_pool.lock().ok().and_then(|g| g.clone());
+        // Fallback URL hardcodé assure Supabase toujours enabled (même sans .env)
         let enabled = true;
         let available = pool_opt.is_some();
         let _ = std::env::var("DATABASE_URL").is_ok(); // garde compat
         (enabled, available)
     };
-    #[cfg(not(feature = "neon-sync"))]
-    let (neon_enabled, neon_available) = (false, false);
+    #[cfg(not(feature = "supabase-sync"))]
+    let (supabase_enabled, supabase_available) = (false, false);
 
     let sync_state = state.sync_state.lock().ok().and_then(|g| g.clone());
     let syncing = sync_state.clone().and_then(|v| v.get("running").and_then(Value::as_bool)).unwrap_or(false);
@@ -39,15 +39,15 @@ fn local_status(state: &State<'_, AppState>) -> ApiResult<Value> {
         .unwrap_or(Value::Null);
 
     Ok(json!({
-        "neonEnabled": neon_enabled,
-        "neonAvailable": neon_available,
-        "neonConnected": neon_available,
+        "supabaseEnabled": supabase_enabled,
+        "supabaseAvailable": supabase_available,
+        "supabaseConnected": supabase_available,
         "enabled": sync_enabled,
         "syncing": syncing,
         "hasLocalData": has_local,
         "lastSync": last_sync_val,
-        "mode": if neon_available { "cloud" } else { "offline" },
-        "message": if neon_enabled && !neon_available { "Supabase configuré (fallback) mais offline - données locales" } else { "" }
+        "mode": if supabase_available { "cloud" } else { "offline" },
+        "message": if supabase_enabled && !supabase_available { "Supabase configuré (fallback) mais offline - données locales" } else { "" }
     }))
 }
 
@@ -74,8 +74,8 @@ pub fn sync_toggle(
     local_status(&state)
 }
 
-/// POST /api/sync/run - Best practice : pull Neon -> local, puis push local -> Neon.
-/// IMPORTANT : la sync complète (11 tables pull + 11 tables push, ~40 requêtes Neon
+/// POST /api/sync/run - Best practice : pull Supabase -> local, puis push local -> Supabase.
+/// IMPORTANT : la sync complète (11 tables pull + 11 tables push, ~40 requêtes Supabase
 /// séquentielles) dépasse le timeout IPC Android WebView (~20s) si on attend la fin.
 /// On lance donc le travail EN ARRIÈRE-PLAN et on retourne immédiatement ; le
 /// frontend suit la progression via /sync/poll.
@@ -85,9 +85,9 @@ pub async fn sync_run(app: tauri::AppHandle, state: State<'_, AppState>, token: 
     admin_only(&user)?;
     eprintln!("[sync] sync_run demandé par {}", user.email);
 
-    #[cfg(feature = "neon-sync")]
+    #[cfg(feature = "supabase-sync")]
     {
-        // Une seule sync à la fois (évite les écritures concurrentes SQLite/Neon)
+        // Une seule sync à la fois (évite les écritures concurrentes SQLite/Supabase)
         let running = state.sync_state.lock().ok()
             .and_then(|g| g.clone())
             .and_then(|v| v.get("running").and_then(Value::as_bool))
@@ -144,7 +144,7 @@ pub async fn sync_run(app: tauri::AppHandle, state: State<'_, AppState>, token: 
         }));
     }
 
-    #[cfg(not(feature = "neon-sync"))]
+    #[cfg(not(feature = "supabase-sync"))]
     {
         let _ = db(&state).query_all("users")?;
         return Ok(json!({
@@ -157,7 +157,7 @@ pub async fn sync_run(app: tauri::AppHandle, state: State<'_, AppState>, token: 
 
 /// Travail réel de la sync (pull + push), exécuté en arrière-plan.
 /// Pub : utilisé aussi par la sync automatique (boucle du setup).
-#[cfg(feature = "neon-sync")]
+#[cfg(feature = "supabase-sync")]
 /// Applique un pull complet (tables -> local) SANS journaliser dans l'outbox
 /// (les données viennent du cloud, les renvoyer serait un aller-retour inutile)
 /// et SANS écraser un changement local non envoyé (conflits gérés par Db).
@@ -188,11 +188,11 @@ fn apply_pull_all(db: &crate::db::Db, all: &std::collections::HashMap<String, Ve
 
 pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) -> ApiResult<Value> {
     let pool_opt = {
-        let guard = state.neon_pool.lock().map_err(|_| crate::error::ApiError::internal("neon lock"))?;
+        let guard = state.supabase_pool.lock().map_err(|_| crate::error::ApiError::internal("supabase lock"))?;
         guard.clone()
     };
     let Some(pool) = pool_opt else {
-        eprintln!("[sync] Neon pool non disponible (offline) - données locales conservées");
+        eprintln!("[sync] Supabase pool non disponible (offline) - données locales conservées");
         return Ok(json!({
             "success": true,
             "message": "Mode offline: données locales utilisées (Supabase sera synchronisé à la reconnexion)",
@@ -202,19 +202,19 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
 
     // 0) Migrations du schéma cloud (idempotentes). La colonne deleted + les index
     //    uniques id ne partent qu'UNE FOIS (flag persistant).
-    match crate::neon::ensure_cloud_schema(&pool).await {
+    match crate::supabase::ensure_cloud_schema(&pool).await {
         Ok(_) => {}
         Err(e) => eprintln!("[sync] migration schéma cloud failed: {}", e),
     }
-    match crate::neon::ensure_sync_schema(&pool).await {
+    match crate::supabase::ensure_sync_schema(&pool).await {
         Ok(_) => {}
         Err(e) => eprintln!("[sync] migration delta sync failed: {}", e),
     }
     let migrated = db(state).get_setting("cloud_migration_v2").ok().and_then(|o| o).unwrap_or_default();
     if migrated != "1" {
-        crate::neon::ensure_deleted_columns(&pool).await;
+        crate::supabase::ensure_deleted_columns(&pool).await;
         for table in crate::db::TABLES {
-            let _ = crate::neon::ensure_table_unique_id(&pool, table).await;
+            let _ = crate::supabase::ensure_table_unique_id(&pool, table).await;
         }
         let _ = db(state).set_setting("cloud_migration_v2", "1");
         eprintln!("[sync] migration v2 cloud appliquée (deleted + index uniques)");
@@ -234,7 +234,7 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
         if batch.is_empty() {
             break;
         }
-        match crate::neon::push_outbox_batch(&pool, &batch).await {
+        match crate::supabase::push_outbox_batch(&pool, &batch).await {
             Ok((acked, failed)) => {
                 db(state).outbox_mark(&acked, "ACKED").ok();
                 db(state).outbox_mark(&failed, "FAILED").ok();
@@ -246,7 +246,7 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
             }
             Err(e) => {
                 eprintln!("[sync] upload failed: {} (reprise au prochain cycle)", e);
-                crate::logger::log_neon(&format!("sync_run: upload failed: {}", e));
+                crate::logger::log_cloud(&format!("sync_run: upload failed: {}", e));
                 break;
             }
         }
@@ -260,18 +260,18 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
         // PREMIÈRE SYNC : pull complet (restauration) puis seed de l'outbox avec
         // les données locales pré-existantes (elles n'ont jamais été journalisées).
         set_sync_state(state, json!({ "running": true, "step": "pull", "message": "Première synchronisation (restauration complète)..." }));
-        match crate::neon::pull_all(&pool).await {
+        match crate::supabase::pull_all(&pool).await {
             Ok(all) => {
                 downloaded = apply_pull_all(db(state), &all);
                 let seeded = db(state).outbox_seed().unwrap_or(0);
                 eprintln!("[sync] première sync: {} reçues, {} événements seedés", downloaded, seeded);
-                let max_seq = crate::neon::sync_max_sequence(&pool).await.unwrap_or(0);
+                let max_seq = crate::supabase::sync_max_sequence(&pool).await.unwrap_or(0);
                 db(state).sync_cursor_set(max_seq).ok();
             }
             Err(e) => {
                 eprintln!("[sync] pull_all failed: {}", e.message);
-                crate::logger::log_neon(&format!("sync_run: pull_all failed: {} -> reconnexion", e.message));
-                crate::neon::schedule_reconnect(app);
+                crate::logger::log_cloud(&format!("sync_run: pull_all failed: {} -> reconnexion", e.message));
+                crate::supabase::schedule_reconnect(app);
                 return Ok(json!({
                     "success": false,
                     "step": "erreur",
@@ -284,7 +284,7 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
         // SYNC DELTA : boucle de batches de 500 changements.
         set_sync_state(state, json!({ "running": true, "step": "pull", "message": "Réception des nouveaux changements..." }));
         loop {
-            let batch = crate::neon::pull_delta(&pool, cursor, 500).await.unwrap_or_default();
+            let batch = crate::supabase::pull_delta(&pool, cursor, 500).await.unwrap_or_default();
             if batch.is_empty() {
                 break;
             }
@@ -294,16 +294,16 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
             // restaure un snapshot complet puis on reprend en delta.
             if first_seq > cursor + 1 {
                 eprintln!("[sync] trou de séquence (curseur {}, reçu {}) -> SNAPSHOT_REQUIRED", cursor, first_seq);
-                match crate::neon::pull_all(&pool).await {
+                match crate::supabase::pull_all(&pool).await {
                     Ok(all) => {
                         downloaded += apply_pull_all(db(state), &all);
-                        let max_seq = crate::neon::sync_max_sequence(&pool).await.unwrap_or(0);
+                        let max_seq = crate::supabase::sync_max_sequence(&pool).await.unwrap_or(0);
                         db(state).sync_cursor_set(max_seq).ok();
                         eprintln!("[sync] snapshot appliqué, curseur remis à {}", max_seq);
                     }
                     Err(e) => {
                         eprintln!("[sync] snapshot pull failed: {}", e.message);
-                        crate::neon::schedule_reconnect(app);
+                        crate::supabase::schedule_reconnect(app);
                     }
                 }
                 break;
@@ -345,9 +345,9 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
     // 4) Registre appareil (pour le nettoyage du journal §12) + nettoyages.
     let device = db(state).device_id().unwrap_or_default();
     let cur = db(state).sync_cursor_get().unwrap_or(0);
-    let _ = crate::neon::peer_register(&pool, &device, cur, uploaded as i64).await;
+    let _ = crate::supabase::peer_register(&pool, &device, cur, uploaded as i64).await;
     db(state).outbox_cleanup().ok();
-    let _ = crate::neon::sync_changes_cleanup(&pool).await;
+    let _ = crate::supabase::sync_changes_cleanup(&pool).await;
 
     // 5) Statut final.
     let pending = db(state).outbox_pending_count().unwrap_or(0);
@@ -383,16 +383,16 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
 #[tauri::command]
 pub fn sync_poll(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
     claims(&state, &token)?;
-    #[cfg(feature = "neon-sync")]
-    let neon_enabled = state.neon_pool.lock().ok().and_then(|g| g.clone()).is_some();
-    #[cfg(not(feature = "neon-sync"))]
-    let neon_enabled = false;
+    #[cfg(feature = "supabase-sync")]
+    let supabase_enabled = state.supabase_pool.lock().ok().and_then(|g| g.clone()).is_some();
+    #[cfg(not(feature = "supabase-sync"))]
+    let supabase_enabled = false;
     let last_sync = state.sync_state.lock().ok().and_then(|g| g.clone()).unwrap_or(Value::Null);
     Ok(json!({
         "changes": {},
         "timestamp": now_iso(),
-        "neon": {
-            "enabled": neon_enabled
+        "supabase": {
+            "enabled": supabase_enabled
         },
         "last_sync": last_sync
     }))

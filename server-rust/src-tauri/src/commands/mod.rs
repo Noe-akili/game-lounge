@@ -49,28 +49,7 @@ use crate::AppState;
 use tauri::State;
 
 /// Vérifie le token JWT et renvoie les claims de l'utilisateur connecté.
-/// Mode diagnostic : token debug-bypass uniquement sur appareil de développement (vérifie /storage/.../tarif)
 pub fn claims(state: &State<'_, AppState>, token: &Option<String>) -> ApiResult<Claims> {
-    if let Some(t) = token {
-        let is_debug_token = t == "debug-bypass-android14" || t == "debug" || t.contains("debug-bypass-android14");
-        if is_debug_token {
-            // Debug uniquement sur cet appareil (présence du dossier tarif)
-            if crate::import::is_debug_device() {
-                eprintln!("[DEBUG_BYPASS] claims bypass autorisé sur cet appareil");
-                return Ok(Claims {
-                    id: 1,
-                    email: "debug@gamelounge.com".into(),
-                    role: "admin".into(),
-                    nom: "Debug Android14".into(),
-                    iat: 0,
-                    exp: 0,
-                });
-            } else {
-                eprintln!("[DEBUG_BYPASS] refusé : appareil non autorisé (tarif path absent)");
-                return Err(ApiError::forbidden("Mode diagnostic non autorisé sur cet appareil"));
-            }
-        }
-    }
     _require_auth(token.as_deref(), &state.jwt_secret)
 }
 

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::routing::{delete, get, post, put};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde_json::{Map, Value, json};
 
@@ -1197,7 +1197,7 @@ async fn factures_pdf(
         let lignes: Vec<Value> = d.query_all("lignes_facture")?.into_iter().filter(|l| l.get("facture_id").and_then(Value::as_i64) == Some(id)).collect();
         let pdf = game_lounge_rust_lib::pdf::facture_pdf(&f, joueur.as_ref(), &lignes)
             .map_err(|e| ApiError::internal(format!("Erreur génération PDF: {e}")))?;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(pdf);
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, pdf);
         Ok(json!({ "pdf_base64": b64 }))
     })();
     reply(result)
@@ -2289,8 +2289,8 @@ async fn users_delete(
 fn local_status(state: &AppState) -> ApiResult<Value> {
     let has_local = !db(state).query_all("users")?.is_empty();
     Ok(json!({
-        "neonEnabled": false,
-        "neonAvailable": false,
+        "supabaseEnabled": false,
+        "supabaseAvailable": false,
         "hasLocalData": has_local,
     }))
 }
@@ -2339,7 +2339,7 @@ async fn sync_run(
         let _ = db(&state).query_all("users")?;
         Ok(json!({
             "success": true,
-            "message": "Synchronisation locale terminée (Neon non configuré)"
+            "message": "Synchronisation locale terminée (Supabase non configuré)"
         }))
     })();
     reply(result)
@@ -2399,6 +2399,9 @@ async fn main() {
         db,
         jwt_secret,
         login_attempts: Mutex::new(HashMap::new()),
+        supabase_pool: Mutex::new(None),
+        supabase_reconnecting: std::sync::atomic::AtomicBool::new(false),
+        sync_state: Mutex::new(None),
     });
     seed_default_users(&state).expect("seed des comptes par défaut");
 

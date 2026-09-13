@@ -2,9 +2,8 @@ pub mod auth;
 pub mod commands;
 pub mod db;
 pub mod error;
-pub mod import;
 pub mod logger;
-pub mod neon;
+pub mod supabase;
 pub mod pdf;
 pub mod validators;
 
@@ -21,13 +20,13 @@ pub struct AppState {
     pub jwt_secret: String,
     /// Journal des tentatives de connexion (rate limiting simple, par IP/app).
     pub login_attempts: Mutex<std::collections::HashMap<String, Vec<i64>>>,
-    /// Pool Neon Postgres (optionnel, offline-first) - via tokio-postgres
-    #[cfg(feature = "neon-sync")]
-    pub neon_pool: Mutex<Option<crate::neon::NeonPool>>,
-    #[cfg(not(feature = "neon-sync"))]
-    pub neon_pool: Mutex<Option<()>>,
-    /// Garde-fou : une seule reconnexion Neon à la fois (évite le spam de tâches)
-    pub neon_reconnecting: std::sync::atomic::AtomicBool,
+    /// Pool Supabase Postgres (optionnel, offline-first) - via tokio-postgres
+    #[cfg(feature = "supabase-sync")]
+    pub supabase_pool: Mutex<Option<crate::supabase::SupabasePool>>,
+    #[cfg(not(feature = "supabase-sync"))]
+    pub supabase_pool: Mutex<Option<()>>,
+    /// Garde-fou : une seule reconnexion Supabase à la fois (évite le spam de tâches)
+    pub supabase_reconnecting: std::sync::atomic::AtomicBool,
     /// État/progression de la dernière sync (sync_run tourne en arrière-plan :
     /// le frontend suit via /sync/poll pour éviter le Timeout IPC Android WebView)
     pub sync_state: Mutex<Option<serde_json::Value>>,
@@ -43,7 +42,6 @@ fn open_db(app: &tauri::AppHandle) -> Result<Db, Box<dyn std::error::Error>> {
             let db_path = p.join("gamelounge.db");
             match Db::open(&db_path) {
                 Ok(db) => {
-                    let _ = seed_default_users(&db);
                     eprintln!("DB opened via DATADIR {:?}", db_path);
                     return Ok(db);
                 }
@@ -80,9 +78,6 @@ fn open_db(app: &tauri::AppHandle) -> Result<Db, Box<dyn std::error::Error>> {
         match Db::open(&db_path) {
             Ok(db) => {
                 eprintln!("DB opened successfully at {:?}", db_path);
-                if let Err(e) = seed_default_users(&db) {
-                    eprintln!("seed_default_users non-fatal at {:?}: {e}", db_path);
-                }
                 return Ok(db);
             }
             Err(e) => eprintln!("Db::open {:?} failed: {e}", db_path),
@@ -91,184 +86,7 @@ fn open_db(app: &tauri::AppHandle) -> Result<Db, Box<dyn std::error::Error>> {
 
     // 3. Dernier recours : mémoire (l'app démarre, données volatiles mais pas de crash)
     eprintln!("All file DB candidates failed, falling back to in-memory DB");
-    let db = Db::open_in_memory()?;
-    let _ = seed_default_users(&db);
-    Ok(db)
-}
-
-/// À la première exécution (base vide), crée les comptes par défaut,
-/// identiques au seed du backend Node (server/seed.ts) :
-///   admin@gamelounge.com / admin123   (rôle admin)
-///   john@gamelounge.com  / employe123 (rôle employé)
-///
-/// SOLUTION SÛRE POUR APK SANS PC : hash pré-calculés pour éviter le scrypt
-/// bloquant de 2-3s au démarrage (ANR Android). Le hash scrypt est coûteux (N=16384)
-/// et faisait freezer le setup() puis ANR -> fermeture.
-/// On utilise des hash pré-générés, et on ne recalcule qu'en fallback.
-fn seed_default_users(db: &Db) -> Result<(), Box<dyn std::error::Error>> {
-    let now = db::now_iso();
-    let need_users = db.query_all("users")?.is_empty();
-    if need_users {
-        const ADMIN_HASH: &str = "scrypt$v1$mNiC7OIMBUkGTXUIwS1T0g$4o0DaGrFw3_nPQAA4Bea38LtsBbjkKvNioWytoQvUfYgQ4YZVJNaEfiHn-DMHe1BJLOLG-r0tt8YvmWHumnHOg";
-        const EMPLOYE_HASH: &str = "scrypt$v1$Kb8e9sajtrVwQmOdMRvKUw$hmXRgQLLfSc6uFjVgdK-OgxhzNSezDVygFc9qW_sF_Z0lUvN-N4F1UKF4w-6mi6GOdwELSe3gJTnTepvv8WBlw";
-        let mut admin = serde_json::Map::new();
-        admin.insert("email".into(), serde_json::json!("admin@gamelounge.com"));
-        admin.insert("password_hash".into(), serde_json::json!(ADMIN_HASH));
-        admin.insert("role".into(), serde_json::json!("admin"));
-        admin.insert("nom".into(), serde_json::json!("Admin"));
-        admin.insert("created_at".into(), serde_json::json!(now.clone()));
-        db.insert("users", &admin)?;
-        let mut emp = serde_json::Map::new();
-        emp.insert("email".into(), serde_json::json!("john@gamelounge.com"));
-        emp.insert("password_hash".into(), serde_json::json!(EMPLOYE_HASH));
-        emp.insert("role".into(), serde_json::json!("employe"));
-        emp.insert("nom".into(), serde_json::json!("John Doe"));
-        emp.insert("created_at".into(), serde_json::json!(now.clone()));
-        db.insert("users", &emp)?;
-        eprintln!("[seed] users par défaut créés");
-    }
-    // Seed tarifs/jeux depuis PDFs si vide (données embarquées)
-    if db.query_all("tarifs")?.is_empty() {
-        eprintln!("[seed] tarifs vide, seed embarqué depuis PDFs");
-        seed_tarifs_from_pdfs(db)?;
-    }
-    if db.query_all("jeux")?.is_empty() {
-        eprintln!("[seed] jeux vide, seed embarqué");
-        seed_jeux_from_pdfs(db)?;
-    }
-    if db.query_all("consoles")?.is_empty() {
-        for i in 1..=6 {
-            let console_type = if i <= 3 { "PS5" } else { "PS4" };
-            let mut c = serde_json::Map::new();
-            c.insert("nom".into(), json!(format!("{} poste-{}", console_type, i)));
-            c.insert("type".into(), json!(console_type));
-            c.insert("poste_numero".into(), json!(i));
-            c.insert("etat".into(), json!("disponible"));
-            let now2 = db::now_iso();
-            c.insert("created_at".into(), json!(now2.clone()));
-            c.insert("date_ajout".into(), json!(now2));
-            let _ = db.insert("consoles", &c);
-        }
-    }
-    Ok(())
-}
-
-fn seed_tarifs_from_pdfs(db: &Db) -> Result<(), Box<dyn std::error::Error>> {
-    let now = db::now_iso();
-    let tarifs_ps4 = vec![
-        ("partie", 5, 500, "PS4", "FIFA 26", "FIFA 26 PS4 - 1 Match 5min"),
-        ("session", 30, 2000, "PS4", "FIFA 26", "FIFA 26 PS4 - 30min"),
-        ("session", 60, 4000, "PS4", "FIFA 26", "FIFA 26 PS4 - 1h"),
-        ("partie", 5, 500, "PS4", "Mortal Kombat", "Mortal Kombat PS4 - 2 combats"),
-        ("session", 30, 1500, "PS4", "Mortal Kombat", "Mortal Kombat PS4 - 30min"),
-        ("session", 60, 3000, "PS4", "Mortal Kombat", "Mortal Kombat PS4 - 1h"),
-        ("session", 15, 500, "PS4", "Need for Speed", "Need for Speed PS4 - 15min"),
-        ("session", 30, 1000, "PS4", "Need for Speed", "Need for Speed PS4 - 30min"),
-        ("session", 60, 2000, "PS4", "Need for Speed", "Need for Speed PS4 - 1h"),
-        ("partie", 10, 1000, "PS4", "WWE 2K25", "WWE 2K25 PS4 - 10min"),
-        ("session", 30, 2000, "PS4", "WWE 2K25", "WWE PS4 - 30min"),
-        ("session", 60, 4000, "PS4", "WWE 2K25", "WWE PS4 - 1h"),
-        ("partie", 15, 1500, "PS4", "NBA 2K25", "NBA PS4 - 10-20min"),
-        ("session", 30, 2500, "PS4", "NBA 2K25", "NBA PS4 - 30min"),
-        ("session", 60, 4000, "PS4", "NBA 2K25", "NBA PS4 - 1h"),
-        ("session", 15, 500, "PS4", "GTA V", "GTA V PS4 - 15min"),
-        ("session", 30, 1500, "PS4", "GTA V", "GTA V PS4 - 30min"),
-        ("session", 60, 3000, "PS4", "GTA V", "GTA V PS4 - 1h"),
-        ("session", 15, 500, "PS4", "God of War", "God of War PS4 - 15min"),
-        ("session", 30, 1500, "PS4", "God of War", "God of War PS4 - 30min"),
-        ("session", 60, 3000, "PS4", "God of War", "God of War PS4 - 1h"),
-        ("session", 15, 500, "PS4", "Call of Duty", "COD PS4 - 15min"),
-        ("session", 30, 1500, "PS4", "Call of Duty", "COD PS4 - 30min"),
-        ("session", 60, 3000, "PS4", "Call of Duty", "COD PS4 - 1h"),
-    ];
-    let tarifs_ps5 = vec![
-        ("partie", 5, 1000, "PS5", "FIFA 26", "FIFA 26 PS5 - 5min"),
-        ("session", 30, 4000, "PS5", "FIFA 26", "FIFA 26 PS5 - 30min"),
-        ("session", 60, 8000, "PS5", "FIFA 26", "FIFA 26 PS5 - 1h"),
-        ("partie", 5, 1000, "PS5", "Mortal Kombat", "Mortal Kombat PS5 - 1 combat"),
-        ("session", 30, 3000, "PS5", "Mortal Kombat", "Mortal Kombat PS5 - 30min"),
-        ("session", 60, 6000, "PS5", "Mortal Kombat", "Mortal Kombat PS5 - 1h"),
-        ("partie", 5, 1000, "PS5", "Tekken 8", "Tekken 8 PS5 - 1 combat"),
-        ("session", 30, 3000, "PS5", "Tekken 8", "Tekken 8 PS5 - 30min"),
-        ("session", 60, 6000, "PS5", "Tekken 8", "Tekken 8 PS5 - 1h"),
-        ("session", 5, 1000, "PS5", "Gran Turismo 7", "GT7 PS5 - course courte"),
-        ("session", 15, 2000, "PS5", "Gran Turismo 7", "GT7 PS5 - 15min G29"),
-        ("session", 15, 3000, "PS5", "Gran Turismo 7", "GT7 PS5 - 15min G29+VR2"),
-        ("session", 30, 3500, "PS5", "Gran Turismo 7", "GT7 PS5 - 30min G29"),
-        ("session", 30, 5000, "PS5", "Gran Turismo 7", "GT7 PS5 - 30min G29+VR2"),
-        ("session", 60, 7000, "PS5", "Gran Turismo 7", "GT7 PS5 - 1h G29"),
-        ("session", 60, 10000, "PS5", "Gran Turismo 7", "GT7 PS5 - 1h G29+VR2"),
-        ("session", 15, 1000, "PS5", "Need for Speed", "NFS PS5 - 15min"),
-        ("session", 15, 1500, "PS5", "Need for Speed", "NFS PS5 - 15min G29"),
-        ("session", 30, 2000, "PS5", "Need for Speed", "NFS PS5 - 30min"),
-        ("session", 30, 3000, "PS5", "Need for Speed", "NFS PS5 - 30min G29"),
-        ("session", 60, 4000, "PS5", "Need for Speed", "NFS PS5 - 1h"),
-        ("session", 60, 6000, "PS5", "Need for Speed", "NFS PS5 - 1h G29"),
-        ("partie", 10, 1500, "PS5", "WWE 2K25", "WWE PS5 - 10min"),
-        ("session", 30, 3000, "PS5", "WWE 2K25", "WWE PS5 - 30min"),
-        ("session", 60, 6000, "PS5", "WWE 2K25", "WWE PS5 - 1h"),
-        ("partie", 15, 2000, "PS5", "NBA 2K25", "NBA PS5 - 1 match"),
-        ("session", 30, 4000, "PS5", "NBA 2K25", "NBA PS5 - 30min"),
-        ("session", 60, 7000, "PS5", "NBA 2K25", "NBA PS5 - 1h"),
-        ("session", 15, 1000, "PS5", "GTA V", "GTA V PS5 - 15min"),
-        ("session", 30, 2000, "PS5", "GTA V", "GTA V PS5 - 30min"),
-        ("session", 60, 4000, "PS5", "GTA V", "GTA V PS5 - 1h"),
-        ("session", 15, 1000, "PS5", "God of War", "God of War PS5 - 15min"),
-        ("session", 30, 2000, "PS5", "God of War", "God of War PS5 - 30min"),
-        ("session", 60, 4000, "PS5", "God of War", "God of War PS5 - 1h"),
-        ("session", 15, 1500, "PS5", "Call of Duty", "COD PS5 - 15min"),
-        ("session", 30, 3000, "PS5", "Call of Duty", "COD PS5 - 30min"),
-        ("session", 60, 6000, "PS5", "Call of Duty", "COD PS5 - 1h"),
-    ];
-    for (t, d, p, ct, jeu, desc) in tarifs_ps4.into_iter().chain(tarifs_ps5) {
-        let mut m = serde_json::Map::new();
-        m.insert("type".into(), json!(t));
-        m.insert("duree_minutes".into(), json!(d));
-        m.insert("prix".into(), json!(p));
-        m.insert("description".into(), json!(desc));
-        m.insert("console_type".into(), json!(ct));
-        m.insert("jeu".into(), json!(jeu));
-        m.insert("actif".into(), json!(1));
-        m.insert("created_at".into(), json!(now.clone()));
-        let _ = db.insert("tarifs", &m);
-    }
-    Ok(())
-}
-
-fn seed_jeux_from_pdfs(db: &Db) -> Result<(), Box<dyn std::error::Error>> {
-    // Récupère consoles pour associer jeux à leur console respective (best practice)
-    let consoles = db.query_all("consoles")?;
-    let find_console = |poste_numero: i64| consoles.iter().find(|c| c.get("poste_numero").and_then(|v| v.as_i64()) == Some(poste_numero)).and_then(|c| c.get("id").and_then(|v| v.as_i64()));
-    let c1 = find_console(1); // PS5 poste-1
-    let c2 = find_console(2); // PS5 poste-2
-    let c3 = find_console(3); // PS5 poste-3
-    let c4 = find_console(4); // PS4 poste-4
-    let c6 = find_console(6); // PS4 poste-6
-
-    // Jeux associés à leur console (comme dans les PDFs et clientDb.ts)
-    let jeux_data = vec![
-        ("FIFA 26", "Sport", c1), ("FIFA 26", "Sport", c4),
-        ("Mortal Kombat 1", "Combat", c1), ("Mortal Kombat 11", "Combat", c4),
-        ("Tekken 8", "Combat", c2), ("Need for Speed", "Course", c1), ("Need for Speed", "Course", c4),
-        ("WWE 2K25", "Combat", c2), ("NBA 2K25", "Sport", c1), ("NBA 2K25", "Sport", c4),
-        ("Gran Turismo 7", "Course", c3), ("GTA V", "Action", c1), ("GTA V", "Action", c4),
-        ("God of War", "Action", c2), ("God of War", "Action", c4),
-        ("Call of Duty", "Action", c3), ("Call of Duty", "Action", c6),
-        ("Fortnite", "Action", c3), ("Spider-Man 2", "Action", c2),
-        ("Red Dead Redemption 2", "Action", c4), ("Resident Evil 4", "Horreur", c6),
-        ("Undisputed", "Combat", c6), ("EA Sports UFC 5", "Combat", c1), ("Naruto Storm 4", "Combat", c4),
-        ("Uncharted 4", "Aventure", c4),
-    ];
-    for (titre, genre, console_id) in jeux_data {
-        let mut m = serde_json::Map::new();
-        m.insert("titre".into(), json!(titre));
-        m.insert("genre".into(), json!(genre));
-        m.insert("console_id".into(), json!(console_id));
-        m.insert("actif".into(), json!(1));
-        m.insert("created_at".into(), json!(db::now_iso()));
-        let _ = db.insert("jeux", &m);
-    }
-    Ok(())
+    Db::open_in_memory().map_err(|e| -> Box<dyn std::error::Error> { e.into() })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -294,19 +112,16 @@ pub fn run() {
                     match Db::open_in_memory() {
                         Ok(mem_db) => {
                             eprintln!("Using in-memory DB fallback");
-                            let _ = seed_default_users(&mem_db);
                             mem_db
                         }
                         Err(e2) => {
                             eprintln!("Fatal: cannot open in-memory DB: {e2}, trying emergency temp file");
                             // Dernier recours : fichier temp forcé, évite panic
                             let fallback_path = std::env::temp_dir().join("gamelounge_emergency.db");
-                            match Db::open(&fallback_path) {
-                                Ok(db) => {
-                                    let _ = seed_default_users(&db);
-                                    eprintln!("Emergency temp DB opened at {:?}", fallback_path);
-                                    db
-                                }
+                            match Db::open(&fallback_path) {                                    Ok(db) => {
+                                        eprintln!("Emergency temp DB opened at {:?}", fallback_path);
+                                        db
+                                    }
                                 Err(e3) => {
                                     eprintln!("Emergency temp failed: {e3}, retry in-memory");
                                     // Si tout échoue, on tente encore en mémoire (OOM = kill par OS de toute façon)
@@ -339,50 +154,56 @@ pub fn run() {
             });
             let jwt_secret =
                 std::env::var("JWT_SECRET").unwrap_or_else(|_| "game-lounge-secret-2024".into());
-            // Charge .env si présent (pour DATABASE_URL Neon)
-            #[cfg(feature = "neon-sync")]
+            // Charge .env si présent (pour DATABASE_URL Supabase)
+            #[cfg(feature = "supabase-sync")]
             let _ = dotenvy::dotenv();
+            // Canal de réveil de la sync instantanée : créé AVANT le move de `db` dans
+            // AppState (le sender est branché dans Db, le receiver va au worker).
+            #[cfg(feature = "supabase-sync")]
+            let (wake_tx, wake_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+            #[cfg(feature = "supabase-sync")]
+            db.set_sync_waker(wake_tx);
             app.manage(AppState {
                 db,
                 jwt_secret,
                 login_attempts: Mutex::new(std::collections::HashMap::new()),
-                neon_pool: Mutex::new(None),
-                neon_reconnecting: std::sync::atomic::AtomicBool::new(false),
+                supabase_pool: Mutex::new(None),
+                supabase_reconnecting: std::sync::atomic::AtomicBool::new(false),
                 sync_state: Mutex::new(None),
             });
-            // Init Neon pool en arrière-plan (non bloquant, best practice offline-first)
-            #[cfg(feature = "neon-sync")]
+            // Init Supabase pool en arrière-plan (non bloquant, best practice offline-first)
+            #[cfg(feature = "supabase-sync")]
             {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     // Petit délai pour laisser WebView démarrer
                     tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
-                    match crate::neon::init_neon_pool().await {
+                    match crate::supabase::init_supabase_pool().await {
                         Some(pool) => {
-                            eprintln!("[neon] pool initialisé en background");
+                            eprintln!("[supabase] pool initialisé en background");
                             // MIGRATION DU SCHÉMA CLOUD : crée toutes les tables si la base
                             // cloud est neuve (Supabase vide = aucune table -> pull ET push
                             // échoueraient). Idempotent, exécuté aussi à chaque sync.
-                            match crate::neon::ensure_cloud_schema(&pool).await {
-                                Ok(_) => eprintln!("[neon] schéma cloud prêt"),
-                                Err(e) => eprintln!("[neon] schéma cloud failed (sera réessayé à la sync): {}", e),
+                            match crate::supabase::ensure_cloud_schema(&pool).await {
+                                Ok(_) => eprintln!("[supabase] schéma cloud prêt"),
+                                Err(e) => eprintln!("[supabase] schéma cloud failed (sera réessayé à la sync): {}", e),
                             }
                             if let Some(state) = handle.try_state::<AppState>() {
-                                if let Ok(mut guard) = state.neon_pool.lock() {
+                                if let Ok(mut guard) = state.supabase_pool.lock() {
                                     *guard = Some(pool);
                                 }
                             }
                             // Pull initial users en background (cache)
                             // IMPORTANT : upsert PAR EMAIL et on NE TOUCH JAMAIS au password_hash
                             // local. Avant : INSERT OR REPLACE par id écrasait le hash admin local
-                            // (scrypt seed) par le hash Neon (souvent bcrypt/$2 ou autre algo) ->
-                            // admin123 refusé en local ET sur Neon -> "Identifiants incorrects".
+                            // (scrypt seed) par le hash Supabase (souvent bcrypt/$2 ou autre algo) ->
+                            // admin123 refusé en local ET sur Supabase -> "Identifiants incorrects".
                             if let Some(state) = handle.try_state::<AppState>() {
-                                let pool_opt = state.neon_pool.lock().ok().and_then(|g| g.clone());
+                                let pool_opt = state.supabase_pool.lock().ok().and_then(|g| g.clone());
                                 if let Some(pool) = pool_opt {
-                                    match crate::neon::pull_users(&pool).await {
+                                    match crate::supabase::pull_users(&pool).await {
                                         Ok(users) => {
-                                            eprintln!("[neon] pull {} users en background", users.len());
+                                            eprintln!("[supabase] pull {} users en background", users.len());
                                             for u in users {
                                                 let Some(email) = u.get("email").and_then(serde_json::Value::as_str).map(|s: &str| s.to_string()) else { continue };
                                                 if email.is_empty() { continue; }
@@ -413,28 +234,29 @@ pub fn run() {
                                             }
                                         }
                                         Err(e) => {
-                                            eprintln!("[neon] pull users failed: {}", e.message);
-                                            crate::logger::log_neon(&format!("pull users boot failed: {} -> reconnexion", e.message));
-                                            crate::neon::schedule_reconnect(&handle);
+                                            eprintln!("[supabase] pull users failed: {}", e.message);
+                                            crate::logger::log_cloud(&format!("pull users boot failed: {} -> reconnexion", e.message));
+                                            crate::supabase::schedule_reconnect(&handle);
                                         }
                                     }
                                 }
                             }
                         }
-                        None => eprintln!("[neon] pool non disponible (offline)"),
+                        None => eprintln!("[supabase] pool non disponible (offline)"),
                     }
                 });
             }
-            // Sync AUTOMATIQUE : si le toggle est activé, pull+push complet ~10s après
-            // le boot puis toutes les 3 min. Les sessions créées/interrompues partent
-            // vers Neon SANS action manuelle, et tout est importé depuis Neon au démarrage.
-            #[cfg(feature = "neon-sync")]
+            // Sync AUTOMATIQUE INSTANTANÉE : chaque écriture locale (insert/update/remove)
+            // réveille le worker via un canal tokio -> si le toggle sync_enabled est actif,
+            // le changement part vers Supabase en moins d'une seconde, sans attendre le
+            // cycle périodique (filet toutes les 60s pour la réception et les nettoyages).
+            #[cfg(feature = "supabase-sync")]
             {
                 let handle = app.handle().clone();
-                auto_sync_loop(handle);
+                auto_sync_loop(handle, wake_rx);
             }
             #[cfg(target_os = "android")]
-            eprintln!("Android setup complete, AppState managed (neon bg init)");
+            eprintln!("Android setup complete, AppState managed (supabase bg init)");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -446,8 +268,8 @@ pub fn run() {
             commands::auth_me,
             commands::auth_refresh,
             commands::auth_debug_info,
-            commands::auth_debug_neon_users,
-            commands::debug_reset_admin,
+            commands::auth_debug_supabase_users,
+            commands::device_debug_info,
             // ==== CONSOLES ====
             commands::consoles_list,
             commands::consoles_get,
@@ -526,40 +348,51 @@ pub fn run() {
             commands::sync_run,
             commands::sync_poll,
             // ==== DEBUG / IMPORT (appareil dev uniquement) ====
-            commands::debug_is_allowed,
-            commands::import_default_tarifs,
-            commands::neon_status,
+            commands::supabase_status,
             commands::get_rust_logs,
             commands::get_memory_logs,
-            commands::test_neon_connection,
+            commands::test_supabase_connection,
         ])
         .run(tauri::generate_context!())
         .expect("erreur lors de l'exécution de Tauri");
 }
 
-/// Boucle de sync automatique (récursive async) : déclenche run_sync_impl si le toggle
-/// sync_enabled est actif et qu'aucune sync n'est déjà en cours. Premier tir ~10s après
-/// le boot, puis une sync légère toutes les 60s (1 pull + push des seules tables
-/// modifiées -> coût réseau quasi nul quand rien ne change).
-#[cfg(feature = "neon-sync")]
-fn auto_sync_loop(handle: tauri::AppHandle) {
+/// Worker de sync instantanée : attend un réveil sur le canal branché dans Db
+/// (chaque insert/update/remove local envoie un signal) et lance une sync
+/// immédiatement si le toggle sync_enabled est actif. Sécurité : une sync
+/// périodique toutes les 60s reste en filet (réception cloud, nettoyages).
+#[cfg(feature = "supabase-sync")]
+fn auto_sync_loop(handle: tauri::AppHandle, mut wake_rx: tokio::sync::mpsc::UnboundedReceiver<()>) {
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-        let state_opt = handle.try_state::<AppState>();
-        if state_opt.is_some() {
-            let state = state_opt.unwrap();
+        // Premier tir ~10s après le boot (le pool cloud se connecte en arrière-plan)
+        let mut periodic = tokio::time::interval(tokio::time::Duration::from_secs(60));
+        periodic.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        periodic.reset();
+        let mut first = true;
+        loop {
+            tokio::select! {
+                _ = wake_rx.recv() => {
+                    // Réveil instantané : une donnée locale vient d'être écrite.
+                    // Débounce léger : les rafales (import, facture + lignes) créent
+                    // plusieurs événements ; la 1re sync vide la file entière.
+                    while wake_rx.try_recv().is_ok() {}
+                }
+                _ = periodic.tick() => {
+                    // Filet périodique : réception des changements des autres appareils
+                    // + nettoyages. Inutile de forcer la 1re tick (immédiate) : on la saute.
+                    if first { first = false; continue; }
+                }
+            }
+            let Some(state) = handle.try_state::<AppState>() else { continue };
             let enabled = state.db.get_setting("sync_enabled").ok().and_then(|o| o).unwrap_or_default() == "1";
             let running = state.sync_state.lock().ok()
                 .and_then(|g| g.clone())
                 .and_then(|v| v.get("running").and_then(serde_json::Value::as_bool))
                 .unwrap_or(false);
             if enabled && !running {
-                eprintln!("[sync-auto] sync automatique déclenchée");
+                eprintln!("[sync-auto] sync déclenchée (instantanée ou périodique)");
                 let _ = crate::commands::sync::run_sync_impl(&handle, &state).await;
             }
         }
-        // Prochain cycle dans 60s (la sync elle-même est maintenant très rapide)
-        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-        auto_sync_loop(handle);
     });
 }

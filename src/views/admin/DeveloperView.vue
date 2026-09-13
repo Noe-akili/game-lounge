@@ -23,11 +23,11 @@
       <div class="card">
         <h4 class="font-bold mb-3 flex items-center gap-2"><Cloud class="w-4 h-4 text-neon-blue" /> Test Cloud (Supabase)</h4>
         <div class="space-y-3">
-          <button @click="testNeon" :disabled="loadingNeon" class="btn-neon-violet w-full">
-            {{ loadingNeon ? 'Test en cours...' : 'Tester Supabase (pull/push)' }}
+          <button @click="testSupabase" :disabled="loadingSupabase" class="btn-neon-violet w-full">
+            {{ loadingSupabase ? 'Test en cours...' : 'Tester Supabase (pull/push)' }}
           </button>
-          <button @click="testSync" :disabled="loadingNeon" class="btn-neon-outline w-full">Lancer sync_run</button>
-          <div v-if="neonResult" class="p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap max-h-32 overflow-auto">{{ neonResult }}</div>
+          <button @click="testSync" :disabled="loadingSupabase" class="btn-neon-outline w-full">Lancer sync_run</button>
+          <div v-if="supabaseResult" class="p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap max-h-32 overflow-auto">{{ supabaseResult }}</div>
         </div>
       </div>
     </div>
@@ -54,15 +54,14 @@
       </div>
       <div v-if="backendStatus" class="mt-3 p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap max-h-32 overflow-auto">{{ backendStatus }}</div>
       <div v-if="rustLogs" class="mt-3 p-3 rounded-xl bg-black/50 text-xs font-mono whitespace-pre-wrap max-h-64 overflow-auto">{{ rustLogs }}</div>
-      <button @click="testNeonConnection" class="btn-neon-outline w-full mt-3">Tester connexion cloud (où ça bloque)</button>
-      <div v-if="neonTestResult" class="mt-2 p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap">{{ neonTestResult }}</div>
+      <button @click="testSupabaseConnection" class="btn-neon-outline w-full mt-3">Tester connexion cloud (où ça bloque)</button>
+      <div v-if="supabaseTestResult" class="mt-2 p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap">{{ supabaseTestResult }}</div>
     </div>
 
     <div class="card">
       <h4 class="font-bold mb-3">Actions rapides</h4>
-      <div class="grid grid-cols-2 gap-2">
+      <div class="grid grid-cols-1 gap-2">
         <button @click="clearData" class="btn-neon-outline text-sm">Clear local DB</button>
-        <button @click="importTarifs" class="btn-neon-violet text-sm">Importer tarifs PDF</button>
       </div>
     </div>
 
@@ -70,10 +69,16 @@
       <h4 class="font-bold mb-3 flex items-center gap-2"><KeyRound class="w-4 h-4 text-amber-400" /> Diagnostic login</h4>
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <button @click="diagUsers" class="btn-neon-outline text-sm">Diag users local+cloud</button>
-        <button @click="resetAdmin" class="btn-neon-outline text-sm text-amber-400">Reset admin (admin123)</button>
         <button @click="refreshRustLogsAfter = true; fetchRustLogs()" class="btn-neon-outline text-sm">Voir logs auth</button>
       </div>
       <div v-if="diagResult" class="mt-3 p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap max-h-64 overflow-auto">{{ diagResult }}</div>
+    </div>
+
+    <div class="card">
+      <h4 class="font-bold mb-3 flex items-center gap-2"><Smartphone class="w-4 h-4 text-neon-blue" /> Identité de cet appareil (debug)</h4>
+      <p class="text-xs text-txt-dim mb-2">Le débogage est autorisé par deviceId (ULID) dans Supabase : table app_settings, clé <code>debug_devices</code>. Aucune donnée n'est embarquée dans l'APK — tout vient de Supabase, connexion requise au premier login.</p>
+      <button @click="showDeviceId" class="btn-neon-violet text-sm w-full">Afficher mon deviceId + statut debug</button>
+      <div v-if="deviceInfo" class="mt-3 p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap">{{ deviceInfo }}</div>
     </div>
   </div>
 </template>
@@ -81,23 +86,23 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { api } from '@/utils/api'
-import { Bug, LogIn, Cloud, FileText, Server, KeyRound } from 'lucide-vue-next'
+import { Bug, LogIn, Cloud, FileText, Server, KeyRound, Smartphone } from 'lucide-vue-next'
 
 const testEmail = ref('admin@gamelounge.com')
 const testPassword = ref('admin123')
 const loadingLogin = ref(false)
 const loginResult = ref('')
-const loadingNeon = ref(false)
-const neonResult = ref('')
+const loadingSupabase = ref(false)
+const supabaseResult = ref('')
 const logs = ref<string[]>([])
 const backendStatus = ref('')
 const rustLogs = ref('')
-const neonTestResult = ref('')
+const supabaseTestResult = ref('')
 
 function logColor(l: string) {
   if (l.includes('[BOOT]') || l.includes('[DASHBOARD_START]')) return 'text-neon-green'
   if (l.includes('[TAURI_INVOKE_ERROR]') || l.includes('[auth]') && l.includes('failed')) return 'text-neon-red'
-  if (l.includes('[NEON_SYNC]') || l.includes('[cloud]') || l.includes('[supabase]')) return 'text-neon-blue'
+  if (l.includes('[SUPABASE_SYNC]') || l.includes('[cloud]') || l.includes('[supabase]')) return 'text-neon-blue'
   if (l.includes('[DEBUG')) return 'text-amber-400'
   return 'text-txt-dim'
 }
@@ -140,27 +145,24 @@ async function testLogin() {
   } finally { loadingLogin.value = false }
 }
 
-async function testNeon() {
-  loadingNeon.value = true
-  neonResult.value = ''
+async function testSupabase() {
+  loadingSupabase.value = true
+  supabaseResult.value = ''
   try {
     const { invoke } = await import('@tauri-apps/api/core')
-    const status = await invoke('neon_status')
-    neonResult.value = `neon_status:\n${JSON.stringify(status, null, 2)}`
-    // Teste aussi debug_is_allowed
-    const debug = await invoke('debug_is_allowed')
-    neonResult.value += `\n\ndebug_is_allowed: ${debug}`
+    const status = await invoke('supabase_status')
+    supabaseResult.value = `supabase_status:\n${JSON.stringify(status, null, 2)}`
   } catch (e: any) {
-    neonResult.value = `❌ Neon test échoué: ${e.message || String(e)}`
-  } finally { loadingNeon.value = false }
+    supabaseResult.value = `❌ Supabase test échoué: ${e.message || String(e)}`
+  } finally { loadingSupabase.value = false }
 }
 
 async function testSync() {
-  loadingNeon.value = true
-  neonResult.value = ''
+  loadingSupabase.value = true
+  supabaseResult.value = ''
   try {
     const res = await api.post('/sync/run')
-    if (res.started === false) { neonResult.value = `⏳ Sync déjà en cours`; return }
+    if (res.started === false) { supabaseResult.value = `⏳ Sync déjà en cours`; return }
     // Sync en arrière-plan : on poll jusqu'au résultat final
     let last: any = null
     for (let i = 0; i < 80; i++) {
@@ -168,16 +170,16 @@ async function testSync() {
       try { last = (await api.get('/sync/poll')).last_sync } catch {}
       if (last && last.running !== true) break
     }
-    neonResult.value = `✅ sync_run (arrière-plan):\n${JSON.stringify(last || res, null, 2)}`
+    supabaseResult.value = `✅ sync_run (arrière-plan):\n${JSON.stringify(last || res, null, 2)}`
   } catch (e: any) {
-    neonResult.value = `❌ sync_run échoué: ${e.message}`
-  } finally { loadingNeon.value = false }
+    supabaseResult.value = `❌ sync_run échoué: ${e.message}`
+  } finally { loadingSupabase.value = false }
 }
 
 async function fetchBackendLogs() {
   try {
     const { invoke } = await import('@tauri-apps/api/core')
-    const s = await invoke('neon_status')
+    const s = await invoke('supabase_status')
     backendStatus.value = JSON.stringify(s, null, 2)
   } catch (e: any) {
     backendStatus.value = `Erreur: ${e.message}`
@@ -192,16 +194,16 @@ async function fetchRustLogs() {
     rustLogs.value = `Erreur get_rust_logs: ${e.message}`
   }
 }
-async function testNeonConnection() {
-  neonTestResult.value = 'Test en cours...'
+async function testSupabaseConnection() {
+  supabaseTestResult.value = 'Test en cours...'
   try {
     const { invoke } = await import('@tauri-apps/api/core')
-    const res = await invoke('test_neon_connection')
-    neonTestResult.value = JSON.stringify(res, null, 2)
+    const res = await invoke('test_supabase_connection')
+    supabaseTestResult.value = JSON.stringify(res, null, 2)
     // Rafraîchit aussi les logs Rust
     fetchRustLogs()
   } catch (e: any) {
-    neonTestResult.value = `❌ Erreur: ${e.message}`
+    supabaseTestResult.value = `❌ Erreur: ${e.message}`
   }
 }
 
@@ -213,27 +215,29 @@ async function diagUsers() {
   try {
     const { invoke } = await import('@tauri-apps/api/core')
     const local = await invoke('auth_debug_info')
-    let neonPart = ''
+    let supabasePart = ''
     try {
-      const neon = await invoke('auth_debug_neon_users')
-      neonPart = `\n\n=== NEON ===\n${JSON.stringify(neon, null, 2)}`
+      const supa = await invoke('auth_debug_supabase_users')
+      supabasePart = `\n\n=== SUPABASE ===\n${JSON.stringify(supa, null, 2)}`
     } catch (e: any) {
-      neonPart = `\n\n=== NEON === erreur: ${e?.message || e}`
+      supabasePart = `\n\n=== SUPABASE === erreur: ${e?.message || e}`
     }
-    diagResult.value = `=== LOCAL ===\n${JSON.stringify(local, null, 2)}${neonPart}`
+    diagResult.value = `=== LOCAL ===\n${JSON.stringify(local, null, 2)}${supabasePart}`
   } catch (e: any) {
     diagResult.value = `❌ Erreur diag: ${e?.message || e}`
   }
 }
 
-async function resetAdmin() {
-  if (!confirm('Réinitialiser admin@gamelounge.com avec le mot de passe admin123 ?')) return
+const deviceInfo = ref('')
+
+async function showDeviceId() {
+  deviceInfo.value = 'Lecture en cours...'
   try {
     const { invoke } = await import('@tauri-apps/api/core')
-    const res = await invoke('debug_reset_admin')
-    diagResult.value = `✅ ${JSON.stringify(res, null, 2)}\n\nTeste maintenant admin@gamelounge.com / admin123`
+    const info = await invoke('device_debug_info')
+    deviceInfo.value = JSON.stringify(info, null, 2)
   } catch (e: any) {
-    diagResult.value = `❌ Erreur reset: ${e?.message || e}`
+    deviceInfo.value = `❌ Erreur: ${e?.message || e}`
   }
 }
 
@@ -253,12 +257,5 @@ async function clearData() {
   } catch {}
   alert('Données vidées, redémarrage...')
   location.reload()
-}
-async function importTarifs() {
-  try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    const res = await invoke('import_default_tarifs')
-    alert(`Import: ${JSON.stringify(res)}`)
-  } catch (e: any) { alert(`Import échoué: ${e.message}`) }
 }
 </script>

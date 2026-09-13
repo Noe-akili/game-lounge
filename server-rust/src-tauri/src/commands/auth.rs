@@ -1,4 +1,4 @@
-// Auth propre - offline-first + Neon + Argon2
+// Auth propre - offline-first + Supabase + Argon2
 use serde_json::{Value, json};
 use tauri::State;
 
@@ -64,45 +64,45 @@ fn hash_algo(stored: &str) -> &'static str {
     else { "inconnu" }
 }
 
-// Retourne Err en cas de problème Neon (timeout/connexion morte) pour ne pas répondre
+// Retourne Err en cas de problème Supabase (timeout/connexion morte) pour ne pas répondre
 // faussement "Identifiants incorrects" ; déclenche aussi la reconnexion en arrière-plan.
-#[cfg(feature = "neon-sync")]
-async fn try_neon_login(app: &tauri::AppHandle, state: &State<'_, AppState>, email: &str, password: &str) -> ApiResult<Option<Value>> {
-    let pool_opt = { state.neon_pool.lock().ok().and_then(|g| g.clone()) };
+#[cfg(feature = "supabase-sync")]
+async fn try_supabase_login(app: &tauri::AppHandle, state: &State<'_, AppState>, email: &str, password: &str) -> ApiResult<Option<Value>> {
+    let pool_opt = { state.supabase_pool.lock().ok().and_then(|g| g.clone()) };
     let Some(pool) = pool_opt else {
-        crate::logger::log_auth("neon: pool non disponible (offline), skip");
+        crate::logger::log_auth("supabase: pool non disponible (offline), skip");
         return Ok(None);
     };
-    crate::logger::log_auth(&format!("neon: fetch user {}", email));
-    match crate::neon::fetch_neon_user(&pool, email).await {
-        Ok(Some(neon_user)) => {
-            crate::logger::log_auth(&format!("neon: user trouvé, algo hash Neon = {}", hash_algo(&neon_user.password_hash)));
-            let valid = compare_bounded(password.to_string(), neon_user.password_hash.clone()).await;
+    crate::logger::log_auth(&format!("supabase: fetch user {}", email));
+    match crate::supabase::fetch_supabase_user(&pool, email).await {
+        Ok(Some(supabase_user)) => {
+            crate::logger::log_auth(&format!("supabase: user trouvé, algo hash Supabase = {}", hash_algo(&supabase_user.password_hash)));
+            let valid = compare_bounded(password.to_string(), supabase_user.password_hash.clone()).await;
             if !valid {
-                crate::logger::log_auth("neon: password MISMATCH");
+                crate::logger::log_auth("supabase: password MISMATCH");
                 return Ok(None);
             }
-            crate::logger::log_auth("neon: password OK");
+            crate::logger::log_auth("supabase: password OK");
             let mut map = jmap();
-            map.insert("id".into(), json!(neon_user.id));
-            map.insert("email".into(), json!(neon_user.email));
-            map.insert("password_hash".into(), json!(neon_user.password_hash));
-            map.insert("role".into(), json!(neon_user.role));
-            map.insert("nom".into(), json!(neon_user.nom));
-            if let Some(ca) = neon_user.created_at { map.insert("created_at".into(), json!(ca)); }
+            map.insert("id".into(), json!(supabase_user.id));
+            map.insert("email".into(), json!(supabase_user.email));
+            map.insert("password_hash".into(), json!(supabase_user.password_hash));
+            map.insert("role".into(), json!(supabase_user.role));
+            map.insert("nom".into(), json!(supabase_user.nom));
+            if let Some(ca) = supabase_user.created_at { map.insert("created_at".into(), json!(ca)); }
             // Persiste en local : met à jour role/nom mais NE REMPLACE PAS un hash local
-            // existant par le hash Neon (algos possiblement incompatibles).
+            // existant par le hash Supabase (algos possiblement incompatibles).
             let database = db(state);
             match database.find_one_all("users", |r| r.get("email").and_then(Value::as_str) == Some(email)) {
                 Ok(Some(existing)) => {
                     // Utilisateur soft-deleted : login refusé, on ne le ressuscite pas
                     if existing.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1 {
-                        crate::logger::log_auth(&format!("neon: user {} soft-deleted, login refusé", email));
+                        crate::logger::log_auth(&format!("supabase: user {} soft-deleted, login refusé", email));
                         return Ok(None);
                     }
                     let mut updates = jmap();
-                    updates.insert("role".into(), json!(neon_user.role));
-                    updates.insert("nom".into(), json!(neon_user.nom));
+                    updates.insert("role".into(), json!(supabase_user.role));
+                    updates.insert("nom".into(), json!(supabase_user.nom));
                     if let Some(id) = existing.get("id").and_then(Value::as_i64) {
                         let _ = database.update("users", id, &updates);
                         if let Ok(Some(u)) = database.find_one("users", |r| r.get("id").and_then(Value::as_i64) == Some(id)) { return Ok(Some(u)); }
@@ -111,18 +111,18 @@ async fn try_neon_login(app: &tauri::AppHandle, state: &State<'_, AppState>, ema
                 Ok(None) => { if let Ok(u) = database.insert("users", &map) { return Ok(Some(u)); } }
                 _ => {}
             }
-            Ok(Some(json!({"id": neon_user.id, "email": neon_user.email, "role": neon_user.role, "nom": neon_user.nom, "password_hash": neon_user.password_hash})))
+            Ok(Some(json!({"id": supabase_user.id, "email": supabase_user.email, "role": supabase_user.role, "nom": supabase_user.nom, "password_hash": supabase_user.password_hash})))
         }
-        Ok(None) => { crate::logger::log_auth("neon: user non trouvé"); Ok(None) }
+        Ok(None) => { crate::logger::log_auth("supabase: user non trouvé"); Ok(None) }
         Err(e) => {
-            crate::logger::log_auth(&format!("neon: fetch error pour {}: {} -> reconnexion", email, e.message));
-            crate::neon::schedule_reconnect(app);
+            crate::logger::log_auth(&format!("supabase: fetch error pour {}: {} -> reconnexion", email, e.message));
+            crate::supabase::schedule_reconnect(app);
             Err(ApiError::new(503, "Supabase indisponible (reconnexion en cours), réessayez"))
         }
     }
 }
-#[cfg(not(feature = "neon-sync"))]
-async fn try_neon_login(_app: &tauri::AppHandle, _state: &State<'_, AppState>, _email: &str, _password: &str) -> ApiResult<Option<Value>> { Ok(None) }
+#[cfg(not(feature = "supabase-sync"))]
+async fn try_supabase_login(_app: &tauri::AppHandle, _state: &State<'_, AppState>, _email: &str, _password: &str) -> ApiResult<Option<Value>> { Ok(None) }
 
 #[tauri::command(async)]
 pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email: String, password: String) -> ApiResult<Value> {
@@ -149,12 +149,12 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
     crate::logger::log_auth(&format!("lookup local: {} ms, trouvé={}", t_find - t0, local_user.is_some()));
 
     let user: Option<Value>;
-    let mut was_neon = false;
+    let mut was_supabase = false;
 
     if let Some(lu) = local_user {
-        // BUG FIX : un user local SANS hash (importé de Neon avec hash vide/absent) échouait
-        // immédiatement ici (ok_or_else) SANS jamais tenter Neon -> login impossible même
-        // avec le bon mot de passe. On tente maintenant Neon dans ce cas.
+        // BUG FIX : un user local SANS hash (importé de Supabase avec hash vide/absent) échouait
+        // immédiatement ici (ok_or_else) SANS jamais tenter Supabase -> login impossible même
+        // avec le bon mot de passe. On tente maintenant Supabase dans ce cas.
         let stored_opt = lu.get("password_hash").and_then(Value::as_str);
         let t1 = now_ms();
         let is_valid = match stored_opt {
@@ -163,7 +163,7 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
                 compare_bounded(password.clone(), stored.to_string()).await
             }
             None => {
-                crate::logger::log_auth("hash local ABSENT -> tentative Neon");
+                crate::logger::log_auth("hash local ABSENT -> tentative Supabase");
                 false
             }
         };
@@ -171,12 +171,12 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
         if is_valid {
             user = Some(lu);
         } else {
-            // Hash local incompatible ou mot de passe différent -> tente Neon
+            // Hash local incompatible ou mot de passe différent -> tente Supabase
             let t2 = now_ms();
-            let neon_result = try_neon_login(&app, &state, &email, &password).await;
-            crate::logger::log_auth(&format!("try_neon_login: {} ms, ok={}", now_ms() - t2, neon_result.is_ok()));
-            match neon_result? {
-                Some(nu) => { user = Some(nu); was_neon = true; }
+            let supabase_result = try_supabase_login(&app, &state, &email, &password).await;
+            crate::logger::log_auth(&format!("try_supabase_login: {} ms, ok={}", now_ms() - t2, supabase_result.is_ok()));
+            match supabase_result? {
+                Some(nu) => { user = Some(nu); was_supabase = true; }
                 None => {
                     record_failure(&state, "local");
                     return Err(ApiError::unauthorized("Identifiants incorrects"));
@@ -185,10 +185,10 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
         }
     } else {
         let t2 = now_ms();
-        let neon_result = try_neon_login(&app, &state, &email, &password).await;
-        crate::logger::log_auth(&format!("try_neon_login (pas de local): {} ms, ok={}", now_ms() - t2, neon_result.is_ok()));
-        match neon_result? {
-            Some(nu) => { user = Some(nu); was_neon = true; }
+        let supabase_result = try_supabase_login(&app, &state, &email, &password).await;
+        crate::logger::log_auth(&format!("try_supabase_login (pas de local): {} ms, ok={}", now_ms() - t2, supabase_result.is_ok()));
+        match supabase_result? {
+            Some(nu) => { user = Some(nu); was_supabase = true; }
             None => {
                 record_failure(&state, "local");
                 return Err(ApiError::unauthorized("Identifiants incorrects"));
@@ -223,13 +223,13 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
         exp: 0,
     };
     let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
-    crate::logger::log_auth(&format!("login OK pour {} via {} (total {} ms)", email, if was_neon { "neon" } else { "local" }, now_ms() - t0));
+    crate::logger::log_auth(&format!("login OK pour {} via {} (total {} ms)", email, if was_supabase { "supabase" } else { "local" }, now_ms() - t0));
 
     Ok(json!({
         "token": access,
         "refresh_token": refresh,
         "user": user_public(&user),
-        "source": if was_neon { "neon" } else { "local" },
+        "source": if was_supabase { "supabase" } else { "local" },
     }))
 }
 
@@ -252,69 +252,34 @@ pub fn auth_debug_info(state: State<'_, AppState>) -> ApiResult<Value> {
     Ok(json!({ "users": list, "login_failures_recent": failures }))
 }
 
-/// Diagnostic : liste les users côté Neon (email + algo de hash uniquement)
-#[cfg(feature = "neon-sync")]
+/// Diagnostic : liste les users côté Supabase (email + algo de hash uniquement)
+#[cfg(feature = "supabase-sync")]
 #[tauri::command(async)]
-pub async fn auth_debug_neon_users(state: State<'_, AppState>) -> ApiResult<Value> {
-    let pool_opt = { state.neon_pool.lock().ok().and_then(|g| g.clone()) };
+pub async fn auth_debug_supabase_users(state: State<'_, AppState>) -> ApiResult<Value> {
+    let pool_opt = { state.supabase_pool.lock().ok().and_then(|g| g.clone()) };
     let Some(pool) = pool_opt else { return Ok(json!({ "users": [], "online": false })) };
-    match crate::neon::neon_query(&pool, "SELECT id, email, password_hash, role, nom FROM users ORDER BY id", &[]).await {
+    match crate::supabase::supabase_query(&pool, "SELECT id, email, password_hash, role, nom FROM users ORDER BY id", &[]).await {
         Ok(rows) => {
             let list: Vec<Value> = rows.iter().map(|r| {
-                let hash = crate::neon::pg_col_to_string_pub(r, 2).unwrap_or_default();
+                let hash = crate::supabase::pg_col_to_string_pub(r, 2).unwrap_or_default();
                 json!({
                     "id": r.try_get::<_, i64>(0).unwrap_or(0),
-                    "email": crate::neon::pg_col_to_string_pub(r, 1).unwrap_or_default(),
-                    "role": crate::neon::pg_col_to_string_pub(r, 3).unwrap_or_default(),
-                    "nom": crate::neon::pg_col_to_string_pub(r, 4).unwrap_or_default(),
+                    "email": crate::supabase::pg_col_to_string_pub(r, 1).unwrap_or_default(),
+                    "role": crate::supabase::pg_col_to_string_pub(r, 3).unwrap_or_default(),
+                    "nom": crate::supabase::pg_col_to_string_pub(r, 4).unwrap_or_default(),
                     "hash_algo": hash_algo(&hash),
                     "hash_len": hash.len(),
                 })
             }).collect();
             Ok(json!({ "users": list, "online": true }))
         }
-        Err(e) => Err(ApiError::internal(format!("Neon users query: {}", e))),
+        Err(e) => Err(ApiError::internal(format!("Supabase users query: {}", e))),
     }
 }
-#[cfg(not(feature = "neon-sync"))]
+#[cfg(not(feature = "supabase-sync"))]
 #[tauri::command(async)]
-pub async fn auth_debug_neon_users(_state: State<'_, AppState>) -> ApiResult<Value> {
+pub async fn auth_debug_supabase_users(_state: State<'_, AppState>) -> ApiResult<Value> {
     Ok(json!({ "users": [], "online": false }))
-}
-
-/// Reset d'urgence : remet le compte admin local sur admin@gamelounge.com / admin123
-/// (hash scrypt pré-calculé, identique au seed initial). Répare le cas où le hash
-/// local a été écrasé par un hash Neon incompatible.
-#[tauri::command]
-pub fn debug_reset_admin(state: State<'_, AppState>) -> ApiResult<Value> {
-    const ADMIN_HASH: &str = "scrypt$v1$mNiC7OIMBUkGTXUIwS1T0g$4o0DaGrFw3_nPQAA4Bea38LtsBbjkKvNioWytoQvUfYgQ4YZVJNaEfiHn-DMHe1BJLOLG-r0tt8YvmWHumnHOg";
-    let database = db(&state);
-    let now = crate::db::now_iso();
-    match database.find_one("users", |r| r.get("email").and_then(Value::as_str) == Some("admin@gamelounge.com")) {
-        Ok(Some(existing)) => {
-            let mut upd = jmap();
-            upd.insert("password_hash".into(), json!(ADMIN_HASH));
-            upd.insert("role".into(), json!("admin"));
-            if let Some(id) = existing.get("id").and_then(Value::as_i64) {
-                let _ = database.update("users", id, &upd);
-                crate::logger::log_auth(&format!("debug_reset_admin: hash admin réinitialisé (id {})", id));
-                return Ok(json!({ "success": true, "action": "reset hash admin local", "id": id }));
-            }
-            Ok(json!({ "success": false, "message": "admin trouvé sans id" }))
-        }
-        Ok(None) => {
-            let mut row = jmap();
-            row.insert("email".into(), json!("admin@gamelounge.com"));
-            row.insert("password_hash".into(), json!(ADMIN_HASH));
-            row.insert("role".into(), json!("admin"));
-            row.insert("nom".into(), json!("Admin"));
-            row.insert("created_at".into(), json!(now));
-            let created = database.insert("users", &row)?;
-            crate::logger::log_auth("debug_reset_admin: admin recréé (absent)");
-            Ok(json!({ "success": true, "action": "admin recréé", "id": created.get("id") }))
-        }
-        Err(e) => Err(e),
-    }
 }
 
 #[tauri::command]
@@ -329,11 +294,6 @@ pub fn auth_refresh(state: State<'_, AppState>, refresh_token: String) -> ApiRes
 
 #[tauri::command]
 pub fn auth_logout(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
-    if let Some(t) = &token {
-        if t == "debug-bypass-android14" || t.contains("debug-bypass") {
-            return Ok(json!({ "success": true, "debug": true }));
-        }
-    }
     claims(&state, &token)?;
     Ok(json!({ "success": true }))
 }

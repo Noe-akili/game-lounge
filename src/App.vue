@@ -57,23 +57,6 @@ router.afterEach(() => {
 })
 onMounted(async () => {
   setTimeout(() => (routeLoading.value = false), 400)
-  // Auto bypass pour appareil debug : si backend détecte ce téléphone, on l'envoie direct sur l'accueil
-  if (!auth.isAuthenticated) {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const allowed = await invoke('debug_is_allowed')
-      if (allowed) {
-        console.log('[AUTO_DEBUG] appareil debug détecté, bypass automatique')
-        auth.debugBypassLogin()
-        // Import tarifs en arrière-plan
-        try {
-          const { importDefaultTarifs } = await import('@/lib/debug')
-          importDefaultTarifs().catch(() => {})
-        } catch {}
-        await router.push('/admin')
-      }
-    } catch {}
-  }
 })
 </script>
 

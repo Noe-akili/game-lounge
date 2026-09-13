@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Auth minimal propre - Tauri + Neon
+// Auth minimal propre - Tauri + Supabase
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '@/utils/api'
@@ -47,16 +47,5 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('gl_user', JSON.stringify(data.user))
   }
 
-  function debugBypassLogin() {
-    const debugUser = { id: 1, email: 'debug@gamelounge.com', role: 'admin', nom: 'Debug Android14' }
-    const debugToken = 'debug-bypass-android14'
-    token.value = debugToken
-    user.value = debugUser
-    localStorage.setItem('gl_token', debugToken)
-    localStorage.setItem('gl_user', JSON.stringify(debugUser))
-    localStorage.setItem('gl_debug_bypass', '1')
-    return debugUser
-  }
-
-  return { user, token, isAuthenticated, isAdmin, login, logout, fetchMe, debugBypassLogin }
+  return { user, token, isAuthenticated, isAdmin, login, logout, fetchMe }
 })

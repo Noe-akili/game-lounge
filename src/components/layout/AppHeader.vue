@@ -52,7 +52,7 @@ async function checkSync() {
   try {
     if (auth.user?.role === 'admin') {
       const s = await api.get('/sync/status')
-      syncEnabled.value = s.enabled && s.neonConnected
+      syncEnabled.value = s.enabled && s.supabaseConnected
       syncActive.value = s.syncing
     }
   } catch {}

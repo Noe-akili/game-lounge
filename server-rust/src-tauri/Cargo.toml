@@ -19,9 +19,9 @@ required-features = ["http-server"]
 tauri-build = { version = "2", features = [] }
 
 [features]
-default = ["neon-sync"]
+default = ["supabase-sync"]
 http-server = ["dep:axum"]
-neon-sync = ["dep:tokio-postgres", "dep:postgres-types", "dep:tokio-postgres-rustls", "dep:rustls", "dep:webpki-roots", "dep:dotenvy"]
+supabase-sync = ["dep:tokio-postgres", "dep:postgres-types", "dep:tokio-postgres-rustls", "dep:rustls", "dep:webpki-roots", "dep:dotenvy"]
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -49,9 +49,8 @@ tokio-postgres-rustls = { version = "0.7", optional = true }
 rustls = { version = "0.19", optional = true }
 webpki-roots = { version = "0.21", optional = true }
 dotenvy = { version = "0.15", optional = true }
-lopdf = "0.34"
 
-# panic = unwind (PAS abort) : un panic dans une tâche background (Neon pull, import PDF)
+# panic = unwind (PAS abort) : un panic dans une tâche background (pull Supabase, import PDF)
 # ne doit JAMAIS tuer tout le processus Android. Avec abort, tout panic = app qui se ferme
 # brutalement quelques secondes après l'entrée. Avec unwind, la tâche fautive meurt seule,
 # les catch_unwind existants fonctionnent, et l'invoke renvoie une erreur au JS.
