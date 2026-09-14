@@ -24,6 +24,46 @@ const COMPARE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn now_ms() -> i64 { chrono::Utc::now().timestamp_millis() }
 
+/// Compte par DÉFAUT garanti : seedé localement (Argon2id) à chaque ouverture
+/// de l'app S'IL n'existe pas encore. Le cloud reste maître : si Supabase
+/// connaît un user avec le même email, la copie cloud (rôle/nom/hash) écrase
+/// le seed lors du premier login en ligne (flux existant).
+const DEFAULT_ADMIN_EMAIL: &str = "noeakili@gmail.com";
+const DEFAULT_ADMIN_PASSWORD: &str = "mdp1234";
+const DEFAULT_ADMIN_NOM: &str = "Noé Akili";
+const DEFAULT_ADMIN_ROLE: &str = "admin";
+
+/// Seed SYNCHRONE du compte par défaut (appelé au boot de l'app, AVANT tout
+/// login). Hash Argon2id calculé une seule fois si le compte n'existe pas —
+/// ~100-300ms, acceptable au boot (hors chemin UI).
+fn seed_impl(db: &crate::db::Db) {
+    let exists = db
+        .find_one("users", |r| {
+            r.get("email").and_then(Value::as_str).is_some_and(|e| e.eq_ignore_ascii_case(DEFAULT_ADMIN_EMAIL))
+        })
+        .ok()
+        .flatten()
+        .is_some();
+    if exists {
+        crate::logger::log_auth("seed: compte par défaut déjà présent");
+        return;
+    }
+    match auth_core::hash_password(DEFAULT_ADMIN_PASSWORD) {
+        Ok(hash) => {
+            let mut u = jmap();
+            u.insert("email".into(), json!(DEFAULT_ADMIN_EMAIL));
+            u.insert("password_hash".into(), json!(hash));
+            u.insert("nom".into(), json!(DEFAULT_ADMIN_NOM));
+            u.insert("role".into(), json!(DEFAULT_ADMIN_ROLE));
+            match db.insert("users", &u) {
+                Ok(_) => crate::logger::log_auth("seed: compte par défaut créé (noeakili@gmail.com)"),
+                Err(e) => crate::logger::log_auth(&format!("seed: ÉCHEC création compte par défaut: {e}")),
+            }
+        }
+        Err(e) => crate::logger::log_auth(&format!("seed: hash impossible: {e}")),
+    }
+}
+
 /// Émet une étape de progression du login au WebView (console de l'écran
 /// login, événement "login-step"). Fire-and-forget : jamais d'erreur si
 /// aucun listener. Permet à l'utilisateur de voir OÙ le login bloque.
@@ -81,6 +121,9 @@ async fn compare_bounded(password: String, stored: String) -> bool {
 }
 
 /// Vérifie que le hash stocké est dans un algo supporté (scrypt/argon2/bcrypt).
+/// Seed lisible depuis l'extérieur du module (lib.rs au boot).
+pub fn ensure_default_admin(db: &crate::db::Db) { seed_impl(db) }
+
 fn hash_algo(stored: &str) -> &'static str {
     if stored.starts_with("scrypt$v1") { "scrypt" }
     else if stored.starts_with("$argon2") { "argon2" }
@@ -197,10 +240,11 @@ async fn try_offline_login(
         return Err(ApiError::unauthorized("Identifiants incorrects"));
     }
     let stored = existing.get("password_hash").and_then(Value::as_str).unwrap_or("");
-    if stored.is_empty() || hash_algo(stored) == "inconnu" {
+    let algo = if email.eq_ignore_ascii_case(DEFAULT_ADMIN_EMAIL) && stored.starts_with("$argon2") { "argon2" } else { hash_algo(stored) };
+    if stored.is_empty() || algo == "inconnu" {
         // Hash inconnu/absent : IMPOSSIBLE de vérifier sans se tromper -> on
         // ne devine jamais, on renvoie l'erreur réseau.
-        crate::logger::log_auth(&format!("offline: hash de {email} non vérifiable localement (algo {})" , hash_algo(stored)));
+        crate::logger::log_auth(&format!("offline: hash de {email} non vérifiable localement (algo {algo})"));
         emit_step(app, "offline", "Copie locale non vérifiable — connexion internet requise");
         return Err(ApiError::service_unavailable(
             "Serveur injoignable. Vérifiez votre connexion internet et réessayez.",

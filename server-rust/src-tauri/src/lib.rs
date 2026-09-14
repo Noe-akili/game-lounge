@@ -177,6 +177,10 @@ pub fn run() {
                 eprintln!("Final DB move panicked, emergency in-memory");
                 Db::open_in_memory().unwrap_or_else(|e| panic!("emergency in-memory failed: {e}"))
             });
+            // SEED du compte par défaut (noeakili@gmail.com) : garantit qu'il
+            // existe localement AVANT tout login (vérifié en priorité par le
+            // fallback offline). Idempotent : ne fait rien s'il existe déjà.
+            commands::auth::ensure_default_admin(&db);
             // Charge .env avant de lire JWT_SECRET (desktop/diagnostic).
             #[cfg(feature = "supabase-sync")]
             let _ = dotenvy::dotenv();
