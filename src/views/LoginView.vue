@@ -30,6 +30,14 @@
           Vérification en cours… réponse dans <span class="font-mono font-bold text-neon-violet">{{ countdownDisplay }}</span>
         </div>
 
+        <!-- BYPASS (secours) : entre sans mot de passe via la session admin
+             locale (auth_bootstrap_admin). À utiliser quand le login normal
+             est bloqué (cloud injoignable, compte inconnu de l'appareil…). -->
+        <button type="button" @click="bypassLogin" :disabled="loginPending"
+                class="w-full text-center text-xs text-txt-dim hover:text-neon-violet underline underline-offset-4 py-1">
+          Entrer sans mot de passe (secours)
+        </button>
+
         <!-- Verdict final : affiché à la réponse OU à 0 (jamais avant) -->
         <div v-if="verdict" class="text-sm text-center font-medium" :class="verdictClass">{{ verdict }}</div>
 
@@ -74,6 +82,7 @@ import { useRouter } from 'vue-router'
 import { Loader2 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
+import { api } from '@/utils/api'
 import { isTauriRuntime } from '@/lib/tauriApi'
 
 const router = useRouter()
@@ -248,6 +257,28 @@ function friendlyError(e: any): string {
 
 function homePath() {
   return auth.user?.role === 'admin' ? '/admin' : '/dashboard'
+}
+
+/// BYPASS : session admin locale (auth_bootstrap_admin), sans mot de passe.
+/// Utilise le même transport (503 = backend pas prêt) et le même verdict.
+async function bypassLogin() {
+  if (loginPending.value) return
+  loginPending.value = true
+  error.value = ''
+  success.value = false
+  pushStep('Contournement : session admin locale…')
+  try {
+    const data = await api.post('/auth/bootstrap')
+    await auth.setSessionFromBootstrap(data)
+    pushStep('Session de secours créée ✓', 'ok')
+    await router.replace(homePath())
+  } catch (e: any) {
+    const msg = friendlyError(e)
+    failStep(msg)
+    error.value = msg
+  } finally {
+    loginPending.value = false
+  }
 }
 
 async function handleLogin() {

@@ -101,6 +101,14 @@ export const useAuthStore = defineStore('auth', () => {
     return data.user
   }
 
+  /// BYPASS (secours) : session admin locale créée par auth_bootstrap_admin.
+  /// Mêmes garde-fous que setSession (jamais de session sans token/user).
+  async function setSessionFromBootstrap(data: any) {
+    await setSession(data)
+    state.value = 'authenticated'
+    log('AUTH', `session de secours active (source=${data?.source || 'kiosk-admin'}, role=${data?.user?.role})`)
+  }
+
   async function logout() {
     try { await api.post('/auth/logout') } catch {}
     // RÈGLE ABSOLUE : suspend les processus métier côté Rust (sync auto,
@@ -178,7 +186,7 @@ export const useAuthStore = defineStore('auth', () => {
   return {
     user, token, state, lastError,
     isAuthenticated, isAdmin,
-    login, logout, fetchMe, restoreSession, refreshSession, clearSession,
+    login, logout, fetchMe, restoreSession, refreshSession, clearSession, setSessionFromBootstrap,
     businessReady, businessSuspend,
   }
 })
