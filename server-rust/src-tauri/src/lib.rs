@@ -288,6 +288,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // ==== SANTÉ ====
             commands::health,
+            commands::device_info,
             // ==== AUTH ====
             commands::auth_bootstrap_admin,
             commands::auth_logout,

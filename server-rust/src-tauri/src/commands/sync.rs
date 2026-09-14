@@ -459,6 +459,7 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
                 let entity = change.get("entity").and_then(Value::as_str).unwrap_or_default();
                 let record_id = change.get("record_id").and_then(Value::as_i64).unwrap_or(0);
                 let change_id = change.get("change_id").and_then(Value::as_str).unwrap_or_default();
+                let origin_device = change.get("device_id").and_then(Value::as_str).unwrap_or_default();
                 let created_at = change.get("created_at").and_then(Value::as_str).unwrap_or_default();
                 let payload_opt = change.get("payload").and_then(Value::as_object);
                 if entity.is_empty() || record_id == 0 || payload_opt.is_none() {
@@ -477,6 +478,8 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
                                 entity,
                                 if status == "tombstone" { "DELETE" } else { "UPDATE" },
                                 record_id,
+                                change_id,
+                                origin_device,
                             );
                         } else if status == "conflict" {
                             eprintln!("[sync] conflit {} #{}: local gagne", entity, record_id);

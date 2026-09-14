@@ -37,6 +37,14 @@ pub fn health() -> ApiResult<Value> {
     }))
 }
 
+/// Identité de l'appareil (mission §3) : device_id stable, nom, installation_id,
+/// created_at, statut d'activation. Persisté en SQLite : stable entre
+/// redémarrages, régénéré uniquement si la base disparaît (désinstallation).
+#[tauri::command]
+pub fn device_info(state: State<'_, AppState>) -> ApiResult<Value> {
+    db(&state).device_identity()
+}
+
 use serde_json::{Map, Value, json};
 
 use crate::auth::{Claims, require_admin as _require_admin, require_auth as _require_auth};

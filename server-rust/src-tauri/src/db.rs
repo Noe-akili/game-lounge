@@ -45,8 +45,13 @@ CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT);
 -- sync_outbox : journal des changements locaux en attente d'envoi vers Supabase.
 CREATE TABLE IF NOT EXISTS sync_outbox (change_id TEXT PRIMARY KEY, device_id TEXT, device_sequence INTEGER, operation TEXT, table_name TEXT, record_id INTEGER, payload TEXT, status TEXT DEFAULT 'PENDING', created_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_outbox_status ON sync_outbox(status);
--- sync_state : position de sync de CET appareil (curseurs last_uploaded / last_received).
+-- sync_state : position de sync de CET appareil (curseurs last_uploaded / last_received)
+-- + identité appareil (mission §3) : nom lisible, date d'installation, statut d'activation.
 CREATE TABLE IF NOT EXISTS sync_state (device_id TEXT PRIMARY KEY, device_sequence INTEGER DEFAULT 0, last_uploaded TEXT, last_received TEXT, last_sync_at TEXT);
+ALTER TABLE sync_state ADD COLUMN device_name TEXT DEFAULT '';
+ALTER TABLE sync_state ADD COLUMN installation_id TEXT DEFAULT '';
+ALTER TABLE sync_state ADD COLUMN created_at TEXT DEFAULT '';
+ALTER TABLE sync_state ADD COLUMN activated INTEGER DEFAULT 0;
 -- sync_conflicts : journal des conflits détectés pendant le pull delta (audit, spec §9).
 CREATE TABLE IF NOT EXISTS sync_conflicts (id INTEGER PRIMARY KEY, change_id TEXT, entity TEXT, record_id INTEGER, reason TEXT, remote_payload TEXT, resolved INTEGER DEFAULT 0, created_at TEXT);
 "#;
@@ -86,6 +91,8 @@ pub struct Db(
     pub Mutex<std::collections::HashMap<String, bool>>,
     pub Mutex<Option<tokio::sync::mpsc::UnboundedSender<()>>>,
     pub Mutex<Option<crate::db_notify::ChangeCallback>>,
+    /// device_id mis en cache au boot (évite un aller-retour SQLite par notification).
+    pub Mutex<Option<String>>,
 );
 
 /// Horodatage ISO 8601 avec millisecondes, comme `new Date().toISOString()` en JS.
@@ -292,7 +299,7 @@ impl Db {
         apply_pragmas(&conn);
         // Test écriture immédiate pour détecter disque plein / permission early
         let _ = conn.execute_batch("CREATE TABLE IF NOT EXISTS __healthcheck (id INTEGER PRIMARY KEY); DROP TABLE IF EXISTS __healthcheck;");
-        Ok(Db(Mutex::new(conn), Mutex::new(std::collections::HashMap::new()), Mutex::new(None), Mutex::new(None)))
+        Ok(Db(Mutex::new(conn), Mutex::new(std::collections::HashMap::new()), Mutex::new(None), Mutex::new(None), Mutex::new(None)))
     }
 
     /// Fallback en mémoire si le fichier est inaccessible (permissions Android, disque plein).
@@ -319,7 +326,7 @@ impl Db {
              INSERT OR REPLACE INTO app_settings (key, value) VALUES ('sessions_seconds_seed_v1', '1');",
         );
         apply_pragmas(&conn);
-        Ok(Db(Mutex::new(conn), Mutex::new(std::collections::HashMap::new()), Mutex::new(None), Mutex::new(None)))
+        Ok(Db(Mutex::new(conn), Mutex::new(std::collections::HashMap::new()), Mutex::new(None), Mutex::new(None), Mutex::new(None)))
     }
 
     /// `SELECT * FROM {table}` avec filtre WHERE optionnel (comme le backend JS).
@@ -501,11 +508,109 @@ impl Db {
 
     /// device_id stable de l'appareil (généré une fois, persisté).
     pub fn device_id(&self) -> ApiResult<String> {
+        // Cache mémoire : les notifications l'appellent souvent, pas de
+        // aller-retour SQLite à chaque fois.
+        if let Ok(g) = self.4.lock() {
+            if let Some(id) = g.clone() {
+                return Ok(id);
+            }
+        }
+        let id = {
+            let conn = match self.0.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            self.device_id_conn(&*conn)?
+        };
+        if let Ok(mut g) = self.4.lock() {
+            *g = Some(id.clone());
+        }
+        Ok(id)
+    }
+
+    /// Identité complète de l'appareil (mission §3) : device_id stable, nom,
+    /// installation_id, created_at, statut d'activation. Tout est persisté dans
+    /// sync_state (même ligne que les curseurs de sync) : stable entre
+    /// redémarrages, régénéré seulement si la base disparaît (désinstallation).
+    pub fn device_identity(&self) -> ApiResult<Value> {
         let conn = match self.0.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        self.device_id_conn(&*conn)
+        let did = self.device_id_conn(&*conn)?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT device_name, installation_id, created_at, activated FROM sync_state WHERE device_id = ?",
+            )
+            .map_err(|e| ApiError::internal(format!("device_identity: {e}")))?;
+        let row = stmt
+            .query_row([&did], |r| {
+                Ok((
+                    r.get::<_, Option<String>>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, Option<i64>>(3)?,
+                ))
+            })
+            .map_err(|e| ApiError::internal(format!("device_identity read: {e}")));
+        match row {
+            Ok((name, inst, created, activated)) => Ok(json!({
+                "device_id": did,
+                "device_name": name.unwrap_or_default(),
+                "installation_id": inst.unwrap_or_default(),
+                "created_at": created.unwrap_or_default(),
+                "activated": activated.unwrap_or(0) == 1,
+            })),
+            Err(_) => {
+                // Ligne absente (DB in-memory de test) : recrée le device_id puis renvoie l'identité minimale.
+                let _ = conn.execute(
+                    "INSERT OR IGNORE INTO sync_state (device_id, device_sequence, last_uploaded, last_received, last_sync_at, created_at, activated) VALUES (?1, 0, '', '', '', ?2, 1)",
+                    rusqlite::params![did, now_iso()],
+                );
+                Ok(json!({
+                    "device_id": did,
+                    "device_name": String::new(),
+                    "installation_id": String::new(),
+                    "created_at": now_iso(),
+                    "activated": true,
+                }))
+            }
+        }
+    }
+
+    /// Nom lisible de l'appareil (défaut : "Game Lounge <suffixe device_id>").
+    /// Défini une seule fois (premier appel) puis conservé.
+    pub fn device_set_name(&self, name: &str) -> ApiResult<String> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let did = self.device_id_conn(&*conn)?;
+        let current: Option<String> = conn
+            .query_row(
+                "SELECT device_name FROM sync_state WHERE device_id = ?",
+                [&did],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .unwrap_or(None);
+        let final_name = match current {
+            Some(n) if !n.is_empty() => n, // déjà nommé : on ne change pas
+            _ => {
+                let n = if name.trim().is_empty() {
+                    let suffix = did.chars().rev().take(4).collect::<String>().chars().rev().collect::<String>();
+                    format!("Game Lounge {suffix}")
+                } else {
+                    name.trim().to_string()
+                };
+                conn.execute(
+                    "UPDATE sync_state SET device_name = ? WHERE device_id = ?",
+                    rusqlite::params![n, did],
+                )
+                .map_err(|e| ApiError::internal(format!("device_set_name: {e}")))?;
+                n
+            }
+        };
+        Ok(final_name)
     }
 
     /// Reprise après coupure/crash : les événements SENDING sans ACK repassent
@@ -958,7 +1063,39 @@ impl Db {
     /// AUTRES appareils) : lit le snapshot APRÈS écriture puis notifie l'UI.
     /// La sync initiale n'appelle PAS ceci (téléchargement massif, pas une
     /// actualité) — seul le delta produit des notifications.
-    pub fn notify_remote_change(&self, table: &str, operation: &str, id: i64) {
+    ///
+    /// `change_id` (mission §10) : identifiant cloud unique du changement —
+    /// sert à la déduplication (un même change re-téléchargé ne notifie pas 2×).
+    /// `origin_device` : device_id de l'appareil AUTEUR du changement — si c'est
+    /// NOUS, on ne se notifie pas (mission §10 : ne pas se notifier ses propres
+    /// modifications), même si le changement nous revient via le journal cloud.
+    pub fn notify_remote_change(&self, table: &str, operation: &str, id: i64, change_id: &str, origin_device: &str) {
+        // Mission §10 : ne JAMAIS se notifier ses propres modifications. Le
+        // changement peut nous revenir par le journal cloud (multi-appareils) :
+        // si l'auteur est cet appareil, l'UI locale a déjà été notifiée à
+        // l'écriture (notify_change dans insert/update/remove).
+        let my_device = self.device_id().unwrap_or_default();
+        if !origin_device.is_empty() && origin_device == my_device {
+            return;
+        }
+        // Déduplication (mission §10) : un change_id déjà notifié est ignoré.
+        // Journal en mémoire (ring buffer) : suffisant et sans I/O. Un redémarrage
+        // vide le journal — au pire une notification est rejouée après reboot,
+        // ce qui est acceptable (pas de doublon DANS une session).
+        if let Ok(mut seen) = self.1.lock() {
+            let key = format!("notif:{change_id}");
+            if seen.contains_key(&key) {
+                return;
+            }
+            seen.insert(key, true);
+            // Ring buffer : garde les 500 derniers.
+            if seen.len() > 700 {
+                let keys: Vec<String> = seen.keys().take(seen.len() - 500).cloned().collect();
+                for k in keys {
+                    seen.remove(&k);
+                }
+            }
+        }
         let snap = {
             let conn = match self.0.lock() {
                 Ok(g) => g,

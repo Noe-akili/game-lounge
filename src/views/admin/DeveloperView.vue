@@ -45,7 +45,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { api } from '@/utils/api'
+import { useAuthStore } from '@/stores/auth'
 import { Bug, LogIn, FileText, KeyRound } from 'lucide-vue-next'
+
+const auth = useAuthStore()
 
 const loadingLogin = ref(false)
 const loginResult = ref('')
@@ -87,11 +90,14 @@ async function testSession() {
   loadingLogin.value = true
   loginResult.value = ''
   try {
-    // /auth/bootstrap crée (ou restaure) la session admin implicite.
-    const data = await api.post('/auth/bootstrap')
-    loginResult.value = `✅ Session admin OK (${data.source || 'local'}):\n${JSON.stringify(data, null, 2)}`
+    // Récupération CONTRÔLÉE (mission §5) : le bootstrap n'est jamais appelé
+    // automatiquement après un 401 — uniquement par une action explicite ici.
+    const ok = await auth.bootstrapAdmin()
+    loginResult.value = ok
+      ? `✅ Session admin créée/restaurée (état: ${auth.state})`
+      : `❌ Bootstrap échoué (${auth.lastError?.kind || '?'}): ${auth.lastError?.message || ''}`
   } catch (e: any) {
-    loginResult.value = `❌ Bootstrap échoué (${e.status || ''}): ${e.message}\n${JSON.stringify(e.data || {}, null, 2)}`
+    loginResult.value = `❌ Bootstrap échoué (${e.status || ''}): ${e.message}`
   } finally { loadingLogin.value = false }
 }
 

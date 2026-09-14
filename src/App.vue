@@ -41,14 +41,16 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { motion } from 'motion-v'
 import { Toaster } from 'vue-sonner'
-import { useAuthStore } from '@/stores/auth'
 import { useSyncStore } from '@/stores/sync'
+import { useNotifStore } from '@/stores/notifications'
 
 const router = useRouter()
-const auth = useAuthStore()
-// Écoute GLOBALE des événements Rust (sync-progress, sync-completed, sync-error) :
-// posée au niveau App pour que le store soit à jour sur toutes les vues.
+// Écoute GLOBALE des événements Rust (sync-progress, sync-completed, sync-error
+// + db-change pour la cloche) : posée au niveau App (mission §10) pour que les
+// stores soient à jour sur TOUTES les vues — une notification est générée même
+// si l'utilisateur change de page.
 useSyncStore().bindListeners()
+useNotifStore().bind()
 const routeLoading = ref(false)
 const isMobile = typeof window !== 'undefined' && window.innerWidth < 640
 
