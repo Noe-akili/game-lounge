@@ -37,7 +37,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { motion } from 'motion-v'
 import { Toaster } from 'vue-sonner'
@@ -88,11 +88,29 @@ function startBusinessProcesses() {
   useNotifStore().bind()
 }
 
+// Démarrage des processus métier UNIQUEMENT après que l'écran d'accueil
+// est bien affiché. On attend la prochaine frame / stabilisation de route.
+function maybeStartBusinessProcesses() {
+  if (businessStarted) return
+  // On ne démarre que si on est sur une route d'accueil et que l'utilisateur
+  // est authentifié. Cela évite de démarrer avant le affichage de l'accueil.
+  const currentRoute = router.currentRoute.value
+  const onHomeRoute = currentRoute.path === '/' || 
+                      currentRoute.path === '/dashboard' || 
+                      currentRoute.path === '/admin'
+  if (auth.isAuthenticated && onHomeRoute) {
+    startBusinessProcesses()
+  }
+}
+
+// Watch sur l'état d'authentification — démarrera les processus métier
+// uniquement après que l'écran d'accueil s'affiche.
 watch(
   () => auth.isAuthenticated,
   (ok) => {
     if (ok) {
-      startBusinessProcesses()
+      // Petits délais pour laisser le temps que la route se stabilise
+      setTimeout(maybeStartBusinessProcesses, 100)
     } else {
       // Déconnexion / session expirée : on arrête et purge le métier.
       auth.businessSuspend()
@@ -101,7 +119,7 @@ watch(
       useNotifStore().clear()
     }
   },
-  { immediate: true }
+  { immediate: false }
 )
 </script>
 

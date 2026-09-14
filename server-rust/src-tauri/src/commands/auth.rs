@@ -97,60 +97,113 @@ async fn try_supabase_login(app: &tauri::AppHandle, state: &State<'_, AppState>,
             pool_opt = Some(p);
         }
     }
-    let Some(pool) = pool_opt else {
-        crate::logger::log_auth("supabase: pool non disponible (offline), skip");
+    let Some(mut pool) = pool_opt else {
+        crate::logger::log_auth("supabase: pool non disponible (offline) — init à la volée a échoué, pas de vérification cloud possible");
         return Ok(None);
     };
     crate::logger::log_auth(&format!("supabase: fetch user {}", email));
-    match crate::supabase::fetch_supabase_user(&pool, email).await {
-        Ok(Some(supabase_user)) => {
-            crate::logger::log_auth(&format!("supabase: user trouvé, algo hash Supabase = {}", hash_algo(&supabase_user.password_hash)));
-            let valid = compare_bounded(password.to_string(), supabase_user.password_hash.clone()).await;
-            if !valid {
-                crate::logger::log_auth("supabase: password MISMATCH");
-                return Ok(None);
+    // RETRY 1 fois : la cause n°1 d'échec est une connexion morte (Supabase ferme
+    // les connexions idle). On redemande un pool tout neuf et on retente la
+    // requête UNE fois avant de renvoyer le 503 à l'utilisateur.
+    let mut last_err: Option<ApiError> = None;
+    for attempt in 1..=2u32 {
+        match crate::supabase::fetch_supabase_user(&pool, email).await {
+            Ok(user) => {
+                if attempt > 1 {
+                    crate::logger::log_auth("supabase: retry 1 a réussi (connexion morte restaurée)");
+                }
+                return finish_supabase_login(app, state, email, password, user).await;
             }
-            crate::logger::log_auth("supabase: password OK");
-            let mut map = jmap();
-            map.insert("id".into(), json!(supabase_user.id));
-            map.insert("email".into(), json!(supabase_user.email));
-            map.insert("password_hash".into(), json!(supabase_user.password_hash));
-            map.insert("role".into(), json!(supabase_user.role));
-            map.insert("nom".into(), json!(supabase_user.nom));
-            if let Some(ca) = supabase_user.created_at { map.insert("created_at".into(), json!(ca)); }
-            // Après validation cloud, conserve le hash distant localement pour permettre
-            // une connexion hors ligne ; il est ensuite migré vers Argon2id localement.
-            let database = db(state);
-            match database.find_one_all("users", |r| r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(email))) {
-                Ok(Some(existing)) => {
-                    // Utilisateur soft-deleted : login refusé, on ne le ressuscite pas
-                    if existing.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1 {
-                        crate::logger::log_auth(&format!("supabase: user {} soft-deleted, login refusé", email));
-                        return Ok(None);
-                    }
-                    let mut updates = jmap();
-                    updates.insert("role".into(), json!(supabase_user.role));
-                    updates.insert("nom".into(), json!(supabase_user.nom));
-                    updates.insert("password_hash".into(), json!(supabase_user.password_hash));
-                    if let Some(id) = existing.get("id").and_then(Value::as_i64) {
-                        let _ = database.update("users", id, &updates);
-                        if let Ok(Some(u)) = database.find_one("users", |r| r.get("id").and_then(Value::as_i64) == Some(id)) { return Ok(Some(u)); }
+            Err(e) => {
+                // Classification lisible : timeout réseau vs erreur SQL vs autre
+                let is_timeout = e.message.contains("timeout");
+                let is_sql = e.status == 500 && !is_timeout;
+                let kind = if is_timeout { "timeout réseau (serveur injoignable ou trop lent)"
+                          } else if is_sql { "erreur SQL/serveur Postgres"
+                          } else { "erreur inconnue" };
+                crate::logger::log_auth(&format!(
+                    "supabase: tentative {attempt}/2 ÉCHOUÉE pour {email} [{kind}]: {}",
+                    e.message
+                ));
+                last_err = Some(e);
+                if attempt == 1 {
+                    crate::logger::log_auth("supabase: reconnexion du pool et retry...");
+                    // Reconnexion SYNCHRONE (bornée ~14s max par les timeouts de
+                    // init_supabase_pool) : récupère un pool tout neuf ou échoue.
+                    match crate::supabase::reconnect_now(app).await {
+                        Some(fresh) => {
+                            crate::logger::log_auth("supabase: nouveau pool disponible pour le retry");
+                            pool = fresh;
+                        }
+                        None => {
+                            crate::logger::log_auth("supabase: reconnexion échouée (réseau toujours indisponible), abandon du retry");
+                            break;
+                        }
                     }
                 }
-                Ok(None) => { if let Ok(u) = database.insert("users", &map) { return Ok(Some(u)); } }
-                _ => {}
             }
-            Ok(Some(json!({"id": supabase_user.id, "email": supabase_user.email, "role": supabase_user.role, "nom": supabase_user.nom, "password_hash": supabase_user.password_hash})))
-        }
-        Ok(None) => { crate::logger::log_auth("supabase: user non trouvé"); Ok(None) }
-        Err(e) => {
-            crate::logger::log_auth(&format!("supabase: fetch error pour {}: {} -> reconnexion", email, e.message));
-            crate::supabase::schedule_reconnect(app);
-            // 503 explicite (PAS "Identifiants incorrects") : l'utilisateur comprend
-            // que c'est le RÉSEAU/le cloud, pas son mot de passe.
-            Err(ApiError::service_unavailable("Connexion au serveur impossible. Vérifiez internet et réessayez."))
         }
     }
+    // 503 explicite (PAS "Identifiants incorrects") : l'utilisateur comprend
+    // que c'est le RÉSEAU/le cloud, pas son mot de passe.
+    let detail = last_err.map(|e| e.message).unwrap_or_else(|| "cause inconnue".into());
+    crate::logger::log_auth(&format!("supabase: LOGIN IMPOSSIBLE après retry pour {email}: {detail}"));
+    Err(ApiError::service_unavailable(
+        "Connexion au serveur impossible. Vérifiez internet et réessayez.",
+    ))
+}
+
+/// Validation du mot de passe + réplication du user vers SQLite, une fois le
+/// user récupéré de Supabase (séparé pour rendre le retry de fetch lisible).
+#[cfg(feature = "supabase-sync")]
+async fn finish_supabase_login(
+    _app: &tauri::AppHandle,
+    state: &State<'_, AppState>,
+    email: &str,
+    password: &str,
+    supabase_user: Option<crate::supabase::SupabaseUser>,
+) -> ApiResult<Option<Value>> {
+    let Some(supabase_user) = supabase_user else {
+        crate::logger::log_auth("supabase: user non trouvé");
+        return Ok(None);
+    };
+    crate::logger::log_auth(&format!("supabase: user trouvé, algo hash Supabase = {}", hash_algo(&supabase_user.password_hash)));
+    let valid = compare_bounded(password.to_string(), supabase_user.password_hash.clone()).await;
+    if !valid {
+        crate::logger::log_auth("supabase: password MISMATCH");
+        return Ok(None);
+    }
+    crate::logger::log_auth("supabase: password OK");
+    let mut map = jmap();
+    map.insert("id".into(), json!(supabase_user.id));
+    map.insert("email".into(), json!(supabase_user.email));
+    map.insert("password_hash".into(), json!(supabase_user.password_hash));
+    map.insert("role".into(), json!(supabase_user.role));
+    map.insert("nom".into(), json!(supabase_user.nom));
+    if let Some(ca) = supabase_user.created_at { map.insert("created_at".into(), json!(ca)); }
+    // Après validation cloud, conserve le hash distant localement pour permettre
+    // une connexion hors ligne ; il est ensuite migré vers Argon2id localement.
+    let database = db(state);
+    match database.find_one_all("users", |r| r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(email))) {
+        Ok(Some(existing)) => {
+            // Utilisateur soft-deleted : login refusé, on ne le ressuscite pas
+            if existing.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1 {
+                crate::logger::log_auth(&format!("supabase: user {} soft-deleted, login refusé", email));
+                return Ok(None);
+            }
+            let mut updates = jmap();
+            updates.insert("role".into(), json!(supabase_user.role));
+            updates.insert("nom".into(), json!(supabase_user.nom));
+            updates.insert("password_hash".into(), json!(supabase_user.password_hash));
+            if let Some(id) = existing.get("id").and_then(Value::as_i64) {
+                let _ = database.update("users", id, &updates);
+                if let Ok(Some(u)) = database.find_one("users", |r| r.get("id").and_then(Value::as_i64) == Some(id)) { return Ok(Some(u)); }
+            }
+        }
+        Ok(None) => { if let Ok(u) = database.insert("users", &map) { return Ok(Some(u)); } }
+        _ => {}
+    }
+    Ok(Some(json!({"id": supabase_user.id, "email": supabase_user.email, "role": supabase_user.role, "nom": supabase_user.nom, "password_hash": supabase_user.password_hash})))
 }
 
 #[cfg(not(feature = "supabase-sync"))]
@@ -174,16 +227,17 @@ pub fn auth_bootstrap_admin(state: State<'_, AppState>) -> ApiResult<Value> {
     Ok(json!({"token": token, "refresh_token": refresh_token, "user": user_public(&user), "source": "kiosk-admin"}))
 }
 
-/// Connexion email + mot de passe : SQLite locale d'abord (offline-first),
-/// fallback Supabase si le user est inconnu/incomplet localement.
+/// Connexion email + mot de passe : vérification Supabase directe.
+/// AUCUNE recherche SQLite préalable : le flux est Obligatoire ->
+/// backend Rust/Tauri -> Supabase -> verification email+mot de passe.
+/// Si correct -> session immédiate + réplication user vers SQLite -> token/user.
+/// Si incorrect -> "Identifiants incorrects" immédiatement.
+/// Ne JAMAIS supprimer la vérification Supabase.
 #[tauri::command(async)]
 pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email: String, password: String) -> ApiResult<Value> {
     let email = email.trim().to_ascii_lowercase();
     let rate_key = format!("email:{}", email);
     let t0 = now_ms();
-    // Étapes de diagnostic chronométrées : permettent de dire exactement
-    // "Login total: Xs, Supabase Auth: Ys, SQLite: Zs" dans 1.log. AUCUN mot de
-    // passe ni hash n'apparaît jamais dans ces logs.
     crate::logger::log_auth(&format!("LOGIN_START {} ({} ms)", email, now_ms() - t0));
 
     if email.is_empty() || password.is_empty() {
@@ -200,55 +254,52 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
         return Err(ApiError::new(429, "Trop de tentatives, réessayez plus tard"));
     }
 
-    let database = db(&state);
-    let t_find = now_ms();
-    let local_user = database.find_one("users", |r| r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(&email)))?;
-    crate::logger::log_auth(&format!("AUTH_DB_LOOKUP {} ms, trouvé={}", t_find - t0, local_user.is_some()));
+    // --- ALLER DIRECTEMENT vers Supabase, aucun check SQLite préalable ---
+    let t1 = now_ms();
+    let supabase_result = try_supabase_login(&app, &state, &email, &password).await;
+    crate::logger::log_auth(&format!("try_supabase_login: {} ms, ok={}", now_ms() - t1, supabase_result.is_ok()));
 
-    let user: Option<Value>;
+    let mut user: Option<Value> = None;
     let mut was_supabase = false;
+    let database = db(&state);
 
-    if let Some(lu) = local_user {
-        // Un user local SANS hash (importé de Supabase avec hash vide/absent) ne doit
-        // pas échouer immédiatement : on tente Supabase dans ce cas.
-        let stored_opt = lu.get("password_hash").and_then(Value::as_str);
-        let t1 = now_ms();
-        let is_valid = match stored_opt {
-            Some(stored) => {
-                crate::logger::log_auth(&format!("hash local: algo={}, len={}", hash_algo(stored), stored.len()));
-                compare_bounded(password.clone(), stored.to_string()).await
-            }
-            None => {
-                crate::logger::log_auth("hash local ABSENT -> tentative Supabase");
-                false
-            }
-        };
-        crate::logger::log_auth(&format!("compare local: {} ms, valid={}", now_ms() - t1, is_valid));
-        if is_valid {
-            user = Some(lu);
-        } else {
-            // Hash local incompatible ou mot de passe différent -> tente Supabase
-            let t2 = now_ms();
-            let supabase_result = try_supabase_login(&app, &state, &email, &password).await;
-            crate::logger::log_auth(&format!("try_supabase_login: {} ms, ok={}", now_ms() - t2, supabase_result.is_ok()));
-            match supabase_result? {
-                Some(nu) => { user = Some(nu); was_supabase = true; }
-                None => {
+    match supabase_result? {
+        Some(nu) => {
+            // User validé par Supabase : réplique vers SQLite pour offline capability
+            let database = db(&state);
+            let mut map = jmap();
+            map.insert("id".into(), json!(nu.get("id").unwrap_or(&Value::Null)));
+            map.insert("email".into(), json!(nu.get("email").unwrap_or(&Value::Null)));
+            map.insert("password_hash".into(), json!(nu.get("password_hash").unwrap_or(&Value::Null)));
+            map.insert("role".into(), json!(nu.get("role").unwrap_or(&Value::Null)));
+            map.insert("nom".into(), json!(nu.get("nom").unwrap_or(&Value::Null)));
+
+            // Insert ou upsert local : on crée le user local pour permettre
+            // les connexions hors offline suivantes (offline-first).
+            let existing = database.find_one("users", |r| r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(&email)))?;
+            if let Some(existing) = existing {
+                // Si l'utilisateur est soft-deleted, on refuse le login
+                if existing.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1 {
+                    crate::logger::log_auth(&format!("login: user {} soft-deleted, refused", email));
                     record_failure(&state, &rate_key);
                     return Err(ApiError::unauthorized("Identifiants incorrects"));
                 }
+                // Met à jour les infos (role, nom, hash) depuis Supabase
+                let mut updates = jmap();
+                updates.insert("role".into(), json!(nu.get("role").unwrap_or(&Value::Null)));
+                updates.insert("nom".into(), json!(nu.get("nom").unwrap_or(&Value::Null)));
+                updates.insert("password_hash".into(), json!(nu.get("password_hash").unwrap_or(&Value::Null)));
+                let _ = database.update("users", existing.get("id").and_then(Value::as_i64).unwrap(), &updates);
+            } else {
+                let _ = database.insert("users", &map);
             }
+
+            user = Some(nu);
+            was_supabase = true;
         }
-    } else {
-        let t2 = now_ms();
-        let supabase_result = try_supabase_login(&app, &state, &email, &password).await;
-        crate::logger::log_auth(&format!("try_supabase_login (pas de local): {} ms, ok={}", now_ms() - t2, supabase_result.is_ok()));
-        match supabase_result? {
-            Some(nu) => { user = Some(nu); was_supabase = true; }
-            None => {
-                record_failure(&state, &rate_key);
-                return Err(ApiError::unauthorized("Identifiants incorrects"));
-            }
+        None => {
+            record_failure(&state, &rate_key);
+            return Err(ApiError::unauthorized("Identifiants incorrects"));
         }
     }
 

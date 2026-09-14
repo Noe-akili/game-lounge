@@ -77,8 +77,15 @@ function friendlyError(e: any): string {
   const status = e?.status
   if (status === 401) return 'Identifiants incorrects'
   if (status === 429) return e?.message || 'Trop de tentatives, réessayez plus tard'
-  if (status === 503 || status === 504) return 'Connexion au serveur impossible. Vérifiez internet et réessayez.'
-  if (status && status >= 500) return 'Erreur serveur, réessayez dans un instant'
+  if (status === 503 || status === 504) {
+    // Message réseau générique UNIQUEMENT si le backend n'a pas fourni de cause
+    // précise (ex: "Tauri non disponible", "Base temporairement verrouillée",
+    // "Timeout IPC") : on garde le message spécifique pour un diagnostic fiable.
+    const msg = typeof e?.message === 'string' ? e.message.trim() : ''
+    if (msg) return msg
+    return 'Connexion au serveur impossible. Vérifiez internet et réessayez.'
+  }
+  if (status && status >= 500) return e?.message || 'Erreur serveur, réessayez dans un instant'
   return e?.message || 'Identifiants incorrects'
 }
 

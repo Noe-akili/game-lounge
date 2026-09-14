@@ -2,22 +2,23 @@
 // Auth : LOGIN email + mot de passe (obligatoire) — AUCUNE session automatique.
 //
 // Flux obligatoire de l'app :
-//   App start -> session locale valide -> Dashboard
-//             -> aucune session        -> /login
-//   Login OK  -> token/user sauvegardés (source UNIQUE de vérité = ce store)
-//             -> SQLite chargée (les vues lisent l'API = SQLite locale)
-//             -> sync Supabase en arrière-plan (boucle auto_sync Rust)
+//   App start -> écran LOGIN (AUCUN processus métier encore)
+//   Login OK -> token/user sauvegardés -> redirection accueil
+//             -> processus métier démarrent APRÈS affichage de l'accueil (App.vue)
+//   Login ERREUR -> "Identifiants incorrects" -> rester sur login
+//   401 (session expirée) -> clearSession -> /login
+//   Aucune session locale au boot -> écran login (PAS de restore automatique)
 //
-// 401 (session expirée/invalide) -> clearSession + état 'unauthenticated'
-// -> le routeur renvoie à /login. JAMAIS de bootstrap admin automatique après
-// un 401, JAMAIS de boucle login -> token missing -> login (token absent =
-// on affiche le login, point ; aucun appel API protégé n'est tenté sans token).
+// Source UNIQUE de vérité : ce store, hydraté à la session persistée.
+// Toutes les écritures de session doivent avoir un token réel.
+// JAMAIS de bootstrap admin automatique après un 401.
+
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '@/utils/api'
 import { SessionStorage } from '@/lib/sessionStorage'
 
-export type AuthState = 'unauthenticated' | 'restoring' | 'authenticated' | 'error'
+export type AuthState = 'unauthenticated' | 'authenticated' | 'error'
 
 function log(tag: string, msg: string) {
   console.log(`[${tag}] ${msg}`)
@@ -40,10 +41,9 @@ export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(loadToken())
   const user = ref<any | null>(loadUser())
   const state = ref<AuthState>(
-    token.value && user.value ? 'restoring' : 'unauthenticated'
+    token.value && user.value ? 'authenticated' : 'unauthenticated'
   )
   const lastError = ref<string | null>(null)
-  const restoreAttempted = ref(false)
 
   const isAuthenticated = computed(() => state.value === 'authenticated' && !!token.value && !!user.value)
   const isAdmin = computed(() => user.value?.role === 'admin')
@@ -71,14 +71,33 @@ export const useAuthStore = defineStore('auth', () => {
     await SessionStorage.clearSession()
   }
 
-  /// CONNEXION (obligatoire) : email + mot de passe -> token + user.
+  /// RETRY 503 : "connexion impossible" est souvent une connexion Supabase morte
+  /// (fermée par le serveur après idle) — le backend la restaure en ~1-2s. Un
+  /// seul retry après un court délai évite les faux échecs au premier essai,
+  /// sans masquer une vraie panne réseau (le 2e 503 est remonté tel quel).
+  const RETRY_503_DELAY_MS = 1200
+  async function withRetry503<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn()
+    } catch (e: any) {
+      if (e?.status !== 503) throw e
+      log('AUTH', `503 reçu -> retry unique dans ${RETRY_503_DELAY_MS}ms`)
+      await new Promise(r => setTimeout(r, RETRY_503_DELAY_MS))
+      return fn()
+    }
+  }
+
+  /// CONNEXION (obligatoire) : email + mot de passe -> token + user -> affichage accueil.
+  // Le flux est : email+mdp -> backend Rust/Tauri -> Supabase -> verification email+mot de passe.
+  // Si correct -> session immediate + sauvegarde token+user -> retour accueil.
+  // Si incorrect -> "Identifiants incorrects" immediatement.
+  // AUCUN check SQLite, aucune synchronisation,aucun chargement données AVANT cet appel.
   async function login(email: string, password: string) {
     lastError.value = null
-    const data = await api.post('/auth/login', { email, password })
+    const data = await withRetry503(() => api.post('/auth/login', { email, password }))
     await setSession(data) // lève si token/user absent -> pas de session fantôme
     state.value = 'authenticated'
-    restoreAttempted.value = false
-    log('AUTH', `login OK via ${data.source || 'local'} (role=${data.user?.role})`)
+    log('AUTH', `login OK via ${data.source || 'supabase'} (role=${data.user?.role})`)
     return data.user
   }
 
@@ -104,36 +123,17 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
-   * Restaure la session locale au démarrage. IDEMPOTENTE + protégée contre
-   * les appels concurrents (Promise partagée). Côté réseau : la vérification
-   * serveur (/auth/me) tourne en ARRIÈRE-PLAN — le guard routeur n'attend
-   * jamais le réseau pour décider Login vs Dashboard.
+   * NOUVEAU : au démarrage, PAS de restauration de session locale automatique.
+   * L'écran de connexion s'affiche toujours en premier. L'utilisateur doit
+   fournir ses identifiants. Pas de bootstrap, pas de check SQLite, pas
+   de synchronisation, pas de réseau requis ici.
    */
   function restoreSession(): Promise<boolean> {
-    if (restoreAttempted.value) {
-      return Promise.resolve(isAuthenticated.value)
-    }
-    restoreAttempted.value = true
-    if (token.value && user.value) {
-      // Session locale présente : ouverture IMMÉDIATE (offline-first).
-      state.value = 'authenticated'
-      log('AUTH', 'session locale trouvée')
-      // Vérification serveur en arrière-plan — ne bloque pas le rendu.
-      fetchMe().catch((e) => {
-        if (e?.status === 401) {
-          // Session expirée/invalide : retour au LOGIN (jamais de re-bootstrap,
-          // jamais de boucle : clearSession une seule fois).
-          log('AUTH', 'session expirée (401) -> retour login')
-          clearSession()
-        } else {
-          log('AUTH', `vérification session en échec (hors ligne ?): ${e?.message || e}`)
-        }
-      })
-      return Promise.resolve(true)
-    }
-    // Aucune session locale : PAS de bootstrap. L'écran de connexion s'affiche.
+    // Aucune session locale automatique au boot : on affiche toujours l'écran login.
+    // La session peut être restaurée côté serveur si besoin, mais l'UI montre
+    // toujours le formulaire de connexion en premier.
     state.value = 'unauthenticated'
-    log('AUTH', 'aucune session locale -> écran login')
+    log('AUTH', 'aucune session locale au boot -> écran login')
     return Promise.resolve(false)
   }
 
@@ -142,7 +142,7 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const rt = SessionStorage.getSessionSync().refresh_token
       if (!rt || !token.value) return false
-      const data = await api.post('/auth/refresh', { refresh_token: rt })
+      const data = await withRetry503(() => api.post('/auth/refresh', { refresh_token: rt }))
       if (!data?.token) return false
       await setSession({ ...data, user: user.value })
       state.value = 'authenticated'
@@ -155,7 +155,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   // RÈGLE ABSOLUE : lève le verrou métier côté Rust (sync auto, watcher de
-  // sessions, notifications). Appelé par App.vue APRÈS l'affichage de l'accueil.
+  // sessions, notifications). Appelé par App.vue APRÈS l'affichage de l'écran d'accueil.
   async function businessReady() {
     try { await api.post('/auth/business-ready') } catch {}
   }

@@ -127,12 +127,43 @@ pub fn schedule_reconnect(app: &tauri::AppHandle) {
                     }
                 }
             }
-            None => crate::logger::log_cloud("reconnexion Supabase échouée (offline), réessai au prochain usage"),
+            None => crate::logger::log_cloud("reconnexion Supabase ÉCHOUÉE (offline) — vérifier internet / DNS / port 5432, réessai au prochain usage"),
         }
         if let Some(s) = handle.try_state::<crate::AppState>() {
             s.supabase_reconnecting.store(false, Ordering::SeqCst);
         }
     });
+}
+
+/// Reconnexion BLOQUANTE (await) pour le retry du login : contrairement à
+/// schedule_reconnect (fire-and-forget), cette version attend le résultat et
+/// renvoie le nouveau pool. Bornée par les timeouts de init_supabase_pool
+/// (8s connect + 6s test query). Le pool est nettoyé AVANT la tentative pour
+/// qu'un échec laisse l'app en état "offline" cohérent (pas de pool mort).
+#[cfg(feature = "supabase-sync")]
+pub async fn reconnect_now(app: &tauri::AppHandle) -> Option<SupabasePool> {
+    use tauri::Manager;
+    if let Some(state) = app.try_state::<crate::AppState>() {
+        if let Ok(mut guard) = state.supabase_pool.lock() {
+            *guard = None;
+        }
+    }
+    crate::logger::log_cloud("reconnexion Supabase (retry login)...");
+    match init_supabase_pool().await {
+        Some(pool) => {
+            crate::logger::log_cloud("reconnexion Supabase OK (retry login), pool restauré");
+            if let Some(state) = app.try_state::<crate::AppState>() {
+                if let Ok(mut guard) = state.supabase_pool.lock() {
+                    *guard = Some(pool.clone());
+                }
+            }
+            Some(pool)
+        }
+        None => {
+            crate::logger::log_cloud("reconnexion Supabase ÉCHOUÉE (retry login) — réseau indisponible ou serveur injoignable");
+            None
+        }
+    }
 }
 
 /// URL de connexion cloud (Postgres).

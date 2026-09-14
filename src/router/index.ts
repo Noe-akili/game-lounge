@@ -1,26 +1,28 @@
 // @ts-nocheck
 // Router : LOGIN obligatoire (aucune session automatique).
 //
-// Flux de boot (mission §2) :
-//   App start -> session locale valide -> Dashboard
-//             -> aucune session        -> /login
-//   Le guard ne lit QUE l'état local (token/user persistés) : il n'attend
-//   JAMAIS le réseau. La vérification serveur (/auth/me) tourne en
-//   arrière-plan via restoreSession ; un 401 invalide la session et le
-//   guard renvoie alors naturellement à /login (aucune boucle : la session
-//   est effacée UNE seule fois, ensuite l'écran login s'affiche).
+// Flux imposé (mission §6-7) :
+//   App start -> écran LOGIN (aucun processus métier, pas de sync, pas de
+//   SQLite business, pas de notifications, pas de watcher).
+//   Login OK -> token/user sauvegardés -> redirection accueil
+//   processus métier démarrent APRÈS affichage de l'écran d'accueil (App.vue).
+//   Login ERREUR -> "Identifiants incorrects" -> rester sur login.
 //
-// /initialisation est réservée à la VRAIE première synchronisation : elle est
-// atteinte uniquement APRÈS un login réussi (décision de LoginView sur le flag
-// persisté initial_sync_completed). Elle ne remplace jamais l'écran de login
-// et n'est jamais imposée par le guard à cause d'un réseau indisponible.
+// Le guard n'effectue AUCUN appel réseau, AUCUN check SQLite, AUCUNES
+// side effects. Il se contente de vérifier la présence locale du token.
+// Si pas de token -> écran login. Si token présent -> user a déjà validé
+// ses identifiants par le passé, on laisse passer (la session a été
+// sauvegardée explicitement lors du login Supabase).
+//
+// /initialisation n'est plus gérée par le guard : elle est atteinte uniquement
+// APRÈS un login réussi via le flux LoginView -> home -> App.vue.
 import { createRouter, createWebHistory, createWebHashHistory } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
 
 const routes = [
   { path: '/login', name: 'Login', component: () => import('@/views/LoginView.vue') },
   // Écran de première synchronisation (progression réelle du SyncEngine Rust) —
   // uniquement quand initial_sync_completed = false (première installation).
+  // Atteint APRÈS login réussi, jamais imposé par le guard.
   { path: '/initialisation', name: 'Initialisation', component: () => import('@/views/InitialisationView.vue') },
   {
     path: '/',
@@ -53,21 +55,19 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   const auth = useAuthStore()
-  // Décision 100% locale (synchrone) : hydrate le store depuis la session
-  // persistée. La vérification serveur éventuelle part en arrière-plan.
-  auth.restoreSession()
-
-  // L'écran de login est inaccessible quand on est déjà connecté.
-  if (to.path === '/login') {
-    return auth.isAuthenticated ? (auth.isAdmin ? '/admin' : '/dashboard') : undefined
-  }
-  // Toute autre page — y compris /initialisation (elle fait partie du flux
-  // post-login, elle ne remplace JAMAIS l'écran de connexion) — exige une
-  // session locale.
-  if (!auth.isAuthenticated) {
+  // Vérification ABSOLUMENT locale : on ne fait AUCUN appel API,
+  // AUCUN accès SQLite, AUCUN sync, AUCUNE side effect.
+  // On ne regarde QUE si un token existe dans le store (sauvegardé
+  // explicitement lors d'un login Supabase réussi).
+  if (!auth.token) {
+    // Aucun token -> afficher l'écran de connexion.
+    // Ne pas tenter de restoreSession, ne pas vérifier SQLite, ne pas
+    // démarrer de sync ou de watcher.
     return '/login'
   }
-  // Pages admin réservées au rôle admin.
+  // Token présent -> l'utilisateur a déjà validé ses identifiants.
+  // On laisse passer vers l'accueil.
+  // Les vérifications admin se font via le meta sur les routes.
   if (to.matched.some(record => record.meta.adminOnly) && !auth.isAdmin) {
     return '/dashboard'
   }
