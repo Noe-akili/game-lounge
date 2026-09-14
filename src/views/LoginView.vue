@@ -198,23 +198,26 @@ function stopCountdown() {
   countdownActive.value = false
 }
 
-/// Annonce le verdict UNE seule fois : à la réponse du backend si elle arrive
-/// avant 0, sinon à 0 ("une minute écoulée"). Le résultat du backend qui
-/// arrive après le verdict est quand même appliqué (session/erreur).
+/// Annonce le verdict UNE seule fois :
+///  - réponse du backend (succès OU erreur définitive) -> verdict immédiat,
+///    navigation incluse en cas de succès ;
+///  - 0 atteint sans réponse -> "une minute écoulée" + formulaire déverrouillé
+///    pour permettre une nouvelle tentative (le backend continue d'écouter :
+///    s'il répond ensuite, la console et la navigation suivent).
 function announceVerdict() {
+  const fromCountdown = countdownActive.value
   stopCountdown()
   if (pendingOutcome === 'success') {
     success.value = true
     verdict.value = '✓ Connecté — ouverture de votre espace…'
     loginPending.value = false
+    router.replace(homePath())
   } else if (pendingOutcome === 'fail') {
     success.value = false
     verdict.value = pendingError
     loginPending.value = false
-  } else if (remaining.value <= 0) {
-    // 60s écoulées sans réponse du backend : on l'annonce clairement,
-    // MAIS on continue d'écouter (le backend peut encore répondre —
-    // la console montrera la suite).
+  } else if (fromCountdown && remaining.value <= 0) {
+    // 60s écoulées sans réponse du backend : on l'annonce clairement.
     success.value = false
     verdict.value = '⏱ Une minute écoulée sans réponse du serveur. Vérifiez votre connexion internet et réessayez.'
     loginPending.value = false
@@ -260,19 +263,14 @@ async function handleLogin() {
   startCountdown()
   try {
     await auth.login(form.email.trim().toLowerCase(), form.password)
-    // Succès : verdict immédiat si le compte est fini, sinon retenu jusqu'à 0.
     pushStep('Session créée ✓', 'ok')
     pendingOutcome = 'success'
-    if (!countdownActive.value || remaining.value <= 0) announceVerdict()
+    announceVerdict() // verdict immédiat + redirection
   } catch (e: any) {
     pendingError = friendlyError(e)
     pendingOutcome = 'fail'
-    if (!countdownActive.value || remaining.value <= 0) announceVerdict()
-    else if (e?.status === 401) {
-      // Refus clair du backend : inutile de faire attendre l'utilisateur
-      // jusqu'à 0 pour un verdict certain. (Verdict immédiat.)
-      announceVerdict()
-    }
+    failStep(pendingError) // ligne rouge dans le journal
+    announceVerdict() // erreur définitive -> verdict immédiat (pas d'attente jusqu'à 0)
   }
 }
 </script>

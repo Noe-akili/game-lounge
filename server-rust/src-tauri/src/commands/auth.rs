@@ -111,8 +111,13 @@ async fn try_supabase_login(app: &tauri::AppHandle, state: &State<'_, AppState>,
     }
     let Some(mut pool) = pool_opt else {
         crate::logger::log_auth("supabase: pool non disponible (offline) — init à la volée a échoué, pas de vérification cloud possible");
-        emit_step(app, "offline", "Serveur injoignable (hors ligne)");
-        return Ok(None);
+        emit_step(app, "offline", "Serveur injoignable (hors ligne) — vérifiez internet");
+        // 503 explicite (PAS "Identifiants incorrects") : sans cloud, AUCUNE
+        // vérification n'est possible — l'utilisateur doit savoir que c'est le
+        // réseau, pas son mot de passe.
+        return Err(ApiError::service_unavailable(
+            "Serveur injoignable. Vérifiez votre connexion internet et réessayez.",
+        ));
     };
     crate::logger::log_auth(&format!("supabase: fetch user {}", email));
     emit_step(app, "cloud", "Serveur joint — recherche du compte…");
