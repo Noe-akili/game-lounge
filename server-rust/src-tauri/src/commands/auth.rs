@@ -24,6 +24,18 @@ const COMPARE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn now_ms() -> i64 { chrono::Utc::now().timestamp_millis() }
 
+/// Émet une étape de progression du login au WebView (console de l'écran
+/// login, événement "login-step"). Fire-and-forget : jamais d'erreur si
+/// aucun listener. Permet à l'utilisateur de voir OÙ le login bloque.
+fn emit_step(app: &tauri::AppHandle, step: &str, detail: &str) {
+    use tauri::Emitter;
+    let _ = app.emit("login-step", json!({
+        "step": step,
+        "detail": detail,
+        "ts": chrono::Utc::now().timestamp_millis(),
+    }));
+}
+
 /// Ne compte que les ÉCHECS : trop de tentatives ne doit pas bloquer un login
 /// qui finit par réussir.
 fn record_failure(state: &State<'_, AppState>, key: &str) {
@@ -99,9 +111,11 @@ async fn try_supabase_login(app: &tauri::AppHandle, state: &State<'_, AppState>,
     }
     let Some(mut pool) = pool_opt else {
         crate::logger::log_auth("supabase: pool non disponible (offline) — init à la volée a échoué, pas de vérification cloud possible");
+        emit_step(app, "offline", "Serveur injoignable (hors ligne)");
         return Ok(None);
     };
     crate::logger::log_auth(&format!("supabase: fetch user {}", email));
+    emit_step(app, "cloud", "Serveur joint — recherche du compte…");
     // RETRY 1 fois : la cause n°1 d'échec est une connexion morte (Supabase ferme
     // les connexions idle). On redemande un pool tout neuf et on retente la
     // requête UNE fois avant de renvoyer le 503 à l'utilisateur.
@@ -127,16 +141,19 @@ async fn try_supabase_login(app: &tauri::AppHandle, state: &State<'_, AppState>,
                 ));
                 last_err = Some(e);
                 if attempt == 1 {
+                    emit_step(app, "cloud", "Connexion instable — nouvelle tentative…");
                     crate::logger::log_auth("supabase: reconnexion du pool et retry...");
                     // Reconnexion SYNCHRONE (bornée ~14s max par les timeouts de
                     // init_supabase_pool) : récupère un pool tout neuf ou échoue.
                     match crate::supabase::reconnect_now(app).await {
                         Some(fresh) => {
                             crate::logger::log_auth("supabase: nouveau pool disponible pour le retry");
+                            emit_step(app, "cloud", "Serveur rejoint — nouvel essai…");
                             pool = fresh;
                         }
                         None => {
                             crate::logger::log_auth("supabase: reconnexion échouée (réseau toujours indisponible), abandon du retry");
+                            emit_step(app, "error", "Impossible de joindre le serveur");
                             break;
                         }
                     }
@@ -157,7 +174,7 @@ async fn try_supabase_login(app: &tauri::AppHandle, state: &State<'_, AppState>,
 /// user récupéré de Supabase (séparé pour rendre le retry de fetch lisible).
 #[cfg(feature = "supabase-sync")]
 async fn finish_supabase_login(
-    _app: &tauri::AppHandle,
+    app: &tauri::AppHandle,
     state: &State<'_, AppState>,
     email: &str,
     password: &str,
@@ -165,12 +182,15 @@ async fn finish_supabase_login(
 ) -> ApiResult<Option<Value>> {
     let Some(supabase_user) = supabase_user else {
         crate::logger::log_auth("supabase: user non trouvé");
+        emit_step(app, "error", "Compte introuvable sur le serveur");
         return Ok(None);
     };
     crate::logger::log_auth(&format!("supabase: user trouvé, algo hash Supabase = {}", hash_algo(&supabase_user.password_hash)));
+    emit_step(app, "cloud", "Compte trouvé — vérification du mot de passe…");
     let valid = compare_bounded(password.to_string(), supabase_user.password_hash.clone()).await;
     if !valid {
         crate::logger::log_auth("supabase: password MISMATCH");
+        emit_step(app, "error", "Mot de passe incorrect");
         return Ok(None);
     }
     crate::logger::log_auth("supabase: password OK");
@@ -254,6 +274,8 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
         return Err(ApiError::new(429, "Trop de tentatives, réessayez plus tard"));
     }
 
+    emit_step(&app, "backend", "Identifiants reçus — vérification en cours…");
+
     // --- ALLER DIRECTEMENT vers Supabase, aucun check SQLite préalable ---
     let t1 = now_ms();
     let supabase_result = try_supabase_login(&app, &state, &email, &password).await;
@@ -299,6 +321,7 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
         }
         None => {
             record_failure(&state, &rate_key);
+            emit_step(&app, "error", "Compte non reconnu (ou serveur injoignable)");
             return Err(ApiError::unauthorized("Identifiants incorrects"));
         }
     }
@@ -306,6 +329,7 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
     let user = user.ok_or_else(|| ApiError::unauthorized("Identifiants incorrects"))?;
     clear_failures(&state, &rate_key);
     crate::logger::log_auth(&format!("AUTH_SUCCESS ({} ms)", now_ms() - t0));
+    emit_step(&app, "success", "Connexion validée — création de la session…");
     let stored = user.get("password_hash").and_then(Value::as_str).unwrap_or("");
 
     // Rehash Argon2 seulement si hash local reconnu mais legacy (scrypt/bcrypt) :
