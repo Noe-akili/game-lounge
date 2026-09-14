@@ -42,6 +42,7 @@
           <input v-model="form.email" type="email" placeholder="Email" class="input-field" required />
           <input v-model="form.password" type="password" :placeholder="editingId ? 'Nouveau mot de passe (laisser vide pour ne pas changer)' : 'Mot de passe (min 6 caractères)'" class="input-field" :required="!editingId" />
           <select v-model="form.role" class="input-field" required>
+            <option value="employe">Employé</option>
             <option value="admin">Administrateur</option>
           </select>
           <div class="flex gap-3 pt-2">
@@ -96,7 +97,7 @@ const listLoading = ref(true)
 const auth = useAuthStore()
 const currentUserId = computed(() => auth.user?.id)
 
-const form = reactive({ nom: '', email: '', password: '', role: 'admin' })
+const form = reactive({ nom: '', email: '', password: '', role: 'employe' })
 
 async function fetchUsers() {
   listLoading.value = true
@@ -106,7 +107,7 @@ async function fetchUsers() {
 
 function openAdd() {
   editingId.value = null
-  Object.assign(form, { nom: '', email: '', password: '', role: 'admin' })
+  Object.assign(form, { nom: '', email: '', password: '', role: 'employe' })
   showForm.value = true
 }
 
@@ -147,7 +148,7 @@ async function saveUser() {
       toast.success('Utilisateur créé !')
     }
     closeForm()
-    Object.assign(form, { nom: '', email: '', password: '', role: 'admin' })
+    Object.assign(form, { nom: '', email: '', password: '', role: 'employe' })
     await fetchUsers()
   } catch (e) { toast.error(e.message) }
   finally { loading.value = false }

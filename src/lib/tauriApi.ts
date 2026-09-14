@@ -22,7 +22,7 @@ function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<any> {
   if (!fn) return Promise.reject({ message: 'Tauri non disponible', status: 500 })
   console.log('[TAURI_INVOKE_START]', cmd, JSON.stringify(args).slice(0,200))
   // Sur Android, l'IPC peut mettre 2-3s si Rust est occupé (scrypt/argon2) ; on timeout à 15s pour éviter hang infini
-  const timeoutMs = cmd === 'auth_refresh' || cmd === 'users_create' || cmd === 'users_update' ? 20000 : 10000
+  const timeoutMs = cmd === 'auth_login' || cmd === 'auth_refresh' || cmd === 'users_create' || cmd === 'users_update' ? 20000 : 10000
   return Promise.race([
     fn(cmd, args).then((r:any)=>{ console.log('[TAURI_INVOKE_SUCCESS]', cmd); return r; }).catch((e:any)=>{ console.warn('[TAURI_INVOKE_ERROR]', cmd, e); throw e; }),
     new Promise((_, reject) => setTimeout(() => { console.warn('[TAURI_INVOKE_ERROR] timeout', cmd); reject({ message: 'Timeout IPC (Android WebView)', status: 504 }) }, timeoutMs))
@@ -73,6 +73,7 @@ const ROUTES: RouteDef[] = [
   { m: 'GET', p: '/health', f: () => ({ cmd: 'health', args: {} }) },
 
   // ===== AUTH =====
+  { m: 'POST', p: '/auth/login', f: ({ body }) => ({ cmd: 'auth_login', args: { email: val(body, 'email'), password: val(body, 'password') } }) },
   { m: 'POST', p: '/auth/bootstrap', f: () => ({ cmd: 'auth_bootstrap_admin', args: {} }) },
   { m: 'POST', p: '/auth/refresh', f: ({ body }) => ({ cmd: 'auth_refresh', args: { refresh_token: val(body, 'refresh_token') } }) },
   { m: 'POST', p: '/auth/logout', f: ({ token }) => ({ cmd: 'auth_logout', args: { token } }) },

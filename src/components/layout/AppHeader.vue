@@ -74,6 +74,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { Menu, X, Bell, Cloud, RefreshCw } from 'lucide-vue-next'
 import { api } from '@/utils/api'
+import { useAuthStore } from '@/stores/auth'
 import { useSyncStore, PHASE_LABELS } from '@/stores/sync'
 import { useNotifStore } from '@/stores/notifications'
 import { useSettingsStore } from '@/stores/settings'
@@ -82,6 +83,7 @@ defineProps({ sidebarOpen: Boolean })
 defineEmits(['toggleSidebar'])
 
 const route = useRoute()
+const auth = useAuthStore()
 const sync = useSyncStore()
 const notif = useNotifStore()
 const settings = useSettingsStore()
@@ -111,9 +113,11 @@ const syncActive = ref(false)
 
 async function checkSync() {
   try {
-    const s = await api.get('/sync/status')
-    syncEnabled.value = s.enabled && s.supabaseConnected
-    syncActive.value = s.syncing
+    if (auth.user?.role === 'admin') {
+      const s = await api.get('/sync/status')
+      syncEnabled.value = s.enabled && s.supabaseConnected
+      syncActive.value = s.syncing
+    }
   } catch {}
 }
 
@@ -146,13 +150,14 @@ const currentDate = computed(() =>
 
 const pageTitle = computed(() => {
   const map = {
-    '/admin': 'Tableau de bord Admin',
+    '/dashboard': 'Tableau de bord',
     '/sessions': 'Sessions',
     '/joueurs': 'Joueurs',
     '/paiements': 'Paiements',
     '/jetons': 'Jetons',
     '/messages': 'Messages',
-    '/admin/developpeur': 'Outils Développeur',
+    '/parametres': 'Paramètres',
+    '/admin': 'Tableau de bord Admin',
     '/admin/consoles': 'Gestion des consoles',
     '/admin/jeux': 'Catalogue des jeux',
     '/admin/tarifs': 'Paramétrage des tarifs',

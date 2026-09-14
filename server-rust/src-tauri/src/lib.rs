@@ -33,6 +33,9 @@ pub struct AppState {
     /// État/progression de la dernière sync (sync_run tourne en arrière-plan :
     /// le frontend suit via /sync/poll pour éviter le Timeout IPC Android WebView)
     pub sync_state: Mutex<Option<serde_json::Value>>,
+    /// Anti brute-force login : horodatages des ÉCHECS par clé (email).
+    /// Seuls les échecs comptent — un login qui finit par réussir n'est pas bloqué.
+    pub login_attempts: Mutex<std::collections::HashMap<String, Vec<i64>>>,
 }
 
 
@@ -186,6 +189,7 @@ pub fn run() {
                 supabase_pool: Mutex::new(None),
                 supabase_reconnecting: std::sync::atomic::AtomicBool::new(false),
                 sync_state: Mutex::new(None),
+                login_attempts: Mutex::new(std::collections::HashMap::new()),
             });
             // Init Supabase pool en arrière-plan (non bloquant, best practice offline-first)
             #[cfg(feature = "supabase-sync")]
@@ -291,6 +295,7 @@ pub fn run() {
             commands::device_info,
             // ==== AUTH ====
             commands::auth_bootstrap_admin,
+            commands::auth_login,
             commands::auth_logout,
             commands::auth_me,
             commands::auth_refresh,
