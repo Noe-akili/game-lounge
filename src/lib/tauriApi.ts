@@ -21,8 +21,11 @@ function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<any> {
   const fn = w.__TAURI__?.core?.invoke || w.__TAURI_INTERNALS__?.invoke
   if (!fn) return Promise.reject({ message: 'Tauri non disponible', status: 500 })
   console.log('[TAURI_INVOKE_START]', cmd, JSON.stringify(args).slice(0,200))
-  // Sur Android, l'IPC peut mettre 2-3s si Rust est occupé (scrypt/argon2) ; on timeout à 15s pour éviter hang infini
-  const timeoutMs = cmd === 'auth_login' || cmd === 'auth_refresh' || cmd === 'users_create' || cmd === 'users_update' ? 20000 : 10000
+  // Sur Android, l'IPC peut mettre 2-3s si Rust est occupé (scrypt/argon2).
+  // auth_login : le backend peut enchaîner init pool (≈28s worst case offline)
+  // + fetch + reconnexion + retry (≈68s worst case) -> timeout à 70s pour ne
+  // JAMAIS abandonner avant le verdict 60s de l'utilisateur.
+  const timeoutMs = cmd === 'auth_login' ? 70000 : cmd === 'auth_refresh' || cmd === 'users_create' || cmd === 'users_update' ? 20000 : 10000
   return Promise.race([
     fn(cmd, args).then((r:any)=>{ console.log('[TAURI_INVOKE_SUCCESS]', cmd); return r; }).catch((e:any)=>{ console.warn('[TAURI_INVOKE_ERROR]', cmd, e); throw e; }),
     new Promise((_, reject) => setTimeout(() => { console.warn('[TAURI_INVOKE_ERROR] timeout', cmd); reject({ message: 'Timeout IPC (Android WebView)', status: 504 }) }, timeoutMs))

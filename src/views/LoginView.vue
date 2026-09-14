@@ -98,12 +98,16 @@ const form = reactive({
 const backendReady = ref(isTauriRuntime())
 
 onMounted(async () => {
+  // IMPORTANT : binder le listener des étapes DÈS le montage, même si Tauri
+  // est déjà prêt (cas normal sur Android). Un early-return ici empêchait
+  // l'affichage des étapes backend sur l'app Android.
+  bindLoginSteps()
   if (backendReady.value) return
   // WebView Android : l'injection Tauri peut être retardée au boot ; on attend
   // qu'elle soit prête plutôt que d'afficher une erreur trompeuse.
   const { waitForTauri } = await import('@/lib/transport')
   backendReady.value = await waitForTauri(4000)
-  bindLoginSteps()
+  bindLoginSteps() // 2e appel sans risque : la fonction est idempotente (listener déjà posé)
 })
 
 // ================= CONSOLE DES ÉTAPES =================
@@ -119,9 +123,9 @@ function nowLabel(): string {
 }
 
 function pushStep(label: string, status: StepStatus = 'active') {
-  // Termine visuellement l'étape précédente (succès si elle n'a pas échoué).
+  // Termine visuellement l'étape précédente si elle était en cours.
   const prev = steps.value[steps.value.length - 1]
-  if (prev && prev.status === 'active') prev.status = status === 'fail' ? 'ok' : 'ok'
+  if (prev && prev.status === 'active') prev.status = 'ok'
   steps.value.push({ label, status, t: nowLabel() })
   if (steps.value.length > 30) steps.value.shift()
   nextTick(() => { consoleEl.value?.scrollTo({ top: consoleEl.value.scrollHeight }) })
@@ -219,18 +223,24 @@ function announceVerdict() {
 
 function friendlyError(e: any): string {
   const status = e?.status
+  const raw = typeof e?.message === 'string' ? e.message : ''
   if (status === 401) return 'Identifiants incorrects'
-  if (status === 429) return e?.message || 'Trop de tentatives, réessayez plus tard'
+  if (status === 429) return raw || 'Trop de tentatives, réessayez plus tard'
   if (status === 503 || status === 504) {
+    // Timeout IPC : le backend n'a pas répondu à l'app dans le délai ->
+    // message COMPRÉHENSIBLE au lieu du jargon technique.
+    if (raw.includes('Timeout IPC')) {
+      return 'Le serveur ne répond pas (délai dépassé). Vérifiez votre connexion internet et réessayez.'
+    }
     // Message réseau générique UNIQUEMENT si le backend n'a pas fourni de cause
-    // précise (ex: "Tauri non disponible", "Base temporairement verrouillée",
-    // "Timeout IPC") : on garde le message spécifique pour un diagnostic fiable.
-    const msg = typeof e?.message === 'string' ? e.message.trim() : ''
+    // précise (ex: "Tauri non disponible", "Base temporairement verrouillée") :
+    // on garde le message spécifique pour un diagnostic fiable.
+    const msg = raw.trim()
     if (msg) return msg
     return 'Connexion au serveur impossible. Vérifiez internet et réessayez.'
   }
-  if (status && status >= 500) return e?.message || 'Erreur serveur, réessayez dans un instant'
-  return e?.message || 'Identifiants incorrects'
+  if (status && status >= 500) return raw || 'Erreur serveur, réessayez dans un instant'
+  return raw || 'Identifiants incorrects'
 }
 
 function homePath() {
