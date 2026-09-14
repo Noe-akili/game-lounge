@@ -68,10 +68,15 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # L'acceptation interne de l'action échoue depuis la mise à jour de
+          # l'image runner (cmdline-tools 16.0 : sdkmanager attend une entrée
+          # interactive). On désactive et on accepte nous-mêmes avec `yes |`.
+          accept-android-sdk-licenses: false
 
       - name: Install Android SDK packages (platform, build-tools, NDK)
         run: |
-          sdkmanager --licenses > /dev/null 2>&1 || true
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;${{ env.NDK_VERSION }}" > /dev/null 2>&1
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}" >> "$GITHUB_ENV"
 
