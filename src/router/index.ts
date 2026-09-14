@@ -17,6 +17,7 @@
 // /initialisation n'est plus gérée par le guard : elle est atteinte uniquement
 // APRÈS un login réussi via le flux LoginView -> home -> App.vue.
 import { createRouter, createWebHistory, createWebHashHistory } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 
 const routes = [
   { path: '/login', name: 'Login', component: () => import('@/views/LoginView.vue') },
@@ -55,14 +56,12 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   const auth = useAuthStore()
-  // Vérification ABSOLUMENT locale : on ne fait AUCUN appel API,
-  // AUCUN accès SQLite, AUCUN sync, AUCUNE side effect.
-  // On ne regarde QUE si un token existe dans le store (sauvegardé
-  // explicitement lors d'un login Supabase réussi).
+  // Vérification ABSOLUMENT locale : aucun appel API, aucune side effect.
+  // Pas de token (jamais connecté ou session effacée) -> écran login.
   if (!auth.token) {
-    // Aucun token -> afficher l'écran de connexion.
-    // Ne pas tenter de restoreSession, ne pas vérifier SQLite, ne pas
-    // démarrer de sync ou de watcher.
+    // La page login reste accessible si on n'est pas connecté (après logout
+    // ou expiration) : on ne redirige QUE si une session existe.
+    if (to.path === '/login') return auth.isAuthenticated ? '/dashboard' : undefined
     return '/login'
   }
   // Token présent -> l'utilisateur a déjà validé ses identifiants.

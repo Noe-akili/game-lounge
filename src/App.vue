@@ -103,13 +103,14 @@ function maybeStartBusinessProcesses() {
   }
 }
 
-// Watch sur l'état d'authentification — démarrera les processus métier
-// uniquement après que l'écran d'accueil s'affiche.
+// Watch sur l'état d'authentification — démarre les processus métier
+// uniquement après que l'écran d'accueil s'affiche (déclenché aussi bien
+// au login qu'au boot avec session déjà persistée, via immediate: true).
 watch(
   () => auth.isAuthenticated,
   (ok) => {
     if (ok) {
-      // Petits délais pour laisser le temps que la route se stabilise
+      // Petit délai pour laisser le temps que la route se stabilise
       setTimeout(maybeStartBusinessProcesses, 100)
     } else {
       // Déconnexion / session expirée : on arrête et purge le métier.
@@ -119,7 +120,7 @@ watch(
       useNotifStore().clear()
     }
   },
-  { immediate: false }
+  { immediate: true }
 )
 </script>
 
