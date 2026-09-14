@@ -73,6 +73,10 @@ jobs:
           # l'image runner (cmdline-tools 16.0 : sdkmanager attend une entrée
           # interactive). On désactive et on accepte nous-mêmes avec `yes |`.
           accept-android-sdk-licenses: false
+          # Le paquet par défaut "tools" (obsolète) n'existe plus dans le
+          # cmdline-tools 16.0 -> "Failed to find package 'tools'". On
+          # n'installe ici que platform-tools (le reste vient de notre step).
+          packages: platform-tools
 
       - name: Install Android SDK packages (platform, build-tools, NDK)
         run: |
