@@ -69,6 +69,16 @@ async function pollForChanges() {
 onMounted(() => {
   try { settings.init() } catch (e) { console.warn('[AppLayout] settings.init failed', e) }
   window.addEventListener('resize', onResize)
+  // Vraie première installation ? -> bascule sur /initialisation (progression
+  // réelle de la 1ère sync). Vérification en ARRIÈRE-PLAN, après affichage de
+  // l'accueil : un réseau indisponible n'envoie JAMAIS l'utilisateur sur
+  // /initialisation (il reste sur l'accueil, données SQLite locales affichées).
+  import('@/stores/sync').then(({ useSyncStore }) => {
+    const sync = useSyncStore()
+    sync.fetchInitialStatus().then((completed) => {
+      if (completed === false) router.replace('/initialisation')
+    })
+  })
   // Android back button : fermer sidebar/modal avant de quitter
   const onAndroidBack = () => {
     if (isSidebarOpen.value) { isSidebarOpen.value = false; return }

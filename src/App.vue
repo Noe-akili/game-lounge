@@ -37,20 +37,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { motion } from 'motion-v'
 import { Toaster } from 'vue-sonner'
+import { useAuthStore } from '@/stores/auth'
 import { useSyncStore } from '@/stores/sync'
 import { useNotifStore } from '@/stores/notifications'
 
 const router = useRouter()
-// Écoute GLOBALE des événements Rust (sync-progress, sync-completed, sync-error
-// + db-change pour la cloche) : posée au niveau App (mission §10) pour que les
-// stores soient à jour sur TOUTES les vues — une notification est générée même
-// si l'utilisateur change de page.
-useSyncStore().bindListeners()
-useNotifStore().bind()
+const auth = useAuthStore()
 const routeLoading = ref(false)
 const isMobile = typeof window !== 'undefined' && window.innerWidth < 640
 
@@ -65,6 +61,43 @@ router.afterEach(() => {
 onMounted(async () => {
   setTimeout(() => (routeLoading.value = false), 400)
 })
+
+// ============================================================
+// SÉQUENCE DE DÉMARRAGE STRICTE (règle absolue) :
+//   1. Démarrage app (main.ts) — rien d'autre
+//   2. AUTH uniquement (store auth + guard routeur, lecture locale)
+//   3. Pas de session -> LoginView affichée, AUCUN processus métier
+//   4. Session valide -> authentifié
+//   5. SEULEMENT APRÈS authentification (écran d'accueil affiché) :
+//      listeners sync/notifications + tout processus métier.
+//
+// LoginView est donc TOTALEMENT indépendant du métier : tant que
+// isAuthenticated est false, rien ci-dessous ne s'exécute.
+// ============================================================
+let businessStarted = false
+function startBusinessProcesses() {
+  if (businessStarted) return
+  businessStarted = true
+  // Événements Rust (sync-progress, db-change pour la cloche) : posés au
+  // niveau App pour rester actifs sur TOUTES les vues — mais APRÈS auth.
+  useSyncStore().bindListeners()
+  useNotifStore().bind()
+}
+
+watch(
+  () => auth.isAuthenticated,
+  (ok) => {
+    if (ok) {
+      startBusinessProcesses()
+    } else {
+      // Déconnexion / session expirée : on arrête et purge le métier.
+      businessStarted = false
+      useSyncStore().reset()
+      useNotifStore().clear()
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <style>

@@ -31,29 +31,25 @@
 </template>
 
 <script setup lang="ts">
-// Écran de CONNEXION (obligatoire).
+// Écran de CONNEXION — TOTALEMENT INDÉPENDANT du métier (règle absolue).
 //
-// Flux après succès (mission §2) :
-//   login OK -> token/user sauvegardés (store auth = source unique)
-//            -> SQLite déjà chargée (les vues lisent l'API = SQLite locale)
-//            -> première installation (initial_sync_completed = false)
-//               ? écran d'initialisation (progression réelle de la 1ère sync)
-//               : dashboard immédiat — la sync Supabase tourne en arrière-plan
-//                 (boucle auto_sync Rust, événements bindés au niveau App).
+// Ici : UNIQUEMENT l'authentification (email + mot de passe -> token/user).
+// AUCUN appel métier (pas de /users, pas de /sync/*, pas de chargement de
+// données, pas de listeners, pas de notifications). Tout cela est lancé
+// APRÈS, une fois l'écran d'accueil affiché (App.vue + AppLayout).
 //
-// L'utilisateur ne voit JAMAIS "token missing" : le store refuse toute session
-// sans token et les erreurs techniques sont traduites en messages clairs.
+// Après succès : redirection selon le rôle. Si c'est une vraie première
+// installation, AppLayout détectera initial_sync_completed = false en
+// arrière-plan et basculera sur /initialisation — jamais depuis ici.
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Loader2 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
-import { useSyncStore } from '@/stores/sync'
 import { useSettingsStore } from '@/stores/settings'
 import { isTauriRuntime } from '@/lib/tauriApi'
 
 const router = useRouter()
 const auth = useAuthStore()
-const sync = useSyncStore()
 const settings = useSettingsStore()
 const loading = ref(false)
 const success = ref(false)
@@ -65,7 +61,8 @@ const form = reactive({
   password: '',
 })
 
-// État de connexion du backend (Tauri/SQLite prêt ?) — affiché sur l'écran.
+// État de connexion du backend (Tauri/SQLite prêt ?) — nécessaire à l'AUTH
+// elle-même (l'appel de login passe par l'IPC), affiché sur l'écran.
 const backendReady = ref(isTauriRuntime())
 
 onMounted(async () => {
@@ -85,6 +82,10 @@ function friendlyError(e: any): string {
   return e?.message || 'Identifiants incorrects'
 }
 
+function homePath() {
+  return auth.user?.role === 'admin' ? '/admin' : '/dashboard'
+}
+
 async function handleLogin() {
   if (loading.value) return
   if (!form.email || !form.password) { error.value = 'Saisissez votre email et votre mot de passe'; return }
@@ -94,18 +95,10 @@ async function handleLogin() {
   try {
     await auth.login(form.email.trim().toLowerCase(), form.password)
     success.value = true // "Connexion réussie ✓"
-
-    // Première installation ? -> écran d'initialisation avec progression réelle.
-    // Sinon -> dashboard immédiatement. Le réseau ne peut PAS bloquer : en cas
-    // d'échec du sondage on va au dashboard (les données SQLite s'affichent,
-    // la sync reprendra en arrière-plan).
-    sync.bindListeners()
-    const completed = await sync.fetchInitialStatus().catch(() => null)
-    if (completed === false) {
-      await router.replace('/initialisation')
-    } else {
-      await router.replace('/admin')
-    }
+    // Redirection immédiate : les processus métier (SQLite déjà prête, sync
+    // Supabase en arrière-plan, listeners, notifications) démarrent ensuite
+    // automatiquement via le watcher d'authentification de App.vue.
+    await router.replace(homePath())
   } catch (e: any) {
     error.value = friendlyError(e)
   } finally {

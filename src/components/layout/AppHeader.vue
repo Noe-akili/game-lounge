@@ -70,7 +70,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { Menu, X, Bell, Cloud, RefreshCw } from 'lucide-vue-next'
 import { api } from '@/utils/api'
@@ -121,12 +121,27 @@ async function checkSync() {
   } catch {}
 }
 
+// Sondage du statut de sync : UNIQUEMENT après authentification (règle
+// absolue de démarrage). Les binds listeners/notifications sont la propriété
+// de App.vue (démarrés post-auth, actifs sur toutes les vues).
+watch(
+  () => auth.isAuthenticated,
+  (ok) => {
+    if (ok) {
+      checkSync()
+      if (!syncTimer) syncTimer = setInterval(checkSync, 30000)
+    } else if (syncTimer) {
+      clearInterval(syncTimer)
+      syncTimer = null
+      syncEnabled.value = false
+      syncActive.value = false
+    }
+  },
+  { immediate: true }
+)
+
 onMounted(() => {
   timer = setInterval(() => { now.value = new Date() }, 1000)
-  checkSync()
-  syncTimer = setInterval(checkSync, 30000)
-  sync.bindListeners() // événements Rust sync-progress etc. (delta sync visible)
-  notif.bind() // événements Rust db-change (cloche multi-appareils)
   document.addEventListener('click', onDocClick)
 })
 onUnmounted(() => { clearInterval(timer); clearInterval(syncTimer); document.removeEventListener('click', onDocClick) })
