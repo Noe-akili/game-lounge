@@ -110,14 +110,11 @@ async fn try_supabase_login(app: &tauri::AppHandle, state: &State<'_, AppState>,
         }
     }
     let Some(mut pool) = pool_opt else {
-        crate::logger::log_auth("supabase: pool non disponible (offline) — init à la volée a échoué, pas de vérification cloud possible");
-        emit_step(app, "offline", "Serveur injoignable (hors ligne) — vérifiez internet");
-        // 503 explicite (PAS "Identifiants incorrects") : sans cloud, AUCUNE
-        // vérification n'est possible — l'utilisateur doit savoir que c'est le
-        // réseau, pas son mot de passe.
-        return Err(ApiError::service_unavailable(
-            "Serveur injoignable. Vérifiez votre connexion internet et réessayez.",
-        ));
+        crate::logger::log_auth("supabase: pool non disponible (offline) — init à la volée a échoué, fallback local…");
+        // CLOUD INJOIGNABLE DÈS LE DÉPART : repli sur la copie locale des
+        // users déjà connus de cet appareil (répliqués lors d'un précédent
+        // login en ligne). Si l'appareil ne connaît pas ce user -> 503 réseau.
+        return try_offline_login(app, state, email, password).await;
     };
     crate::logger::log_auth(&format!("supabase: fetch user {}", email));
     emit_step(app, "cloud", "Serveur joint — recherche du compte…");
@@ -167,12 +164,62 @@ async fn try_supabase_login(app: &tauri::AppHandle, state: &State<'_, AppState>,
         }
     }
     // 503 explicite (PAS "Identifiants incorrects") : l'utilisateur comprend
-    // que c'est le RÉSEAU/le cloud, pas son mot de passe.
+    // que c'est le RÉSEAU/le cloud, pas son mot de passe. Dernier recours avant
+    // d'échouer : repli sur la copie locale si l'appareil connaît ce user.
     let detail = last_err.map(|e| e.message).unwrap_or_else(|| "cause inconnue".into());
-    crate::logger::log_auth(&format!("supabase: LOGIN IMPOSSIBLE après retry pour {email}: {detail}"));
-    Err(ApiError::service_unavailable(
-        "Connexion au serveur impossible. Vérifiez internet et réessayez.",
-    ))
+    crate::logger::log_auth(&format!("supabase: LOGIN IMPOSSIBLE après retry pour {email}: {detail} — fallback local…"));
+    return try_offline_login(app, state, email, password).await;
+}
+
+/// Fallback OFFLINE : valide le mot de passe contre les users DÉJÀ répliqués
+/// sur CET appareil (lors d'un précédent login en ligne). Supabase reste la
+/// vérification principale ; ce repli ne joue QUE si le cloud est injoignable.
+/// Aucune création de compte hors ligne : un user inconnu de l'appareil ne
+/// peut PAS se connecter sans réseau -> erreur réseau explicite (503).
+#[cfg(feature = "supabase-sync")]
+async fn try_offline_login(
+    app: &tauri::AppHandle,
+    state: &State<'_, AppState>,
+    email: &str,
+    password: &str,
+) -> ApiResult<Option<Value>> {
+    let database = db(state);
+    let existing = database.find_one("users", |r| r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(email)));
+    let Some(existing) = existing.ok().flatten() else {
+        crate::logger::log_auth(&format!("offline: user {email} inconnu de cet appareil, fallback impossible"));
+        emit_step(app, "offline", "Hors ligne et appareil ne connaissant pas ce compte");
+        return Err(ApiError::service_unavailable(
+            "Serveur injoignable. Vérifiez votre connexion internet et réessayez.",
+        ));
+    };
+    if existing.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1 {
+        crate::logger::log_auth(&format!("offline: user {email} soft-deleted, fallback refusé"));
+        return Err(ApiError::unauthorized("Identifiants incorrects"));
+    }
+    let stored = existing.get("password_hash").and_then(Value::as_str).unwrap_or("");
+    if stored.is_empty() || hash_algo(stored) == "inconnu" {
+        // Hash inconnu/absent : IMPOSSIBLE de vérifier sans se tromper -> on
+        // ne devine jamais, on renvoie l'erreur réseau.
+        crate::logger::log_auth(&format!("offline: hash de {email} non vérifiable localement (algo {})" , hash_algo(stored)));
+        emit_step(app, "offline", "Copie locale non vérifiable — connexion internet requise");
+        return Err(ApiError::service_unavailable(
+            "Serveur injoignable. Vérifiez votre connexion internet et réessayez.",
+        ));
+    }
+    emit_step(app, "offline", "Hors ligne — vérification avec la copie locale de l'appareil…");
+    let valid = compare_bounded(password.to_string(), stored.to_string()).await;
+    if !valid {
+        crate::logger::log_auth(&format!("offline: password MISMATCH pour {email}"));
+        emit_step(app, "error", "Mot de passe incorrect (mode hors ligne)");
+        return Err(ApiError::unauthorized("Identifiants incorrects"));
+    }
+    crate::logger::log_auth(&format!("offline: LOGIN OK pour {email} (copie locale vérifiée)"));
+    emit_step(app, "success", "Connecté hors ligne (copie locale vérifiée) ✓");
+    let mut nu = existing.clone();
+    if let Some(obj) = nu.as_object_mut() {
+        obj.insert("_source".into(), json!("offline"));
+    }
+    Ok(Some(nu))
 }
 
 /// Validation du mot de passe + réplication du user vers SQLite, une fois le
@@ -321,8 +368,8 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
                 let _ = database.insert("users", &map);
             }
 
+            was_supabase = nu.get("_source").and_then(Value::as_str) != Some("offline");
             user = Some(nu);
-            was_supabase = true;
         }
         None => {
             record_failure(&state, &rate_key);
