@@ -9,6 +9,7 @@
 // détecter la fin du temps et faire vibrer le téléphone.
 
 use serde_json::Value;
+use tauri::Manager;
 
 use crate::db::Db;
 
@@ -19,11 +20,20 @@ pub fn start(app: tauri::AppHandle, db: std::sync::Arc<Db>) {
         // Petit délai : laisser le boot (DB, WebView) se terminer calmement.
         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
         loop {
-            let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                check_expired_sessions(&app, &db)
-            }));
-            if let Err(e) = checked {
-                eprintln!("[session-watcher] panic attrapé (reprise au prochain tick): {e:?}");
+            // RÈGLE ABSOLUE (démarrage) : aucun processus métier (finalisation
+            // de sessions = facturation) avant l'authentification. Le drapeau
+            // est levé par auth_business_ready (écran d'accueil affiché).
+            let authenticated = app
+                .try_state::<crate::AppState>()
+                .map(|s| s.session_authenticated.load(std::sync::atomic::Ordering::Relaxed))
+                .unwrap_or(false);
+            if authenticated {
+                let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    check_expired_sessions(&app, &db)
+                }));
+                if let Err(e) = checked {
+                    eprintln!("[session-watcher] panic attrapé (reprise au prochain tick): {e:?}");
+                }
             }
             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         }

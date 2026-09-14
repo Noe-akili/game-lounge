@@ -11,7 +11,7 @@
 
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 /// Callback appelé à chaque écriture locale de données (app + sync delta).
 pub type ChangeCallback = Arc<dyn Fn(&str, &str, Value) + Send + Sync>;
@@ -97,6 +97,17 @@ fn describe(table: &str, operation: &str, row: &Value) -> (String, String) {
 pub fn attach(app: tauri::AppHandle, db: &crate::db::Db) {
     let handle = app.clone();
     let cb: ChangeCallback = Arc::new(move |table, operation, row| {
+        // RÈGLE ABSOLUE (démarrage) : aucune notification, aucun événement UI
+        // avant l'authentification. Le drapeau est levé par auth_business_ready
+        // (écran d'accueil affiché) ; les écritures qui surviennent avant
+        // (login lui-même, initialisation) restent donc silencieuses.
+        let authenticated = handle
+            .try_state::<crate::AppState>()
+            .map(|s| s.session_authenticated.load(std::sync::atomic::Ordering::Relaxed))
+            .unwrap_or(false);
+        if !authenticated {
+            return;
+        }
         if !NOTIFY_TABLES.contains(&table) {
             return;
         }

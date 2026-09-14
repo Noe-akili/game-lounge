@@ -84,6 +84,9 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function logout() {
     try { await api.post('/auth/logout') } catch {}
+    // RÈGLE ABSOLUE : suspend les processus métier côté Rust (sync auto,
+    // watcher, notifications) — avant même d'effacer la session locale.
+    try { await api.post('/auth/business-suspend') } catch {}
     await clearSession()
     log('AUTH', 'logout')
   }
@@ -151,12 +154,23 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  // RÈGLE ABSOLUE : lève le verrou métier côté Rust (sync auto, watcher de
+  // sessions, notifications). Appelé par App.vue APRÈS l'affichage de l'accueil.
+  async function businessReady() {
+    try { await api.post('/auth/business-ready') } catch {}
+  }
+  // Règle absolue : abaisse le verrou métier côté Rust (déconnexion/expiration).
+  async function businessSuspend() {
+    try { await api.post('/auth/business-suspend') } catch {}
+  }
+
   if (typeof window !== 'undefined') {
     // 401 transport (tauriApi.ts) : session expirée/invalide -> retour LOGIN.
     // PAS de bootstrap automatique : c'est l'écran de connexion qui prend le relais.
     window.addEventListener('gl:unauthorized', () => {
       log('AUTH', '401 transport reçu -> session invalidée (retour login)')
       lastError.value = 'Session expirée, veuillez vous reconnecter'
+      businessSuspend()
       clearSession()
     })
   }
@@ -165,5 +179,6 @@ export const useAuthStore = defineStore('auth', () => {
     user, token, state, lastError,
     isAuthenticated, isAdmin,
     login, logout, fetchMe, restoreSession, refreshSession, clearSession,
+    businessReady, businessSuspend,
   }
 })

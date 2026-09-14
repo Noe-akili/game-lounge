@@ -77,6 +77,8 @@ const ROUTES: RouteDef[] = [
   { m: 'POST', p: '/auth/bootstrap', f: () => ({ cmd: 'auth_bootstrap_admin', args: {} }) },
   { m: 'POST', p: '/auth/refresh', f: ({ body }) => ({ cmd: 'auth_refresh', args: { refresh_token: val(body, 'refresh_token') } }) },
   { m: 'POST', p: '/auth/logout', f: ({ token }) => ({ cmd: 'auth_logout', args: { token } }) },
+  { m: 'POST', p: '/auth/business-ready', f: () => ({ cmd: 'auth_business_ready', args: {} }) },
+  { m: 'POST', p: '/auth/business-suspend', f: () => ({ cmd: 'auth_business_suspend', args: {} }) },
   { m: 'GET', p: '/auth/me', f: ({ token }) => ({ cmd: 'auth_me', args: { token } }) },
 
   // ===== CONSOLES =====

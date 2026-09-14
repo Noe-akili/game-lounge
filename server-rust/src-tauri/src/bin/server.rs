@@ -2504,6 +2504,7 @@ async fn main() {
         supabase_reconnecting: std::sync::atomic::AtomicBool::new(false),
         sync_state: Mutex::new(None),
         login_attempts: Mutex::new(HashMap::new()),
+        session_authenticated: std::sync::atomic::AtomicBool::new(true), // serveur debug : métier toujours actif
     });
     seed_default_users(&state).expect("seed des comptes par défaut");
 

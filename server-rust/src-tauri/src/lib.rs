@@ -12,7 +12,6 @@ pub mod validators;
 use std::sync::Mutex;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rand::RngCore;
-use serde_json::json;
 use tauri::Manager;
 
 use db::Db;
@@ -36,6 +35,11 @@ pub struct AppState {
     /// Anti brute-force login : horodatages des ÉCHECS par clé (email).
     /// Seuls les échecs comptent — un login qui finit par réussir n'est pas bloqué.
     pub login_attempts: Mutex<std::collections::HashMap<String, Vec<i64>>>,
+    /// RÈGLE ABSOLUE (démarrage) : verrou des processus métier. Tant qu'il est
+    /// false, AUCUNE sync auto, AUCUN watcher, AUCUNE notification ne tourne.
+    /// Le frontend le lève via auth_business_ready APRÈS affichage de l'écran
+    /// d'accueil (post-login ou restauration de session).
+    pub session_authenticated: std::sync::atomic::AtomicBool,
 }
 
 
@@ -190,6 +194,7 @@ pub fn run() {
                 supabase_reconnecting: std::sync::atomic::AtomicBool::new(false),
                 sync_state: Mutex::new(None),
                 login_attempts: Mutex::new(std::collections::HashMap::new()),
+                session_authenticated: std::sync::atomic::AtomicBool::new(false),
             });
             // Init Supabase pool en arrière-plan (non bloquant, best practice offline-first)
             #[cfg(feature = "supabase-sync")]
@@ -213,54 +218,12 @@ pub fn run() {
                                     *guard = Some(pool);
                                 }
                             }
-                            // Pull initial users en background (cache)
-                            // IMPORTANT : upsert PAR EMAIL et on NE TOUCH JAMAIS au password_hash
-                            // local. Avant : INSERT OR REPLACE par id écrasait le hash admin local
-                            // (scrypt seed) par le hash Supabase (souvent bcrypt/$2 ou autre algo) ->
-                            // admin123 refusé en local ET sur Supabase -> "Identifiants incorrects".
-                            if let Some(state) = handle.try_state::<AppState>() {
-                                let pool_opt = state.supabase_pool.lock().ok().and_then(|g| g.clone());
-                                if let Some(pool) = pool_opt {
-                                    match crate::supabase::pull_users(&pool).await {
-                                        Ok(users) => {
-                                            eprintln!("[supabase] pull {} users en background", users.len());
-                                            for u in users {
-                                                let Some(email) = u.get("email").and_then(serde_json::Value::as_str).map(|s: &str| s.to_string()) else { continue };
-                                                if email.is_empty() { continue; }
-                                                let mut map = serde_json::Map::new();
-                                                if let Some(obj) = u.as_object() {
-                                                    for (k, v) in obj {
-                                                        if k != "password_hash" && k != "id" { map.insert(k.clone(), v.clone()); }
-                                                    }
-                                                }
-                                                let mut hash_present = false;
-                                                // find_one_all : inclut les users soft-deleted pour ne JAMAIS
-                                                // les ressusciter au boot (sinon le pull réinsérait un user supprimé)
-                                                if let Ok(Some(local)) = state.db.find_one_all("users", |r| r.get("email").and_then(serde_json::Value::as_str) == Some(email.as_str())) {
-                                                    // Existant local : on met à jour role/nom/etc. mais PAS le hash
-                                                    if let Some(id) = local.get("id").and_then(serde_json::Value::as_i64) {
-                                                        let _ = state.db.update("users", id, &map);
-                                                    }
-                                                    hash_present = true;
-                                                } else if let Some(h) = u.get("password_hash").and_then(serde_json::Value::as_str) {
-                                                    if !h.is_empty() {
-                                                        map.insert("password_hash".into(), json!(h));
-                                                        map.insert("email".into(), json!(email));
-                                                        let _ = state.db.insert("users", &map);
-                                                        hash_present = true;
-                                                    }
-                                                }
-                                                let _ = hash_present;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            eprintln!("[supabase] pull users failed: {}", e.message);
-                                            crate::logger::log_cloud(&format!("pull users boot failed: {} -> reconnexion", e.message));
-                                            crate::supabase::schedule_reconnect(&handle);
-                                        }
-                                    }
-                                }
-                            }
+                            // RÈGLE ABSOLUE (démarrage) : AUCUN pull /users, aucune
+                            // synchronisation et aucun accès réseau métier AVANT
+                            // l'authentification. La réplication des users se fait
+                            // par la 1ère phase de la sync post-login ; le fallback
+                            // de connexion cloud est assuré par try_supabase_login
+                            // (auth_login), déclenché par l'utilisateur lui-même.
                         }
                         None => eprintln!("[supabase] pool non disponible (offline)"),
                     }
@@ -297,6 +260,8 @@ pub fn run() {
             commands::auth_bootstrap_admin,
             commands::auth_login,
             commands::auth_logout,
+            commands::auth_business_ready,
+            commands::auth_business_suspend,
             commands::auth_me,
             commands::auth_refresh,
             commands::auth_debug_info,
@@ -412,6 +377,11 @@ fn auto_sync_loop(handle: tauri::AppHandle, mut wake_rx: tokio::sync::mpsc::Unbo
                 }
             }
             let Some(state) = handle.try_state::<AppState>() else { continue };
+            // RÈGLE ABSOLUE : aucun processus métier avant l'authentification.
+            // Le drapeau est levé par auth_business_ready (accueil affiché).
+            if !state.session_authenticated.load(std::sync::atomic::Ordering::Relaxed) {
+                continue;
+            }
             let enabled = state.db.get_setting("sync_enabled").ok().and_then(|o| o).unwrap_or_default() == "1";
             let running = state.sync_state.lock().ok()
                 .and_then(|g| g.clone())

@@ -347,6 +347,27 @@ pub async fn auth_debug_supabase_users(state: State<'_, AppState>, token: Option
     Ok(json!({ "users": [], "online": false }))
 }
 
+/// RÈGLE ABSOLUE (démarrage) : lève le verrou des processus métier.
+/// Appelé par le frontend UNIQUEMENT après affichage de l'écran d'accueil
+/// (login réussi ou session restaurée) : à partir de là seulement, la sync
+/// automatique, le watcher de sessions et les notifications s'activent.
+#[tauri::command]
+pub fn auth_business_ready(state: State<'_, AppState>) -> ApiResult<Value> {
+    state.session_authenticated.store(true, std::sync::atomic::Ordering::Relaxed);
+    crate::logger::log("session", "business processes ENABLED (accueil affiché)");
+    Ok(json!({ "business_ready": true }))
+}
+
+/// RÈGLE ABSOLUE (démarrage) : abaisse le verrou des processus métier
+/// (déconnexion / session expirée). La sync auto, le watcher et les
+/// notifications se remettent en veille jusqu'à la prochaine authentification.
+#[tauri::command]
+pub fn auth_business_suspend(state: State<'_, AppState>) -> ApiResult<Value> {
+    state.session_authenticated.store(false, std::sync::atomic::Ordering::Relaxed);
+    crate::logger::log("session", "business processes SUSPENDED (déconnexion)");
+    Ok(json!({ "business_ready": false }))
+}
+
 #[tauri::command]
 pub fn auth_refresh(state: State<'_, AppState>, refresh_token: String) -> ApiResult<Value> {
     if refresh_token.is_empty() {

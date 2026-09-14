@@ -78,6 +78,10 @@ let businessStarted = false
 function startBusinessProcesses() {
   if (businessStarted) return
   businessStarted = true
+  // RÈGLE ABSOLUE : lève d'abord le verrou métier côté Rust — la sync
+  // automatique, le watcher de sessions et les notifications natives ne
+  // démarrent QU'À PARTIR DE CET INSTANT (accueil affiché).
+  auth.businessReady()
   // Événements Rust (sync-progress, db-change pour la cloche) : posés au
   // niveau App pour rester actifs sur TOUTES les vues — mais APRÈS auth.
   useSyncStore().bindListeners()
@@ -91,6 +95,7 @@ watch(
       startBusinessProcesses()
     } else {
       // Déconnexion / session expirée : on arrête et purge le métier.
+      auth.businessSuspend()
       businessStarted = false
       useSyncStore().reset()
       useNotifStore().clear()
