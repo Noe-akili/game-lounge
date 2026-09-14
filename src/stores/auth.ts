@@ -1,5 +1,6 @@
-// @ts-nocheck
-// Auth minimal propre - Tauri + Supabase
+// Auth mono-utilisateur admin : PAS de login. L'application considère que la
+// personne qui tient l'appareil EST l'admin : la session est bootstrappée
+// automatiquement (auth_bootstrap_admin) et restaurée via /auth/me.
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '@/utils/api'
@@ -23,14 +24,12 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => !!token.value && !!user.value)
   const isAdmin = computed(() => user.value?.role === 'admin')
 
-  async function login(email: string, password: string) {
-    const data = await api.post('/auth/login', { email, password })
+  function setSession(data: any) {
     token.value = data.token
     user.value = data.user
     localStorage.setItem('gl_token', data.token)
     localStorage.setItem('gl_user', JSON.stringify(data.user))
     if (data.refresh_token) localStorage.setItem('gl_refresh_token', data.refresh_token)
-    return data.user
   }
 
   function clearSession() {
@@ -43,35 +42,28 @@ export const useAuthStore = defineStore('auth', () => {
     } catch {}
   }
 
+  /// Connexion implicite admin : appelée automatiquement, sans écran de login.
   async function bootstrapAdmin() {
-    const data = await api.post("/auth/bootstrap")
-    token.value = data.token
-    user.value = data.user
-    localStorage.setItem("gl_token", data.token)
-    localStorage.setItem("gl_user", JSON.stringify(data.user))
-    if (data.refresh_token) localStorage.setItem("gl_refresh_token", data.refresh_token)
+    const data = await api.post('/auth/bootstrap')
+    setSession(data)
     return data.user
   }
 
   async function restoreSession() {
     if (sessionReady.value) return isAuthenticated.value
     try {
-      // Une app fraîche doit afficher le vrai écran de connexion. Le bootstrap
-      // automatique contournait le login et créait une session admin implicite.
-      if (!token.value || !user.value) return false
-      await fetchMe()
+      if (token.value && user.value) {
+        // Session existante : on la vérifie auprès du backend.
+        await fetchMe()
+        return true
+      }
+      // Pas de session (premier lancement ou stockage vidé) : l'admin est
+      // connecté d'office, sans écran de connexion.
+      await bootstrapAdmin()
       return true
     } catch {
-      clearSession()
-      return false
-    } finally {
-      sessionReady.value = true
+      try { await bootstrapAdmin(); return true } catch { clearSession(); return false }
     }
-  }
-
-  async function logout() {
-    try { await api.post('/auth/logout') } catch {}
-    clearSession()
   }
 
   async function fetchMe() {
@@ -81,8 +73,13 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   if (typeof window !== 'undefined') {
-    window.addEventListener('gl:unauthorized', clearSession)
+    window.addEventListener('gl:unauthorized', () => {
+      // 401 (token expiré/invalide) : on re-bootstrappe la session admin au
+      // prochain passage du guard, au lieu de renvoyer vers un écran de login.
+      clearSession()
+      sessionReady.value = false
+    })
   }
 
-  return { user, token, sessionReady, isAuthenticated, isAdmin, login, logout, fetchMe, bootstrapAdmin, restoreSession, clearSession }
+  return { user, token, sessionReady, isAuthenticated, isAdmin, bootstrapAdmin, fetchMe, restoreSession, clearSession }
 })

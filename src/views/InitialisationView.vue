@@ -46,8 +46,7 @@
         <p class="text-neon-red font-medium">Impossible de récupérer les données.</p>
         <p class="text-xs text-txt-dim">{{ sync.error || 'Vérifiez votre connexion internet.' }}</p>
         <div class="flex gap-3">
-          <button @click="logout" class="btn-neon-outline flex-1">Plus tard</button>
-          <button @click="retry" :disabled="retrying" class="btn-neon-violet flex-1 flex items-center justify-center gap-2">
+          <button @click="retry" :disabled="retrying" class="btn-neon-violet w-full flex items-center justify-center gap-2">
             <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': retrying }" />
             Réessayer
           </button>
@@ -59,7 +58,7 @@
 </template>
 
 <script setup lang="ts">
-// Écran de PREMIÈRE synchronisation (mission §6) : affiché APRÈS le login réussi,
+// Écran de PREMIÈRE synchronisation (mission §6) : affiché au premier lancement,
 // uniquement quand initial_sync_completed = false côté SQLite. La progression est
 // 100% réelle : événements Rust -> store Pinia sync (mission §7-8). En cas de
 // coupure : bouton Réessayer (reprise aux tables restantes, mission §11).
@@ -68,12 +67,10 @@ import { motion } from 'motion-v'
 import { useRouter } from 'vue-router'
 import { CheckCircle2, Circle, Loader2, CloudOff, RefreshCw } from 'lucide-vue-next'
 import { useSyncStore, SYNC_PHASES, PHASE_LABELS } from '@/stores/sync'
-import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
 
 const router = useRouter()
 const sync = useSyncStore()
-const auth = useAuthStore()
 const settings = useSettingsStore()
 const retrying = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -109,16 +106,10 @@ async function retry() {
   try { await sync.startInitialSync() } finally { retrying.value = false }
 }
 
-async function logout() {
-  await auth.logout()
-  sync.reset()
-  router.replace('/login')
-}
-
 function goNext() {
-  // Mission §12 : une fois l'init terminée, jamais revu — les connexions
-  // suivantes vont directement au dashboard.
-  router.replace(auth.user?.role === 'admin' ? '/admin' : '/dashboard')
+  // Mission §12 : une fois l'init terminée, jamais revu — l'app va directement
+  // à l'interface admin.
+  router.replace('/admin')
 }
 
 onMounted(async () => {

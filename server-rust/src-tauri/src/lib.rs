@@ -23,8 +23,6 @@ pub struct AppState {
     pub db: std::sync::Arc<Db>,
     /// Secret utilisé pour signer/vérifier les JWT.
     pub jwt_secret: String,
-    /// Journal des tentatives de connexion (rate limiting simple, par IP/app).
-    pub login_attempts: Mutex<std::collections::HashMap<String, Vec<i64>>>,
     /// Pool Supabase Postgres (optionnel, offline-first) - via tokio-postgres
     #[cfg(feature = "supabase-sync")]
     pub supabase_pool: Mutex<Option<crate::supabase::SupabasePool>>,
@@ -120,7 +118,7 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle();
             // GARANTIE : AppState est TOUJOURS enregistré, même si la DB échoue.
-            // Sinon le premier `invoke("auth_login")` panic car State<AppState> manquant -> abort -> APK se ferme.
+            // Sinon le premier `invoke("auth_bootstrap_admin")` panic car State<AppState> manquant -> abort -> APK se ferme.
             // On protège le setup avec catch_unwind car WebView Android est fragile au boot.
             let db = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| open_db(handle))) {
                 Ok(Ok(db)) => {
@@ -185,7 +183,6 @@ pub fn run() {
             app.manage(AppState {
                 db: std::sync::Arc::new(db),
                 jwt_secret,
-                login_attempts: Mutex::new(std::collections::HashMap::new()),
                 supabase_pool: Mutex::new(None),
                 supabase_reconnecting: std::sync::atomic::AtomicBool::new(false),
                 sync_state: Mutex::new(None),
@@ -293,7 +290,6 @@ pub fn run() {
             commands::health,
             // ==== AUTH ====
             commands::auth_bootstrap_admin,
-            commands::auth_login,
             commands::auth_logout,
             commands::auth_me,
             commands::auth_refresh,

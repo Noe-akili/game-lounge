@@ -27,25 +27,6 @@ type SharedState = Arc<AppState>;
 
 // ===== Helpers (équivalent des helpers Tauri, mais sans tauri::State) =====
 
-const LOGIN_WINDOW_MS: i64 = 15 * 60 * 1000;
-const LOGIN_MAX: usize = 20;
-
-fn too_many_attempts(state: &AppState, key: &str) -> bool {
-    let now = chrono::Utc::now().timestamp_millis();
-    let mut map = match state.login_attempts.lock() {
-        Ok(m) => m,
-        Err(_) => return true,
-    };
-    let entries = map.entry(key.to_string()).or_default();
-    entries.retain(|t| now - t < LOGIN_WINDOW_MS);
-    if entries.len() >= LOGIN_MAX {
-        true
-    } else {
-        entries.push(now);
-        false
-    }
-}
-
 fn claims(state: &AppState, token: &Option<String>) -> ApiResult<Claims> {
     auth::require_auth(token.as_deref(), &state.jwt_secret)
 }
@@ -95,79 +76,7 @@ async fn health() -> (StatusCode, Json<Value>) {
     })))
 }
 
-// ===== Auth =====
-
-async fn auth_login(
-    State(state): State<SharedState>,
-    Json(body): Json<Value>,
-) -> (StatusCode, Json<Value>) {
-    let email = body.get("email").and_then(Value::as_str).unwrap_or("").to_string();
-    let password = body.get("password").and_then(Value::as_str).unwrap_or("").to_string();
-
-    if email.is_empty() || password.is_empty() {
-        return reply(Err(ApiError::bad_request("Email et mot de passe requis")));
-    }
-    if !validators::is_valid_email(&email) {
-        return reply(Err(ApiError::bad_request("Email invalide")));
-    }
-    if !validators::is_valid_password(&password) {
-        return reply(Err(ApiError::bad_request(
-            "Mot de passe invalide (min 6 caractères, au moins une lettre)",
-        )));
-    }
-    if too_many_attempts(&state, "local") {
-        return reply(Err(ApiError::new(429, "Trop de tentatives, réessayez plus tard")));
-    }
-
-    let user = match db(&state).find_one("users", |r| {
-        r.get("email").and_then(Value::as_str) == Some(email.as_str())
-    }) {
-        Ok(Some(u)) => u,
-        Ok(None) => return reply(Err(ApiError::unauthorized("Identifiants incorrects"))),
-        Err(e) => return reply(Err(e)),
-    };
-
-    let stored = user
-        .get("password_hash")
-        .and_then(Value::as_str)
-        .map(|s| s.to_string())
-        .ok_or_else(|| ApiError::unauthorized("Identifiants incorrects"));
-
-    let stored = match stored {
-        Ok(s) => s,
-        Err(e) => return reply(Err(e)),
-    };
-
-    if !auth::compare_password(&password, &stored) {
-        return reply(Err(ApiError::unauthorized("Identifiants incorrects")));
-    }
-
-    // Mise à niveau des anciens hashs bcrypt vers scrypt au premier login réussi.
-    if !auth::is_scrypt_hash(&stored) {
-        if let Ok(upgraded) = auth::hash_password(&password) {
-            let mut upd = jmap();
-            upd.insert("password_hash".into(), json!(upgraded));
-            if let Some(id) = user.get("id").and_then(Value::as_i64) {
-                let _ = db(&state).update("users", id, &upd);
-            }
-        }
-    }
-
-    let c = Claims {
-        id: user.get("id").and_then(Value::as_i64).unwrap_or(0),
-        email: user.get("email").and_then(Value::as_str).unwrap_or("").to_string(),
-        role: user.get("role").and_then(Value::as_str).unwrap_or("employe").to_string(),
-        nom: user.get("nom").and_then(Value::as_str).unwrap_or("").to_string(),
-        iat: 0,
-        exp: 0,
-    };
-    let token = auth::sign_token(&c, &state.jwt_secret);
-
-    match token {
-        Ok(t) => reply(Ok(json!({ "token": t, "user": user_public(&user) }))),
-        Err(e) => reply(Err(e)),
-    }
-}
+// ===== Auth (mono-utilisateur admin : l'app ne propose plus de login) =====
 
 async fn auth_logout(
     State(state): State<SharedState>,
@@ -2496,9 +2405,8 @@ async fn main() {
     let db = Db::open(&db_path).expect("ouverture SQLite");
     let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "game-lounge-secret-2024".into());
     let state = Arc::new(AppState {
-        db,
+        db: std::sync::Arc::new(db),
         jwt_secret,
-        login_attempts: Mutex::new(HashMap::new()),
         supabase_pool: Mutex::new(None),
         supabase_reconnecting: std::sync::atomic::AtomicBool::new(false),
         sync_state: Mutex::new(None),
@@ -2507,7 +2415,6 @@ async fn main() {
 
     let app = Router::new()
         .route("/api/health", get(health))
-        .route("/api/auth/login", post(auth_login))
         .route("/api/auth/logout", post(auth_logout))
         .route("/api/auth/me", get(auth_me))
         .route("/api/consoles", get(consoles_list).post(consoles_create))

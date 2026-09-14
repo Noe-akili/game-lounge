@@ -259,18 +259,8 @@ pub async fn init_supabase_pool() -> Option<()> {
     None
 }
 
-#[derive(Debug, Clone)]
-pub struct SupabaseUser {
-    pub id: i64,
-    pub email: String,
-    pub password_hash: String,
-    pub role: String,
-    pub nom: String,
-    pub created_at: Option<String>,
-}
-
-/// Lecture d'une colonne texte tolérante aux pannes : N'UTILISE PAS row.get (panique si type
-/// Postgres inattendu, ex: TIMESTAMPTZ décodé en String) — un panic ici tue l'app Android.
+// Lecture d'une colonne texte tolérante aux pannes : N'UTILISE PAS row.get (panique si type
+// Postgres inattendu, ex: TIMESTAMPTZ décodé en String) — un panic ici tue l'app Android.
 #[cfg(feature = "supabase-sync")]
 pub fn pg_col_to_string_pub(row: &tokio_postgres::Row, idx: usize) -> Option<String> {
     match row.try_get::<_, Option<String>>(idx) {
@@ -283,43 +273,6 @@ pub fn pg_col_to_string_pub(row: &tokio_postgres::Row, idx: usize) -> Option<Str
 #[cfg(feature = "supabase-sync")]
 fn pg_col_to_string(row: &tokio_postgres::Row, idx: usize) -> Option<String> {
     pg_col_to_string_pub(row, idx)
-}
-
-#[cfg(feature = "supabase-sync")]
-pub async fn fetch_supabase_user(pool: &SupabasePool, email: &str) -> ApiResult<Option<SupabaseUser>> {
-    // Email en dur (échappé) : les requêtes avec paramètres ($1) passent par le protocole
-    // étendu (prepared statements) que le pooler Supabase ne supporte pas -> login cassé
-    let sql = format!("SELECT id, email, password_hash, role, nom, created_at FROM users WHERE email = '{}' LIMIT 1", escape_sql(email));
-    let rows = supabase_query(pool, &sql, &[])
-        .await
-        .map_err(|e| ApiError::internal(format!("Supabase query user: {}", e)))?;
-    if rows.is_empty() {
-        return Ok(None);
-    }
-    let row = &rows[0];
-    // Décodage défensif : tout panic potentiel est contenu (catch_unwind), jamais propagé
-    let decode = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        SupabaseUser {
-            id: row.try_get::<_, i64>(0).unwrap_or(0),
-            email: pg_col_to_string(row, 1).unwrap_or_default(),
-            password_hash: pg_col_to_string(row, 2).unwrap_or_default(),
-            role: pg_col_to_string(row, 3).unwrap_or_else(|| "employe".to_string()),
-            nom: pg_col_to_string(row, 4).unwrap_or_default(),
-            created_at: pg_col_to_string(row, 5),
-        }
-    }));
-    match decode {
-        Ok(u) => Ok(Some(u)),
-        Err(_) => {
-            crate::logger::log_cloud("fetch_supabase_user: décodage row paniqué, user ignoré");
-            Ok(None)
-        }
-    }
-}
-
-#[cfg(not(feature = "supabase-sync"))]
-pub async fn fetch_supabase_user(_pool: &(), _email: &str) -> ApiResult<Option<SupabaseUser>> {
-    Ok(None)
 }
 
 #[cfg(feature = "supabase-sync")]

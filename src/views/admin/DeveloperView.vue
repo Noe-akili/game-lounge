@@ -5,16 +5,15 @@
       <h3 class="font-gaming text-lg font-bold">Outils Développeur</h3>
       <span class="badge bg-amber-500/20 text-amber-400 border-amber-500/30">Debug uniquement</span>
     </div>
-    <p class="text-sm text-txt-dim">Test du login et diagnostic auth (local + cloud). Toute opération passe par l'authentification réelle admin.</p>
+    <p class="text-sm text-txt-dim">Diagnostic auth (local + cloud). Session admin implicite, sans écran de connexion.</p>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <div class="card">
-        <h4 class="font-bold mb-3 flex items-center gap-2"><LogIn class="w-4 h-4 text-neon-violet" /> Test Login</h4>
+        <h4 class="font-bold mb-3 flex items-center gap-2"><LogIn class="w-4 h-4 text-neon-violet" /> Session admin</h4>
         <div class="space-y-3">
-          <input v-model="testEmail" placeholder="Email administrateur" class="input-field w-full" />
-          <input v-model="testPassword" placeholder="Mot de passe" type="password" class="input-field w-full" />
-          <button @click="testLogin" :disabled="loadingLogin" class="btn-neon-violet w-full">
-            {{ loadingLogin ? 'Test en cours...' : 'Tester login' }}
+          <p class="text-xs text-txt-dim">L'application est mono-utilisateur : la session admin est créée automatiquement au démarrage (sans login).</p>
+          <button @click="testSession" :disabled="loadingLogin" class="btn-neon-violet w-full">
+            {{ loadingLogin ? 'Test en cours...' : 'Vérifier / re-crée la session admin' }}
           </button>
           <div v-if="loginResult" class="p-3 rounded-xl bg-bg-surface text-xs font-mono whitespace-pre-wrap max-h-32 overflow-auto">{{ loginResult }}</div>
         </div>
@@ -48,8 +47,6 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { api } from '@/utils/api'
 import { Bug, LogIn, FileText, KeyRound } from 'lucide-vue-next'
 
-const testEmail = ref('')
-const testPassword = ref('')
 const loadingLogin = ref(false)
 const loginResult = ref('')
 const logs = ref<string[]>([])
@@ -86,14 +83,15 @@ onUnmounted(() => {
   console.error = origError
 })
 
-async function testLogin() {
+async function testSession() {
   loadingLogin.value = true
   loginResult.value = ''
   try {
-    const data = await api.post('/auth/login', { email: testEmail.value, password: testPassword.value })
-    loginResult.value = `✅ Login OK via ${data.source || 'local'}:\n${JSON.stringify(data, null, 2)}`
+    // /auth/bootstrap crée (ou restaure) la session admin implicite.
+    const data = await api.post('/auth/bootstrap')
+    loginResult.value = `✅ Session admin OK (${data.source || 'local'}):\n${JSON.stringify(data, null, 2)}`
   } catch (e: any) {
-    loginResult.value = `❌ Login échoué (${e.status || ''}): ${e.message}\n${JSON.stringify(e.data || {}, null, 2)}`
+    loginResult.value = `❌ Bootstrap échoué (${e.status || ''}): ${e.message}\n${JSON.stringify(e.data || {}, null, 2)}`
   } finally { loadingLogin.value = false }
 }
 
