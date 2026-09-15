@@ -14,8 +14,17 @@ fn default_rule() -> Value {
         "regle_type": "temps",
         "seuil": 60,
         "jetons_attribues": 1,
+        "valeur_jeton": 100,
         "actif": true,
     })
+}
+
+fn is_active_flag(value: Option<&Value>) -> bool {
+    value
+        .and_then(Value::as_i64)
+        .map(|v| v == 1)
+        .or_else(|| value.and_then(Value::as_bool))
+        .unwrap_or(false)
 }
 
 /// GET /api/parametres/fidelite (règle active ou valeur par défaut)
@@ -23,10 +32,7 @@ fn default_rule() -> Value {
 pub fn fidelite_get(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
     claims(&state, &token)?;
     let rule = db(&state)
-        .find_one("parametres_fidelite", |r| {
-            let a = r.get("actif").map(|v| !matches!(v, Value::Null)).unwrap_or(false);
-            a
-        })?
+        .find_one("parametres_fidelite", |r| is_active_flag(r.get("actif")))?
         .unwrap_or_else(default_rule);
     Ok(rule)
 }
@@ -39,6 +45,7 @@ pub fn fidelite_put(
     regle_type: Option<String>,
     seuil: Option<i64>,
     jetons_attribues: Option<i64>,
+    valeur_jeton: Option<i64>,
     actif: Option<bool>,
 ) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
@@ -56,6 +63,11 @@ pub fn fidelite_put(
     if let Some(j) = jetons_attribues {
         if !validators::is_valid_jetons_attribues(j) {
             return Err(ApiError::bad_request("Jetons attribués invalides (1-1000)"));
+        }
+    }
+    if let Some(v) = valeur_jeton {
+        if !(1..=1_000_000).contains(&v) {
+            return Err(ApiError::bad_request("Valeur d'un jeton invalide (1-1000000 FC)"));
         }
     }
     let db = db(&state);
@@ -76,19 +88,23 @@ pub fn fidelite_put(
             if let Some(j) = jetons_attribues {
                 updates.insert("jetons_attribues".into(), json!(j));
             }
+            if let Some(v) = valeur_jeton {
+                updates.insert("valeur_jeton".into(), json!(v));
+            }
             if let Some(a) = actif {
                 updates.insert("actif".into(), json!(if a { 1 } else { 0 }));
             }
             db.update("parametres_fidelite", id, &updates)
         }
         None => {
-            if regle_type.is_none() || seuil.is_none() || jetons_attribues.is_none() {
+            if regle_type.is_none() || seuil.is_none() || jetons_attribues.is_none() || valeur_jeton.is_none() {
                 return Err(ApiError::bad_request("Champs requis manquants"));
             }
             let mut row = jmap();
             row.insert("regle_type".into(), json!(regle_type.unwrap()));
             row.insert("seuil".into(), json!(seuil.unwrap()));
             row.insert("jetons_attribues".into(), json!(jetons_attribues.unwrap()));
+            row.insert("valeur_jeton".into(), json!(valeur_jeton.unwrap()));
             row.insert("actif".into(), json!(if actif.unwrap_or(true) { 1 } else { 0 }));
             db.insert("parametres_fidelite", &row)
         }
@@ -117,11 +133,12 @@ pub fn fidelite_create(
     regle_type: String,
     seuil: i64,
     jetons_attribues: i64,
+    valeur_jeton: i64,
     actif: Option<bool>,
 ) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
     admin_only(&user)?;
-    if regle_type.is_empty() || seuil <= 0 || jetons_attribues <= 0 {
+    if regle_type.is_empty() || seuil <= 0 || jetons_attribues <= 0 || valeur_jeton <= 0 {
         return Err(ApiError::bad_request("Champs requis manquants"));
     }
     if !validators::is_valid_regle_type(&regle_type) {
@@ -133,10 +150,14 @@ pub fn fidelite_create(
     if !validators::is_valid_jetons_attribues(jetons_attribues) {
         return Err(ApiError::bad_request("Jetons attribués invalides (1-1000)"));
     }
+    if valeur_jeton > 1_000_000 {
+        return Err(ApiError::bad_request("Valeur d'un jeton invalide (1-1000000 FC)"));
+    }
     let mut row = jmap();
     row.insert("regle_type".into(), json!(regle_type));
     row.insert("seuil".into(), json!(seuil));
     row.insert("jetons_attribues".into(), json!(jetons_attribues));
+    row.insert("valeur_jeton".into(), json!(valeur_jeton));
     row.insert("actif".into(), json!(if actif.unwrap_or(true) { 1 } else { 0 }));
     db(&state).insert("parametres_fidelite", &row)
 }

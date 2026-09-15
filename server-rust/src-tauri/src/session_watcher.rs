@@ -120,7 +120,7 @@ fn check_expired_sessions(app: &tauri::AppHandle, db: &Db) {
                 if let Value::Object(map) = &mut s {
                     map.insert("statut".into(), Value::String("en_cours".into()));
                 }
-                match crate::commands::sessions::finalize_session(db, &s, Some(duree_imposee), true)
+                match crate::commands::sessions::finalize_session(db, &s, Some(duree_imposee), true, None)
                 {
                     Ok(res) => {
                         let montant = res.get("montant").and_then(Value::as_i64).unwrap_or(0);

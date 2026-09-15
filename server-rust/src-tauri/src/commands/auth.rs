@@ -471,11 +471,7 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
     };
     crate::logger::log_auth(&format!("try_supabase_login: {} ms, ok={}", now_ms() - t1, supabase_result.is_ok()));
 
-    let mut user: Option<Value> = None;
-    let mut was_supabase = false;
-    let database = db(&state);
-
-    match supabase_result? {
+    let (user, was_supabase) = match supabase_result? {
         Some(nu) => {
             // User validé par Supabase : réplique vers SQLite pour offline capability
             let database = db(&state);
@@ -506,6 +502,7 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
                 let _ = database.insert("users", &map);
             }
 
+            (Some(nu), true)
         }
         None => {
             // try_supabase_login n'a PAS pu conclure (cloud injoignable après
@@ -513,12 +510,7 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
             // chance avec la base locale (compte seedé) avant d'échouer.
             crate::logger::log_auth("supabase: aucun résultat -> fallback local (seed/copie)…");
             match try_offline_login(&app, &state, &email, &password, false).await? {
-                Some(nu) => {
-                    // Réplique la copie locale comme un user Supabase normal
-                    // (insert/upsert local déjà fait par try_offline_login).
-                    was_supabase = false;
-                    user = Some(nu);
-                }
+                Some(nu) => (Some(nu), false),
                 None => {
                     record_failure(&state, &rate_key);
                     emit_step(&app, "error", "Compte non reconnu");
@@ -526,7 +518,7 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
                 }
             }
         }
-    }
+    };
 
     let user = user.ok_or_else(|| ApiError::unauthorized("Identifiants incorrects"))?;
     clear_failures(&state, &rate_key);

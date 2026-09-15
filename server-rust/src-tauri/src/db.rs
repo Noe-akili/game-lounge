@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS jeux (id INTEGER PRIMARY KEY, titre TEXT, genre TEXT,
 CREATE TABLE IF NOT EXISTS factures (id INTEGER PRIMARY KEY, numero_facture TEXT UNIQUE, session_id INTEGER, joueur_id INTEGER, montant_ht REAL, taux_tva REAL DEFAULT 20, montant_tva REAL, montant_ttc REAL, mode_paiement TEXT, statut TEXT, date_paiement TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS jetons_transactions (id INTEGER PRIMARY KEY, joueur_id INTEGER, quantite INTEGER, type TEXT, raison TEXT, session_id INTEGER, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, titre TEXT, contenu TEXT, auteur TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
-CREATE TABLE IF NOT EXISTS parametres_fidelite (id INTEGER PRIMARY KEY, regle_type TEXT, seuil INTEGER, jetons_attribues INTEGER, actif INTEGER DEFAULT 1, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS parametres_fidelite (id INTEGER PRIMARY KEY, regle_type TEXT, seuil INTEGER, jetons_attribues INTEGER, valeur_jeton INTEGER DEFAULT 100, actif INTEGER DEFAULT 1, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS lignes_facture (id INTEGER PRIMARY KEY, facture_id INTEGER, description TEXT, quantite INTEGER, prix_unitaire INTEGER, total_ligne INTEGER, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS hangouts (id INTEGER PRIMARY KEY, titre TEXT, activite TEXT, prix INTEGER, actif INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT);
@@ -81,6 +81,8 @@ ALTER TABLE consoles ADD COLUMN image_url TEXT; \
 ALTER TABLE jeux ADD COLUMN image_url TEXT; \
 DROP INDEX IF EXISTS idx_users_email_alive; \
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_alive ON users(email) WHERE COALESCE(deleted, 0) = 0;";
+
+const TOKEN_VALUE_MIGRATION: &str = "ALTER TABLE parametres_fidelite ADD COLUMN valeur_jeton INTEGER DEFAULT 100;";
 
 /// Base SQLite partagée + dirty set des tables modifiées localement.
 /// Une table ABSENTE du dirty set est considérée dirty (première sync = push complet).
@@ -277,6 +279,7 @@ impl Db {
         // Colonnes visuels (sticker joueur, image console/jeu) + index unique
         // partiel sur users (fix utilisateurs fantômes). Idempotent.
         let _ = conn.execute_batch(IMAGE_COLUMNS_MIGRATION);
+        let _ = conn.execute_batch(TOKEN_VALUE_MIGRATION);
         // Durée allouée par le tarif (sessions créées avant cette version) :
         // c'est elle qui déclenche l'expiration automatique. Idempotent.
         let _ = conn.execute_batch("ALTER TABLE sessions_jeu ADD COLUMN duree_allouee INTEGER DEFAULT 60;");
@@ -315,6 +318,7 @@ impl Db {
              ALTER TABLE joueurs ADD COLUMN derniere_visite TEXT; \
              ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER;",            );            let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
         let _ = conn.execute_batch(IMAGE_COLUMNS_MIGRATION);
+        let _ = conn.execute_batch(TOKEN_VALUE_MIGRATION);
         let _ = conn.execute_batch("ALTER TABLE sessions_jeu ADD COLUMN duree_allouee INTEGER DEFAULT 60;");
         let _ = conn.execute_batch("ALTER TABLE sessions_jeu ADD COLUMN duree_secondes INTEGER DEFAULT 0;");
         let _ = conn.execute_batch(

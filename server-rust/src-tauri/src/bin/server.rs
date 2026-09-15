@@ -1948,8 +1948,17 @@ fn default_rule() -> Value {
         "regle_type": "temps",
         "seuil": 60,
         "jetons_attribues": 1,
+        "valeur_jeton": 100,
         "actif": true,
     })
+}
+
+fn is_active_flag(value: Option<&Value>) -> bool {
+    value
+        .and_then(Value::as_i64)
+        .map(|v| v == 1)
+        .or_else(|| value.and_then(Value::as_bool))
+        .unwrap_or(false)
 }
 
 async fn fidelite_get(
@@ -1959,10 +1968,9 @@ async fn fidelite_get(
     let token = token_from_headers(&headers);
     let result = (|| -> ApiResult<Value> {
         claims(&state, &token)?;
-        let rule = db(&state).find_one("parametres_fidelite", |r| {
-            let a = r.get("actif").map(|v| !matches!(v, Value::Null)).unwrap_or(false);
-            a
-        })?.unwrap_or_else(default_rule);
+        let rule = db(&state)
+            .find_one("parametres_fidelite", |r| is_active_flag(r.get("actif")))?
+            .unwrap_or_else(default_rule);
         Ok(rule)
     })();
     reply(result)
@@ -1996,6 +2004,7 @@ async fn fidelite_put(
         let regle_type = body.get("regle_type").and_then(Value::as_str).map(|s| s.to_string());
         let seuil = body.get("seuil").and_then(Value::as_i64);
         let jetons_attribues = body.get("jetons_attribues").and_then(Value::as_i64);
+        let valeur_jeton = body.get("valeur_jeton").and_then(Value::as_i64);
         let actif = body.get("actif").and_then(Value::as_bool);
         if let Some(rt) = regle_type.as_deref() {
             if !validators::is_valid_regle_type(rt) {
@@ -2010,6 +2019,11 @@ async fn fidelite_put(
         if let Some(j) = jetons_attribues {
             if !validators::is_valid_jetons_attribues(j) {
                 return Err(ApiError::bad_request("Jetons attribués invalides (1-1000)"));
+            }
+        }
+        if let Some(v) = valeur_jeton {
+            if !(1..=1_000_000).contains(&v) {
+                return Err(ApiError::bad_request("Valeur d'un jeton invalide (1-1000000 FC)"));
             }
         }
         let d = db(&state);
@@ -2027,19 +2041,23 @@ async fn fidelite_put(
                 if let Some(j) = jetons_attribues {
                     updates.insert("jetons_attribues".into(), json!(j));
                 }
+                if let Some(v) = valeur_jeton {
+                    updates.insert("valeur_jeton".into(), json!(v));
+                }
                 if let Some(a) = actif {
                     updates.insert("actif".into(), json!(if a { 1 } else { 0 }));
                 }
                 d.update("parametres_fidelite", id, &updates)
             }
             None => {
-                if regle_type.is_none() || seuil.is_none() || jetons_attribues.is_none() {
+                if regle_type.is_none() || seuil.is_none() || jetons_attribues.is_none() || valeur_jeton.is_none() {
                     return Err(ApiError::bad_request("Champs requis manquants"));
                 }
                 let mut row = jmap();
                 row.insert("regle_type".into(), json!(regle_type.unwrap()));
                 row.insert("seuil".into(), json!(seuil.unwrap()));
                 row.insert("jetons_attribues".into(), json!(jetons_attribues.unwrap()));
+                row.insert("valeur_jeton".into(), json!(valeur_jeton.unwrap()));
                 row.insert("actif".into(), json!(if actif.unwrap_or(true) { 1 } else { 0 }));
                 d.insert("parametres_fidelite", &row)
             }
@@ -2060,8 +2078,9 @@ async fn fidelite_create(
         let regle_type = body.get("regle_type").and_then(Value::as_str).unwrap_or("");
         let seuil = body.get("seuil").and_then(Value::as_i64).unwrap_or(0);
         let jetons_attribues = body.get("jetons_attribues").and_then(Value::as_i64).unwrap_or(0);
+        let valeur_jeton = body.get("valeur_jeton").and_then(Value::as_i64).unwrap_or(0);
         let actif = body.get("actif").and_then(Value::as_bool);
-        if regle_type.is_empty() || seuil <= 0 || jetons_attribues <= 0 {
+        if regle_type.is_empty() || seuil <= 0 || jetons_attribues <= 0 || valeur_jeton <= 0 {
             return Err(ApiError::bad_request("Champs requis manquants"));
         }
         if !validators::is_valid_regle_type(regle_type) {
@@ -2073,10 +2092,14 @@ async fn fidelite_create(
         if !validators::is_valid_jetons_attribues(jetons_attribues) {
             return Err(ApiError::bad_request("Jetons attribués invalides (1-1000)"));
         }
+        if !(1..=1_000_000).contains(&valeur_jeton) {
+            return Err(ApiError::bad_request("Valeur d'un jeton invalide (1-1000000 FC)"));
+        }
         let mut row = jmap();
         row.insert("regle_type".into(), json!(regle_type));
         row.insert("seuil".into(), json!(seuil));
         row.insert("jetons_attribues".into(), json!(jetons_attribues));
+        row.insert("valeur_jeton".into(), json!(valeur_jeton));
         row.insert("actif".into(), json!(if actif.unwrap_or(true) { 1 } else { 0 }));
         db(&state).insert("parametres_fidelite", &row)
     })();

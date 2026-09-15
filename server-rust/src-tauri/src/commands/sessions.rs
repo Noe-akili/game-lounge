@@ -363,6 +363,7 @@ pub fn sessions_terminer(
     state: State<'_, AppState>,
     token: Option<String>,
     id: i64,
+    mode_paiement: Option<String>,
 ) -> ApiResult<Value> {
     claims(&state, &token)?;
     if !validators::is_valid_id(id) {
@@ -370,7 +371,7 @@ pub fn sessions_terminer(
     }
     let db = db(&state);
     let s = get_by_id(db, "sessions_jeu", id, "Session non trouvée")?;
-    finalize_session(db, &s, None, false)
+    finalize_session(db, &s, None, false, mode_paiement)
 }
 
 /// Finalise une session : statut terminee + heure de fin, libère la console,
@@ -389,6 +390,7 @@ pub(crate) fn finalize_session(
     s: &Value,
     duree_imposee: Option<i64>,
     auto: bool,
+    mode_paiement: Option<String>,
 ) -> ApiResult<Value> {
     let id = s
         .get("id")
@@ -484,6 +486,39 @@ pub(crate) fn finalize_session(
     let taux_tva: i64 = 20;
     let montant_tva = montant - montant_ht;
     let now = now_iso();
+    let payment_mode = mode_paiement.as_deref().unwrap_or("especes");
+    if !validators::is_valid_mode_paiement(payment_mode) {
+        return Err(ApiError::bad_request("Mode de paiement invalide"));
+    }
+
+    if payment_mode == "jetons" {
+        let valeur_jeton = db
+            .find_one("parametres_fidelite", |r| is_active_flag(r.get("actif")))?
+            .and_then(|r| r.get("valeur_jeton").and_then(Value::as_i64))
+            .unwrap_or(100);
+        let jetons_requis = jetons_pour_paiement(montant, valeur_jeton);
+        let joueur = get_by_id(db, "joueurs", joueur_id, "Joueur non trouvé")?;
+        let solde = joueur.get("jetons_solde").and_then(Value::as_i64).unwrap_or(0);
+        if solde < jetons_requis {
+            return Err(ApiError::bad_request(format!(
+                "Solde insuffisant : {} jeton(s) requis pour un montant de {} FC (solde: {} jeton(s))",
+                jetons_requis, montant, solde
+            )));
+        }
+        let mut upd_joueur = jmap();
+        upd_joueur.insert("jetons_solde".into(), json!(solde - jetons_requis));
+        db.update("joueurs", joueur_id, &upd_joueur)?;
+
+        let raison = format!("Paiement session #{}", session_id);
+        let mut jtx = jmap();
+        jtx.insert("joueur_id".into(), json!(joueur_id));
+        jtx.insert("type".into(), json!("depense"));
+        jtx.insert("quantite".into(), json!(jetons_requis));
+        jtx.insert("raison".into(), json!(validators::sanitize_input(&raison, 500)));
+        jtx.insert("session_id".into(), json!(session_id));
+        jtx.insert("created_at".into(), json!(now.clone()));
+        db.insert("jetons_transactions", &jtx)?;
+    }
 
     let mut fac = jmap();
     fac.insert("numero_facture".into(), json!(numero_facture));
@@ -493,7 +528,7 @@ pub(crate) fn finalize_session(
     fac.insert("taux_tva".into(), json!(taux_tva));
     fac.insert("montant_tva".into(), json!(montant_tva));
     fac.insert("montant_ttc".into(), json!(montant));
-    fac.insert("mode_paiement".into(), json!("especes"));
+    fac.insert("mode_paiement".into(), json!(payment_mode));
     fac.insert("statut".into(), json!("payee"));
     fac.insert("date_paiement".into(), json!(now.clone()));
     fac.insert("created_at".into(), json!(now.clone()));
@@ -524,10 +559,7 @@ pub(crate) fn finalize_session(
     // Fidélité : règle 'temps' (jetons par tranche de durée jouée) OU règle
     // 'montant' (bonus selon le montant de la session : seuil = montant en FC).
     let mut jetons_gagnes: i64 = 0;
-    if let Some(regle) = db.find_one("parametres_fidelite", |r| {
-        let a = r.get("actif").map(|v| !matches!(v, Value::Null)).unwrap_or(false);
-        a
-    })? {
+    if let Some(regle) = db.find_one("parametres_fidelite", |r| is_active_flag(r.get("actif")))? {
         let jetons = regle
             .get("jetons_attribues")
             .and_then(Value::as_i64)
@@ -591,6 +623,21 @@ pub(crate) fn finalize_session(
         "jetonsGagnes": jetons_gagnes,
         "dureeMinutes": duree_minutes_final,
     }))
+}
+
+fn is_active_flag(value: Option<&Value>) -> bool {
+    value
+        .and_then(Value::as_i64)
+        .map(|v| v == 1)
+        .or_else(|| value.and_then(Value::as_bool))
+        .unwrap_or(false)
+}
+
+fn jetons_pour_paiement(montant: i64, valeur_jeton: i64) -> i64 {
+    if montant <= 0 || valeur_jeton <= 0 {
+        return 0;
+    }
+    ((montant as f64 / valeur_jeton as f64).ceil() as i64).max(1)
 }
 
 /// PUT /api/sessions/:id
