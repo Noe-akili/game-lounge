@@ -227,6 +227,27 @@ fn initial_sync_completed(db: &crate::db::Db) -> bool {
     db.get_setting("initial_sync_completed").ok().and_then(|o| o).unwrap_or_default() == "1"
 }
 
+/// POST /api/sync/initial-skip : BYPASS de l'écran d'initialisation. Marque la
+/// première sync comme faite SANS restaurer le cloud — utilisé quand l'appareil
+/// est hors ligne / cloud injoignable et que l'utilisateur choisit de travailler
+/// avec les données locales au lieu de rester bloqué sur /initialisation.
+/// Les données cloud manquantes seront récupérées au retour du réseau : le
+/// curseur reste à 0, donc la prochaine sync repasse en delta/snapshot (pull du
+/// journal complet, ou pull_all si trou de séquence) — rien n'est perdu.
+#[tauri::command]
+pub fn sync_initial_skip(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    let _ = db(&state).set_setting("initial_sync_completed", "1");
+    crate::logger::log_sync(&format!("initial sync: SKIPPÉE par {} (mode local, reprise delta au retour du réseau)", user.email));
+    eprintln!("[sync] initial sync skipped by {}", user.email);
+    Ok(json!({
+        "success": true,
+        "initialSyncCompleted": true,
+        "message": "Initialisation ignorée — données locales utilisées",
+        "timestamp": now_iso()
+    }))
+}
+
 /// Expose l'état d'initialisation au frontend (mission §5) : réutilise la structure
 /// existante (app_settings + curseur sync_state), ne crée AUCUNE nouvelle table.
 #[tauri::command]

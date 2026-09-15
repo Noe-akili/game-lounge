@@ -177,6 +177,9 @@ const ROUTES: RouteDef[] = [
   { m: 'GET', p: '/sync/poll', f: ({ token }) => ({ cmd: 'sync_poll', args: { token } }) },
   // État de l'initial (première sync faite ? quelles tables ?) — mission §5
   { m: 'GET', p: '/sync/initial-status', f: ({ token }) => ({ cmd: 'sync_initial_status', args: { token } }) },
+  // BYPASS écran d'initialisation (hors ligne) : marque l'init comme faite,
+  // travaille en local ; la reprise cloud se fera au retour du réseau.
+  { m: 'POST', p: '/sync/initial-skip', f: ({ token }) => ({ cmd: 'sync_initial_skip', args: { token } }) },
 ]
 
 function compile(pattern: string): RegExp {

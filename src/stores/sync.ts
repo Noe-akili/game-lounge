@@ -173,6 +173,23 @@ export const useSyncStore = defineStore('sync', () => {
     return initialSyncCompleted.value
   }
 
+  /// BYPASS écran d'initialisation (hors ligne / cloud injoignable) : marque
+  /// l'init comme faite côté Rust (sync_initial_skip) et repasse en "completed"
+  /// pour sortir de l'écran. Les données cloud manquantes seront récupérées au
+  /// retour du réseau (curseur non avancé -> reprise en delta/snapshot).
+  async function skipInitialSync(): Promise<boolean> {
+    try {
+      const { api } = await import('@/utils/api')
+      await api.post('/sync/initial-skip')
+      initialSyncCompleted.value = true
+      status.value = 'completed'
+      return true
+    } catch (e: any) {
+      error.value = e?.message || 'Impossible de passer en mode local'
+      return false
+    }
+  }
+
   async function startInitialSync() {
     try {
       const { api } = await import('@/utils/api')
@@ -191,7 +208,7 @@ export const useSyncStore = defineStore('sync', () => {
   return {
     status, phase, current, total, percent, processed, message, error,
     initialSyncCompleted, tablesDone, isBusy,
-    bindListeners, fetchInitialStatus, startInitialSync, markOffline, reset,
+    bindListeners, fetchInitialStatus, startInitialSync, skipInitialSync, markOffline, reset,
     onPollDetail, onProgress, onError, onCompleted,
   }
 })

@@ -46,9 +46,14 @@
         <p class="text-neon-red font-medium">Impossible de récupérer les données.</p>
         <p class="text-xs text-txt-dim">{{ sync.error || 'Vérifiez votre connexion internet.' }}</p>
         <div class="flex gap-3">
-          <button @click="retry" :disabled="retrying" class="btn-neon-violet w-full flex items-center justify-center gap-2">
+          <button @click="retry" :disabled="retrying || skipping" class="btn-neon-violet w-full flex items-center justify-center gap-2">
             <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': retrying }" />
             Réessayer
+          </button>
+          <button @click="skip" :disabled="retrying || skipping" class="btn-neon-outline w-full flex items-center justify-center gap-2">
+            <FastForward v-if="!skipping" class="w-4 h-4" />
+            <Loader2 v-else class="w-4 h-4 animate-spin" />
+            Continuer hors ligne
           </button>
         </div>
         <p class="text-[11px] text-txt-dim">La synchronisation reprendra où elle s'est arrêtée — aucune donnée n'est perdue.</p>
@@ -65,7 +70,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { motion } from 'motion-v'
 import { useRouter } from 'vue-router'
-import { CheckCircle2, Circle, Loader2, CloudOff, RefreshCw } from 'lucide-vue-next'
+import { CheckCircle2, Circle, Loader2, CloudOff, RefreshCw, FastForward } from 'lucide-vue-next'
 import { useSyncStore, SYNC_PHASES, PHASE_LABELS } from '@/stores/sync'
 import { useSettingsStore } from '@/stores/settings'
 
@@ -73,6 +78,7 @@ const router = useRouter()
 const sync = useSyncStore()
 const settings = useSettingsStore()
 const retrying = ref(false)
+const skipping = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const progressPct = computed(() => {
@@ -106,6 +112,17 @@ async function retry() {
   try { await sync.startInitialSync() } finally { retrying.value = false }
 }
 
+/// BYPASS (hors ligne) : marque l'initialisation comme faite côté Rust et
+/// continue avec les données locales. Les données cloud manquantes seront
+/// récupérées au retour du réseau (reprise delta/snapshot automatique).
+async function skip() {
+  skipping.value = true
+  try {
+    const ok = await sync.skipInitialSync()
+    if (ok) { sync.status = 'completed'; setTimeout(goNext, 400) }
+  } finally { skipping.value = false }
+}
+
 function goNext() {
   // Mission §12 : une fois l'init terminée, jamais revu — l'app va directement
   // à l'interface admin.
@@ -130,6 +147,18 @@ onMounted(async () => {
         sync.status = 'error'
         sync.error = r.last_sync.message || 'Synchronisation interrompue'
       }
+      // Filet anti-blocage : si Rust ne tourne PAS et que le flag n'est pas
+      // posé alors que la sync initiale était en cours, on repasse en erreur
+      // (sinon l'écran reste bloqué sur "en cours" pour toujours).
+      if (sync.status === 'syncing' || sync.status === 'initializing') {
+        if (r?.last_sync?.running === false && !r?.last_sync?.running && sync.initialSyncCompleted === false) {
+          // running=false SANS résultat enregistré = sync jamais démarrée
+          if (!r?.last_sync?.step && !r?.last_sync?.started_at) {
+            sync.status = 'error'
+            sync.error = "La synchronisation n'a pas pu démarrer (cloud injoignable). Utilisez 'Continuer hors ligne'."
+          }
+        }
+      }
       // Re-vérifie le flag de complétion (écrit par Rust en fin d'init)
       if (sync.status === 'syncing' || sync.status === 'initializing') {
         const done = sync.tablesDone.length >= SYNC_PHASES.length
@@ -143,7 +172,8 @@ onMounted(async () => {
       }
     } catch {}
   }, 2500)
-  // Filet de fin : si le flag passe à true pendant qu'on regarde, on continue
+  // Filet de fin : si le flag passe à true pendant qu'on regarde (sync
+  // terminée OU skip demandé depuis un autre écran), on sort automatiquement.
   const finishWatcher = setInterval(async () => {
     if (sync.status === 'completed') { clearInterval(finishWatcher); return }
     await sync.fetchInitialStatus()
@@ -152,6 +182,8 @@ onMounted(async () => {
       setTimeout(goNext, 800)
     }
   }, 4000)
+  // Filet universel : flag Rust posé (skip depuis un autre écran) -> sortie
+  setTimeout(() => clearInterval(finishWatcher), 15 * 60 * 1000)
   setTimeout(() => clearInterval(finishWatcher), 15 * 60 * 1000)
 })
 

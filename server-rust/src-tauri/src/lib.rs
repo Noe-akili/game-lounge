@@ -362,6 +362,7 @@ pub fn run() {
             commands::sync_run,
             commands::sync_poll,
             commands::sync::sync_initial_status,
+            commands::sync::sync_initial_skip,
         ])
         .run(tauri::generate_context!())
         .expect("erreur lors de l'exécution de Tauri");
