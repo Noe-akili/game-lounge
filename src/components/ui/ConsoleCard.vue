@@ -4,7 +4,7 @@
     :animate="{ opacity: 1, y: 0 }"
     :whileHover="{ y: -4, scale: 1.01 }"
     :transition="{ duration: 0.25, ease: 'easeOut' }"
-    class="card-hover relative overflow-hidden group cursor-pointer w-full max-w-full min-w-0 box-border"
+    class="card-hover relative isolate overflow-hidden group cursor-pointer w-full max-w-full min-w-0 box-border"
   >
     <motion.div class="absolute top-0 left-0 w-full h-1" :class="statusBarColor" :animate="isOccupied ? { opacity: [1, 0.6, 1] } : {}" :transition="{ duration: 1.5, repeat: Infinity }" />
 

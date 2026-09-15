@@ -17,6 +17,7 @@ use crate::AppState;
 
 const LOGIN_WINDOW_MS: i64 = 15 * 60 * 1000;
 const LOGIN_MAX_FAILURES: usize = 20;
+const CLOUD_LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(70);
 /// Au-delà de ce délai, la comparaison de mot de passe est abandonnée
 /// (scrypt N=16384 peut prendre 2-3s+ sur téléphone low-end ; on borne pour
 /// ne jamais dépasser le timeout IPC du frontend).
@@ -444,14 +445,80 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
     emit_step(&app, "backend", "Identifiants reçus — vérification en cours…");
 
     // =====================================================================
-    // CHEMIN RAPIDE LOCAL (OBLIGATOIRE sur APK) : ne JAMAIS attendre le réseau
-    // pour un compte déjà présent en SQLite (seed admin ou login cloud passé).
-    // C'est LA cause du "Une minute écoulée sans réponse" : try_supabase_login
-    // bloquait sur TLS/DNS Android pendant 30-60s avant le fallback offline.
+    // FLUX SIMPLIFIÉ ET DIRECT : si le pool Supabase est disponible, on vérifie
+    // l'utilisateur exact par email dans public.users, puis le hash de mot de
+    // passe. Le local n'est utilisé qu'en secours hors ligne / copie locale.
     // =====================================================================
     let database = db(&state);
     // Garantit le seed même si le boot l'a raté (race / hash lent).
     ensure_default_admin(&database);
+
+    #[cfg(feature = "supabase-sync")]
+    {
+        if let Some(pool) = state.supabase_pool.lock().ok().and_then(|g| g.clone()) {
+            match crate::supabase::fetch_supabase_user(&pool, &email).await {
+                Ok(Some(cloud_user)) => {
+                    let stored = cloud_user.password_hash.clone();
+                    if !stored.is_empty() && hash_algo(&stored) != "inconnu" {
+                        emit_step(&app, "cloud", "Compte trouvé sur Supabase — vérification du mot de passe…");
+                        let valid = compare_bounded(password.clone(), stored.clone()).await;
+                        if valid {
+                            crate::logger::log_auth(&format!("SUPABASE_DIRECT_OK {} ({} ms)", email, now_ms() - t0));
+                            clear_failures(&state, &rate_key);
+                            let mut map = jmap();
+                            map.insert("id".into(), json!(cloud_user.id));
+                            map.insert("email".into(), json!(cloud_user.email));
+                            map.insert("password_hash".into(), json!(stored));
+                            map.insert("role".into(), json!(cloud_user.role));
+                            map.insert("nom".into(), json!(cloud_user.nom));
+                            if let Some(ca) = cloud_user.created_at.clone() { map.insert("created_at".into(), json!(ca)); }
+                            let existing = database.find_one("users", |r| r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(&email)))?;
+                            if let Some(existing) = existing {
+                                let mut updates = jmap();
+                                updates.insert("role".into(), json!(cloud_user.role));
+                                updates.insert("nom".into(), json!(cloud_user.nom));
+                                updates.insert("password_hash".into(), json!(stored));
+                                let _ = database.update("users", existing.get("id").and_then(Value::as_i64).unwrap(), &updates);
+                            } else {
+                                let _ = database.insert("users", &map);
+                            }
+                            let c = auth_core::Claims {
+                                id: cloud_user.id,
+                                email: cloud_user.email.clone(),
+                                role: cloud_user.role.clone(),
+                                nom: cloud_user.nom.clone(),
+                                iat: 0,
+                                exp: 0,
+                            };
+                            let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
+                            return Ok(json!({
+                                "token": access,
+                                "refresh_token": refresh,
+                                "user": json!({
+                                    "id": cloud_user.id,
+                                    "email": cloud_user.email,
+                                    "role": cloud_user.role,
+                                    "nom": cloud_user.nom,
+                                    "created_at": cloud_user.created_at,
+                                }),
+                                "source": "supabase",
+                            }));
+                        }
+                        record_failure(&state, &rate_key);
+                        emit_step(&app, "error", "Mot de passe incorrect");
+                        return Err(ApiError::unauthorized("Identifiants incorrects"));
+                    }
+                }
+                Ok(None) => {
+                    emit_step(&app, "cloud", "Compte absent de Supabase — essai local…");
+                }
+                Err(e) => {
+                    crate::logger::log_auth(&format!("supabase direct lookup failed for {}: {}", email, e));
+                    emit_step(&app, "cloud", "Recherche cloud instable — secours local…");
+                }
+            }
+        }
+    }
 
     if let Ok(Some(local_user)) = database.find_one("users", |r| {
         r.get("email").and_then(Value::as_str).is_some_and(|e| e.eq_ignore_ascii_case(&email))
@@ -505,16 +572,16 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
         emit_step(&app, "local", "Compte absent de l'appareil — essai serveur…");
     }
 
-    // --- CLOUD borné à 12s max : plus JAMAIS de hang d'une minute ---
+    // --- CLOUD borné : couvre l'initialisation TLS, le retry et le fallback ---
     let t1 = now_ms();
     let supabase_result = match tokio::time::timeout(
-        std::time::Duration::from_secs(12),
+        CLOUD_LOGIN_TIMEOUT,
         try_supabase_login(&app, &state, &email, &password),
     ).await {
         Ok(r) => r,
         Err(_) => {
-            crate::logger::log_auth("try_supabase_login HARD TIMEOUT 12s");
-            emit_step(&app, "error", "Serveur trop lent (12s) — réessayez ou utilisez le compte local");
+            crate::logger::log_auth("try_supabase_login HARD TIMEOUT (70s)");
+            emit_step(&app, "error", "Serveur trop lent (70s) — réessayez ou utilisez le compte local");
             Err(ApiError::service_unavailable(
                 "Serveur injoignable ou trop lent. Vérifiez Internet, ou connectez-vous avec le compte local (noeakili@gmail.com).",
             ))
@@ -557,8 +624,6 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
                 let _ = database.insert("users", &map);
             }
 
-            was_supabase = nu.get("_source").and_then(Value::as_str) != Some("offline");
-            user = Some(nu);
         }
         None => {
             // try_supabase_login n'a PAS pu conclure (cloud injoignable après
