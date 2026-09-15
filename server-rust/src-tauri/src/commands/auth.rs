@@ -445,132 +445,14 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
     emit_step(&app, "backend", "Identifiants reçus — vérification en cours…");
 
     // =====================================================================
-    // FLUX SIMPLIFIÉ ET DIRECT : si le pool Supabase est disponible, on vérifie
-    // l'utilisateur exact par email dans public.users, puis le hash de mot de
-    // passe. Le local n'est utilisé qu'en secours hors ligne / copie locale.
+    // FLUX DIRECT : la tentative cloud est toujours prioritaire au clic.
+    // La copie SQLite ne sert qu'en secours si Supabase est indisponible.
     // =====================================================================
     let database = db(&state);
     // Garantit le seed même si le boot l'a raté (race / hash lent).
     ensure_default_admin(&database);
 
-    #[cfg(feature = "supabase-sync")]
-    {
-        if let Some(pool) = state.supabase_pool.lock().ok().and_then(|g| g.clone()) {
-            match crate::supabase::fetch_supabase_user(&pool, &email).await {
-                Ok(Some(cloud_user)) => {
-                    let stored = cloud_user.password_hash.clone();
-                    if !stored.is_empty() && hash_algo(&stored) != "inconnu" {
-                        emit_step(&app, "cloud", "Compte trouvé sur Supabase — vérification du mot de passe…");
-                        let valid = compare_bounded(password.clone(), stored.clone()).await;
-                        if valid {
-                            crate::logger::log_auth(&format!("SUPABASE_DIRECT_OK {} ({} ms)", email, now_ms() - t0));
-                            clear_failures(&state, &rate_key);
-                            let mut map = jmap();
-                            map.insert("id".into(), json!(cloud_user.id));
-                            map.insert("email".into(), json!(cloud_user.email));
-                            map.insert("password_hash".into(), json!(stored));
-                            map.insert("role".into(), json!(cloud_user.role));
-                            map.insert("nom".into(), json!(cloud_user.nom));
-                            if let Some(ca) = cloud_user.created_at.clone() { map.insert("created_at".into(), json!(ca)); }
-                            let existing = database.find_one("users", |r| r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(&email)))?;
-                            if let Some(existing) = existing {
-                                let mut updates = jmap();
-                                updates.insert("role".into(), json!(cloud_user.role));
-                                updates.insert("nom".into(), json!(cloud_user.nom));
-                                updates.insert("password_hash".into(), json!(stored));
-                                let _ = database.update("users", existing.get("id").and_then(Value::as_i64).unwrap(), &updates);
-                            } else {
-                                let _ = database.insert("users", &map);
-                            }
-                            let c = auth_core::Claims {
-                                id: cloud_user.id,
-                                email: cloud_user.email.clone(),
-                                role: cloud_user.role.clone(),
-                                nom: cloud_user.nom.clone(),
-                                iat: 0,
-                                exp: 0,
-                            };
-                            let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
-                            return Ok(json!({
-                                "token": access,
-                                "refresh_token": refresh,
-                                "user": json!({
-                                    "id": cloud_user.id,
-                                    "email": cloud_user.email,
-                                    "role": cloud_user.role,
-                                    "nom": cloud_user.nom,
-                                    "created_at": cloud_user.created_at,
-                                }),
-                                "source": "supabase",
-                            }));
-                        }
-                        record_failure(&state, &rate_key);
-                        emit_step(&app, "error", "Mot de passe incorrect");
-                        return Err(ApiError::unauthorized("Identifiants incorrects"));
-                    }
-                }
-                Ok(None) => {
-                    emit_step(&app, "cloud", "Compte absent de Supabase — essai local…");
-                }
-                Err(e) => {
-                    crate::logger::log_auth(&format!("supabase direct lookup failed for {}: {}", email, e));
-                    emit_step(&app, "cloud", "Recherche cloud instable — secours local…");
-                }
-            }
-        }
-    }
-
-    if let Ok(Some(local_user)) = database.find_one("users", |r| {
-        r.get("email").and_then(Value::as_str).is_some_and(|e| e.eq_ignore_ascii_case(&email))
-            && r.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 0
-    }) {
-        let stored = local_user.get("password_hash").and_then(Value::as_str).unwrap_or("").to_string();
-        if !stored.is_empty() && hash_algo(&stored) != "inconnu" {
-            emit_step(&app, "local", "Compte trouvé sur l'appareil — vérification du mot de passe…");
-            let valid = compare_bounded(password.clone(), stored.clone()).await;
-            if valid {
-                crate::logger::log_auth(&format!("LOCAL_FAST_OK {} ({} ms)", email, now_ms() - t0));
-                emit_step(&app, "success", "Connecté (vérification locale) ✓");
-                clear_failures(&state, &rate_key);
-                if auth_core::needs_rehash(&stored) {
-                    let pwd_for_hash = password.clone();
-                    if let Ok(Ok(upgraded)) = tokio::task::spawn_blocking(move || auth_core::hash_password(&pwd_for_hash)).await {
-                        let mut upd = jmap();
-                        upd.insert("password_hash".into(), json!(upgraded));
-                        if let Some(id) = local_user.get("id").and_then(Value::as_i64) {
-                            let _ = database.update("users", id, &upd);
-                        }
-                    }
-                }
-                let c = auth_core::Claims {
-                    id: local_user.get("id").and_then(Value::as_i64).unwrap_or(0),
-                    email: local_user.get("email").and_then(Value::as_str).unwrap_or("").to_string(),
-                    role: local_user.get("role").and_then(Value::as_str).unwrap_or("employe").to_string(),
-                    nom: local_user.get("nom").and_then(Value::as_str).unwrap_or("").to_string(),
-                    iat: 0,
-                    exp: 0,
-                };
-                let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
-                return Ok(json!({
-                    "token": access,
-                    "refresh_token": refresh,
-                    "user": user_public(&local_user),
-                    "source": "local",
-                }));
-            }
-            // Mauvais mot de passe local : pour le compte seed, on refuse tout de suite
-            // (pas de hang réseau). Pour les autres, essai cloud borné.
-            if email.eq_ignore_ascii_case(DEFAULT_ADMIN_EMAIL) {
-                record_failure(&state, &rate_key);
-                emit_step(&app, "error", "Mot de passe incorrect");
-                return Err(ApiError::unauthorized("Identifiants incorrects"));
-            }
-            crate::logger::log_auth(&format!("local password mismatch for {}, fallback cloud borné", email));
-            emit_step(&app, "local", "Mot de passe local différent — essai serveur (max 12s)…");
-        }
-    } else {
-        emit_step(&app, "local", "Compte absent de l'appareil — essai serveur…");
-    }
+    emit_step(&app, "cloud", "Connexion à Supabase — recherche du compte…");
 
     // --- CLOUD borné : couvre l'initialisation TLS, le retry et le fallback ---
     let t1 = now_ms();

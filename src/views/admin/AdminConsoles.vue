@@ -19,9 +19,9 @@
     <div v-else class="space-y-2 w-full max-w-full min-w-0 overflow-hidden">
       <div v-for="c in consoles" :key="c.id" class="card relative isolate min-h-28 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden flex-wrap">
         <!-- Image de couverture (item 6) : arrière-plan + overlay, texte lisible. -->
-        <div v-if="c.image_url" class="absolute inset-0 z-0">
+        <div v-if="c.image_url && !imgErr[c.id]" class="absolute inset-0 z-0">
           <img :src="c.image_url" alt="" class="w-full h-full object-cover" @error="imgErr[c.id] = true" v-show="!imgErr[c.id]" />
-          <div class="absolute inset-0 bg-gradient-to-r from-bg via-bg/80 to-bg/35"></div>
+          <div class="absolute inset-0 bg-gradient-to-r from-bg/45 via-bg/10 to-transparent"></div>
         </div>
         <div class="relative z-10 flex w-full min-w-0 flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
         <div class="w-12 h-12 rounded-xl bg-black/35 backdrop-blur-sm flex items-center justify-center shrink-0">

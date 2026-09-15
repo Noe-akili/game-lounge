@@ -10,9 +10,9 @@
 
     <!-- Image de couverture (item 6) : visuel principal en arrière-plan, texte
          lisible par-dessus via un dégradé ; fallback icône si absente/invalide. -->
-    <div v-if="console.image_url" class="absolute inset-0 z-0">
+    <div v-if="console.image_url && !imgFailed" class="absolute inset-0 z-0">
       <img :src="console.image_url" alt="" class="w-full h-full object-cover" @error="imgFailed = true" v-show="!imgFailed" />
-      <div class="absolute inset-0 bg-gradient-to-t from-bg via-bg/80 to-bg/30"></div>
+      <div class="absolute inset-0 bg-gradient-to-t from-bg/55 via-bg/15 to-transparent"></div>
     </div>
 
     <div class="relative z-10 flex items-center justify-between gap-2 mb-3 min-w-0">
