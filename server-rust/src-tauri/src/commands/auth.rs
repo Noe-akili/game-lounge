@@ -20,7 +20,7 @@ const LOGIN_MAX_FAILURES: usize = 20;
 /// Au-delà de ce délai, la comparaison de mot de passe est abandonnée
 /// (scrypt N=16384 peut prendre 2-3s+ sur téléphone low-end ; on borne pour
 /// ne jamais dépasser le timeout IPC du frontend).
-const COMPARE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const COMPARE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 fn now_ms() -> i64 { chrono::Utc::now().timestamp_millis() }
 
@@ -55,6 +55,8 @@ fn seed_impl(db: &crate::db::Db) {
             u.insert("password_hash".into(), json!(hash));
             u.insert("nom".into(), json!(DEFAULT_ADMIN_NOM));
             u.insert("role".into(), json!(DEFAULT_ADMIN_ROLE));
+            u.insert("created_at".into(), json!(crate::db::now_iso()));
+            u.insert("deleted".into(), json!(0));
             match db.insert("users", &u) {
                 Ok(_) => crate::logger::log_auth("seed: compte par défaut créé (noeakili@gmail.com)"),
                 Err(e) => crate::logger::log_auth(&format!("seed: ÉCHEC création compte par défaut: {e}")),
@@ -114,7 +116,7 @@ async fn compare_bounded(password: String, stored: String) -> bool {
         Ok(Ok(valid)) => valid,
         Ok(Err(_)) => false,
         Err(_) => {
-            crate::logger::log("auth", "compare_password TIMEOUT (>5s) - abandon");
+            crate::logger::log("auth", "compare_password TIMEOUT (>15s) - abandon");
             false
         }
     }
@@ -372,9 +374,83 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
 
     emit_step(&app, "backend", "Identifiants reçus — vérification en cours…");
 
-    // --- ALLER DIRECTEMENT vers Supabase, aucun check SQLite préalable ---
+    // =====================================================================
+    // CHEMIN RAPIDE LOCAL (OBLIGATOIRE sur APK) : ne JAMAIS attendre le réseau
+    // pour un compte déjà présent en SQLite (seed admin ou login cloud passé).
+    // C'est LA cause du "Une minute écoulée sans réponse" : try_supabase_login
+    // bloquait sur TLS/DNS Android pendant 30-60s avant le fallback offline.
+    // =====================================================================
+    let database = db(&state);
+    // Garantit le seed même si le boot l'a raté (race / hash lent).
+    ensure_default_admin(&database);
+
+    if let Ok(Some(local_user)) = database.find_one("users", |r| {
+        r.get("email").and_then(Value::as_str).is_some_and(|e| e.eq_ignore_ascii_case(&email))
+            && r.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 0
+    }) {
+        let stored = local_user.get("password_hash").and_then(Value::as_str).unwrap_or("").to_string();
+        if !stored.is_empty() && hash_algo(&stored) != "inconnu" {
+            emit_step(&app, "local", "Compte trouvé sur l'appareil — vérification du mot de passe…");
+            let valid = compare_bounded(password.clone(), stored.clone()).await;
+            if valid {
+                crate::logger::log_auth(&format!("LOCAL_FAST_OK {} ({} ms)", email, now_ms() - t0));
+                emit_step(&app, "success", "Connecté (vérification locale) ✓");
+                clear_failures(&state, &rate_key);
+                if auth_core::needs_rehash(&stored) {
+                    let pwd_for_hash = password.clone();
+                    if let Ok(Ok(upgraded)) = tokio::task::spawn_blocking(move || auth_core::hash_password(&pwd_for_hash)).await {
+                        let mut upd = jmap();
+                        upd.insert("password_hash".into(), json!(upgraded));
+                        if let Some(id) = local_user.get("id").and_then(Value::as_i64) {
+                            let _ = database.update("users", id, &upd);
+                        }
+                    }
+                }
+                let c = auth_core::Claims {
+                    id: local_user.get("id").and_then(Value::as_i64).unwrap_or(0),
+                    email: local_user.get("email").and_then(Value::as_str).unwrap_or("").to_string(),
+                    role: local_user.get("role").and_then(Value::as_str).unwrap_or("employe").to_string(),
+                    nom: local_user.get("nom").and_then(Value::as_str).unwrap_or("").to_string(),
+                    iat: 0,
+                    exp: 0,
+                };
+                let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
+                return Ok(json!({
+                    "token": access,
+                    "refresh_token": refresh,
+                    "user": user_public(&local_user),
+                    "source": "local",
+                }));
+            }
+            // Mauvais mot de passe local : pour le compte seed, on refuse tout de suite
+            // (pas de hang réseau). Pour les autres, essai cloud borné.
+            if email.eq_ignore_ascii_case(DEFAULT_ADMIN_EMAIL) {
+                record_failure(&state, &rate_key);
+                emit_step(&app, "error", "Mot de passe incorrect");
+                return Err(ApiError::unauthorized("Identifiants incorrects"));
+            }
+            crate::logger::log_auth(&format!("local password mismatch for {}, fallback cloud borné", email));
+            emit_step(&app, "local", "Mot de passe local différent — essai serveur (max 12s)…");
+        }
+    } else {
+        emit_step(&app, "local", "Compte absent de l'appareil — essai serveur…");
+    }
+
+    // --- CLOUD borné à 12s max : plus JAMAIS de hang d'une minute ---
     let t1 = now_ms();
-    let supabase_result = try_supabase_login(&app, &state, &email, &password).await;
+    let supabase_result = match tokio::time::timeout(
+        std::time::Duration::from_secs(12),
+        try_supabase_login(&app, &state, &email, &password),
+    ).await {
+        Ok(r) => r,
+        Err(_) => {
+            crate::logger::log_auth("try_supabase_login HARD TIMEOUT 12s");
+            emit_step(&app, "error", "Serveur trop lent (12s) — réessayez ou utilisez le compte local");
+            Err(ApiError::service_unavailable(
+                "Serveur injoignable ou trop lent. Vérifiez Internet, ou connectez-vous avec le compte local (noeakili@gmail.com).",
+            ))
+        }
+    };
     crate::logger::log_auth(&format!("try_supabase_login: {} ms, ok={}", now_ms() - t1, supabase_result.is_ok()));
 
     let mut user: Option<Value> = None;

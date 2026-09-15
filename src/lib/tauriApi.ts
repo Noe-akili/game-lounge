@@ -25,7 +25,7 @@ function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<any> {
   // auth_login : le backend peut enchaîner init pool (≈28s worst case offline)
   // + fetch + reconnexion + retry (≈68s worst case) -> timeout à 70s pour ne
   // JAMAIS abandonner avant le verdict 60s de l'utilisateur.
-  const timeoutMs = cmd === 'auth_login' ? 70000 : cmd === 'auth_refresh' || cmd === 'users_create' || cmd === 'users_update' ? 20000 : 10000
+  const timeoutMs = cmd === 'auth_login' ? 25000 : cmd === 'auth_refresh' || cmd === 'users_create' || cmd === 'users_update' ? 20000 : 10000
   return Promise.race([
     fn(cmd, args).then((r:any)=>{ console.log('[TAURI_INVOKE_SUCCESS]', cmd); return r; }).catch((e:any)=>{ console.warn('[TAURI_INVOKE_ERROR]', cmd, e); throw e; }),
     new Promise((_, reject) => setTimeout(() => { console.warn('[TAURI_INVOKE_ERROR] timeout', cmd); reject({ message: 'Timeout IPC (Android WebView)', status: 504 }) }, timeoutMs))

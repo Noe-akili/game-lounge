@@ -171,7 +171,7 @@ function bindLoginSteps() {
 }
 
 // ============ COMPTE À REBOURS 60s + VERDICT UNIQUE ============
-const LOGIN_TIMEOUT_S = 60
+const LOGIN_TIMEOUT_S = 20
 const countdownActive = ref(false)
 const remaining = ref(LOGIN_TIMEOUT_S)
 const verdict = ref('')
@@ -226,9 +226,9 @@ function announceVerdict() {
     verdict.value = pendingError
     loginPending.value = false
   } else if (fromCountdown && remaining.value <= 0) {
-    // 60s écoulées sans réponse du backend : on l'annonce clairement.
+    // Timeout sans réponse backend.
     success.value = false
-    verdict.value = '⏱ Une minute écoulée sans réponse du serveur. Vérifiez votre connexion internet et réessayez.'
+    verdict.value = "Aucune réponse du backend (20s). Compte local : noeakili@gmail.com / mdp1234 — si ça bloque encore, rebuild + réinstalle l'APK."
     loginPending.value = false
   }
 }

@@ -45,15 +45,28 @@ pub struct AppState {
 
 /// A release APK must never use a predictable JWT signing key. When no
 /// deployment secret is present, keep tokens valid only for this app process.
-fn runtime_jwt_secret() -> String {
-    std::env::var("JWT_SECRET")
-        .ok()
-        .filter(|secret| secret.len() >= 32)
-        .unwrap_or_else(|| {
-            let mut bytes = [0u8; 32];
-            rand::thread_rng().fill_bytes(&mut bytes);
-            URL_SAFE_NO_PAD.encode(bytes)
-        })
+/// JWT secret STABLE sur l'appareil (persisté dans SQLite).
+/// Sans ça, chaque redémarrage de l'APK invente un secret neuf et invalide
+/// tous les tokens -> retour forcé sur l'écran login.
+fn runtime_jwt_secret(db: &crate::db::Db) -> String {
+    if let Ok(secret) = std::env::var("JWT_SECRET") {
+        if secret.len() >= 32 {
+            let _ = db.set_setting("jwt_secret", &secret);
+            return secret;
+        }
+    }
+    if let Ok(Some(stored)) = db.get_setting("jwt_secret") {
+        if stored.len() >= 32 {
+            return stored;
+        }
+    }
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    let generated = URL_SAFE_NO_PAD.encode(bytes);
+    if let Err(e) = db.set_setting("jwt_secret", &generated) {
+        eprintln!("WARNING: impossible de persister jwt_secret: {e}");
+    }
+    generated
 }
 fn open_db(app: &tauri::AppHandle) -> Result<Db, Box<dyn std::error::Error>> {
     // 1. DATADIR env (tests / debug http-server)
@@ -184,7 +197,7 @@ pub fn run() {
             // Charge .env avant de lire JWT_SECRET (desktop/diagnostic).
             #[cfg(feature = "supabase-sync")]
             let _ = dotenvy::dotenv();
-            let jwt_secret = runtime_jwt_secret();
+            let jwt_secret = runtime_jwt_secret(&db);
             // Canal de réveil de la sync instantanée : créé AVANT le move de `db` dans
             // AppState (le sender est branché dans Db, le receiver va au worker).
             #[cfg(feature = "supabase-sync")]

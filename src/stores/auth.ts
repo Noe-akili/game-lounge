@@ -137,9 +137,13 @@ export const useAuthStore = defineStore('auth', () => {
    de synchronisation, pas de réseau requis ici.
    */
   function restoreSession(): Promise<boolean> {
-    // Aucune session locale automatique au boot : on affiche toujours l'écran login.
-    // La session peut être restaurée côté serveur si besoin, mais l'UI montre
-    // toujours le formulaire de connexion en premier.
+    // JWT désormais stable entre redémarrages : si token+user locaux présents,
+    // on restaure la session (plus de secret aléatoire qui invalidait tout).
+    if (token.value && user.value) {
+      state.value = 'authenticated'
+      log('AUTH', 'session locale restaurée')
+      return Promise.resolve(true)
+    }
     state.value = 'unauthenticated'
     log('AUTH', 'aucune session locale au boot -> écran login')
     return Promise.resolve(false)
