@@ -78,6 +78,10 @@
             <input v-model.number="form.jetons_attribues" type="number" class="input-field w-full max-w-full min-w-0" />
           </div>
         </div>
+        <div class="min-w-0 w-full max-w-full">
+          <label class="text-sm text-txt-muted">Valeur d'un jeton (FC)</label>
+          <input v-model.number="form.valeur_jeton" type="number" min="1" class="input-field w-full max-w-full min-w-0" />
+        </div>
         <p v-if="form.regle_type === 'montant'" class="text-xs text-txt-dim">
           À chaque {{ formatCurrency(form.seuil || 0) }} dépensés, le joueur reçoit {{ form.jetons_attribues || 0 }} jeton(s). Ex : seuil 5 000 FC → une session de 12 000 FC rapporte 2 × jetons.
         </p>
@@ -164,7 +168,7 @@ import { isValidId, isValidJetonType, isValidQuantite, isValidRegleType, isValid
 
 const loading = ref(true)
 const loadingTx = ref(true)
-const form = reactive({ regle_type: 'temps', seuil: 60, jetons_attribues: 1, actif: true })
+const form = reactive({ regle_type: 'temps', seuil: 60, jetons_attribues: 1, valeur_jeton: 100, actif: true })
 
 const transactions = ref([])
 const joueurs = ref([])
@@ -246,6 +250,7 @@ async function save() {
   if (!isValidRegleType(form.regle_type)) return toast.error('Type de règle invalide')
   if (!isValidSeuil(form.seuil)) return toast.error('Seuil invalide (1-10000)')
   if (!isValidJetonsAttribues(form.jetons_attribues)) return toast.error('Jetons attribués invalides (1-1000)')
+  if (!Number.isInteger(Number(form.valeur_jeton)) || Number(form.valeur_jeton) < 1 || Number(form.valeur_jeton) > 1000000) return toast.error('Valeur d\'un jeton invalide (1-1000000 FC)')
   try { await api.put('/parametres/fidelite', { ...form }); toast.success('Paramètres enregistrés') }
   catch (e) { toast.error(e.message) }
 }

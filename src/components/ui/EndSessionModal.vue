@@ -80,6 +80,16 @@
         </div>
       </div>
 
+      <div v-if="paiementMode === 'jetons'" class="card bg-bg-surface mb-6">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="font-medium">Paiement par jetons</p>
+            <p class="text-sm text-txt-dim">{{ jetonsRequis }} jeton(s) requis pour {{ formatCurrency(montantTotal) }}</p>
+          </div>
+          <span class="font-gaming font-bold text-neon-yellow">{{ jetonsRequis }} J</span>
+        </div>
+      </div>
+
       <div class="mb-6">
         <h4 class="font-gaming font-bold text-txt-muted mb-3 uppercase text-xs tracking-wider">Mode de paiement</h4>
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -160,6 +170,13 @@ const modesPaiement = [
   })
 
   // Aperçu jetons = vraie règle de fidélité (temps OU montant), comme le backend.
+  const jetonsRequis = computed(() => {
+    const valeurJeton = Number(fidelite.value?.valeur_jeton ?? 100)
+    const montant = Math.max(0, montantTotal.value)
+    if (!valeurJeton || montant <= 0) return 0
+    return Math.ceil(montant / valeurJeton)
+  })
+
   const jetonsGagnes = computed(() => {
     const minutes = elapsed.value / 60
     const montant = montantTotal.value

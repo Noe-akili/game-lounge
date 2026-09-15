@@ -84,6 +84,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
 import { api } from '@/utils/api'
 import { isTauriRuntime } from '@/lib/tauriApi'
+import { listen } from '@tauri-apps/api/event'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -157,8 +158,6 @@ function clearConsole() {
 let unlistenSteps: (() => void) | null = null
 function bindLoginSteps() {
   if (unlistenSteps || typeof window === 'undefined') return
-  const listen = (window as any).__TAURI__?.event?.listen
-  if (typeof listen !== 'function') return
   listen('login-step', (e: any) => {
     const p = e?.payload || {}
     const step = String(p.step || '')
@@ -167,7 +166,10 @@ function bindLoginSteps() {
     if (step === 'error') failStep(detail)
     else if (step === 'success') pushStep(detail, 'ok')
     else pushStep(detail)
-  }).then((un: any) => { unlistenSteps = un })
+  }).then((un: any) => { unlistenSteps = un }).catch((e: any) => {
+    console.warn('[LOGIN_EVENT_LISTENER_ERROR]', e)
+    pushStep('Journal backend indisponible, vérification toujours en cours…')
+  })
 }
 
 // ============ COMPTE À REBOURS 60s + VERDICT UNIQUE ============
@@ -291,6 +293,7 @@ async function handleLogin() {
   // Règle demandée : le compte à rebours démarre dès que le backend reçoit
   // l'email + le mot de passe (c'est-à-dire dès la soumission).
   pushStep('Identifiants envoyés au backend…')
+  pushStep('Appel IPC Tauri en cours…')
   startCountdown()
   try {
     await auth.login(form.email.trim().toLowerCase(), form.password)

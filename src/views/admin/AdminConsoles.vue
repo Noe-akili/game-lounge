@@ -16,30 +16,21 @@
       <p class="text-txt-dim">Aucune console</p>
     </div>
 
-    <div v-else class="space-y-2 w-full max-w-full min-w-0 overflow-hidden">
-      <div v-for="c in consoles" :key="c.id" class="card relative isolate min-h-28 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden flex-wrap">
-        <!-- Image de couverture (item 6) : arrière-plan + overlay, texte lisible. -->
-        <div v-if="c.image_url && !imgErr[c.id]" class="absolute inset-0 z-0">
-          <img :src="c.image_url" alt="" class="w-full h-full object-cover" @error="imgErr[c.id] = true" v-show="!imgErr[c.id]" />
-          <div class="absolute inset-0 bg-gradient-to-r from-bg/45 via-bg/10 to-transparent"></div>
+    <div v-else class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden">
+      <div v-for="c in consoles" :key="c.id" class="card-hover relative min-h-44 text-center group w-full max-w-full min-w-0 overflow-hidden flex flex-col justify-end">
+        <img v-if="c.image_url && !imgErr[c.id]" :src="c.image_url" :alt="c.nom" class="absolute inset-0 w-full h-full object-cover" @error="imgErr[c.id] = true" />
+        <div class="absolute inset-0 bg-gradient-to-t from-bg via-bg/55 to-transparent"></div>
+        <div class="relative z-10">
+          <div v-if="!c.image_url || imgErr[c.id]" class="w-12 h-12 mx-auto rounded-xl bg-bg-surface/90 flex items-center justify-center mb-3">
+            <Monitor class="w-7 h-7" :class="statusColor(c.etat)" />
+          </div>
+          <p class="font-medium text-sm truncate w-full max-w-full">{{ c.nom }}</p>
+          <p class="text-xs text-txt-dim truncate w-full max-w-full">{{ c.type }} — Poste {{ c.poste_numero }}</p>
+          <span class="badge mt-1 inline-block max-w-full truncate" :class="statusBadge(c.etat)">{{ statusLabel(c.etat) }}</span>
         </div>
-        <div class="relative z-10 flex w-full min-w-0 flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-        <div class="w-12 h-12 rounded-xl bg-black/35 backdrop-blur-sm flex items-center justify-center shrink-0">
-          <Monitor class="w-7 h-7" :class="statusColor(c.etat)" />
-        </div>
-        <div class="flex-1 min-w-0 overflow-hidden">
-          <p class="font-medium truncate">{{ c.nom }}</p>
-          <p class="text-xs text-txt-dim truncate">{{ c.type }} — Poste {{ c.poste_numero }}</p>
-        </div>
-        <span class="badge shrink-0 max-w-full truncate" :class="statusBadge(c.etat)">{{ statusLabel(c.etat) }}</span>
-        <div class="flex gap-1 shrink-0 flex-wrap">
-          <button @click="editConsole(c)" class="p-2 rounded-lg hover:bg-bg-hover text-txt-dim transition-colors">
-            <Pencil class="w-4 h-4" />
-          </button>
-          <button @click="deleteConsole(c.id)" class="p-2 rounded-lg hover:bg-neon-red/10 text-neon-red transition-colors">
-            <Trash2 class="w-4 h-4" />
-          </button>
-        </div>
+        <div class="relative z-10 flex gap-2 mt-3 justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex-wrap shrink-0">
+          <button @click="editConsole(c)" class="p-1.5 rounded-lg hover:bg-bg-hover text-txt-dim" title="Modifier"><Pencil class="w-3.5 h-3.5" /></button>
+          <button @click="deleteConsole(c.id)" class="p-1.5 rounded-lg hover:bg-neon-red/10 text-neon-red" title="Supprimer"><Trash2 class="w-3.5 h-3.5" /></button>
         </div>
       </div>
     </div>

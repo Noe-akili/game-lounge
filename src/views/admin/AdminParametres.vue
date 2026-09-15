@@ -166,6 +166,10 @@
             <label class="text-sm text-txt-muted">Jetons attribués</label>
             <input v-model.number="form.jetons_attribues" type="number" placeholder="Ex: 1" class="input-field" />
           </div>
+          <div>
+            <label class="text-sm text-txt-muted">Valeur d'un jeton (FC)</label>
+            <input v-model.number="form.valeur_jeton" type="number" min="1" placeholder="Ex: 100" class="input-field" />
+          </div>
           <label class="flex items-center gap-3 cursor-pointer">
             <input type="checkbox" v-model="form.actif" class="w-5 h-5 rounded bg-bg-surface border-white/20 text-neon-violet" />
             <span class="font-medium">Actif</span>
@@ -188,6 +192,7 @@
             <span>{{ selected.regle_type === 'montant' ? formatCurrency(selected.seuil) : `${selected.seuil} min` }}</span>
           </div>
           <div class="flex justify-between"><span class="text-txt-dim">Jetons</span><span class="font-gaming font-bold text-neon-yellow">{{ selected.jetons_attribues }}</span></div>
+          <div class="flex justify-between"><span class="text-txt-dim">Valeur d'un jeton</span><span class="font-gaming font-bold text-neon-yellow">{{ formatCurrency(selected.valeur_jeton ?? 100) }}</span></div>
           <div class="flex justify-between"><span class="text-txt-dim">Actif</span><span class="badge" :class="selected.actif ? 'badge-green' : 'badge-red'">{{ selected.actif ? 'Oui' : 'Non' }}</span></div>
         </div>
         <div class="flex gap-3 mt-6">
@@ -219,7 +224,7 @@ const showForm = ref(false)
 const showDetail = ref(false)
 const selected = ref(null)
 const editingId = ref(null)
-const form = reactive({ regle_type: 'temps', seuil: 60, jetons_attribues: 1, actif: true })
+const form = reactive({ regle_type: 'temps', seuil: 60, jetons_attribues: 1, valeur_jeton: 100, actif: true })
 const config = reactive({ taux_tva: 20 })
 const appNameDraft = ref(settings.appName)
 const syncStatus = ref({ enabled: false, supabaseEnabled: false, lastSync: null, syncing: false })
@@ -257,13 +262,13 @@ async function fetchData() {
 
 function openAdd() {
   editingId.value = null
-  Object.assign(form, { regle_type: 'temps', seuil: 60, jetons_attribues: 1, actif: true })
+  Object.assign(form, { regle_type: 'temps', seuil: 60, jetons_attribues: 1, valeur_jeton: 100, actif: true })
   showForm.value = true
 }
 
 function editParametre(p) {
   editingId.value = p.id
-  Object.assign(form, { regle_type: p.regle_type, seuil: p.seuil, jetons_attribues: p.jetons_attribues, actif: !!p.actif })
+  Object.assign(form, { regle_type: p.regle_type, seuil: p.seuil, jetons_attribues: p.jetons_attribues, valeur_jeton: p.valeur_jeton ?? 100, actif: !!p.actif })
   showForm.value = true
 }
 
@@ -280,7 +285,8 @@ async function saveParametre() {
   if (!isValidRegleType(form.regle_type)) return toast.error('Type de règle invalide')
   if (!isValidSeuil(form.seuil)) return toast.error('Seuil invalide (1-10000)')
   if (!isValidJetonsAttribues(form.jetons_attribues)) return toast.error('Jetons attribués invalides (1-1000)')
-  if (form.seuil === null || form.jetons_attribues === null) return toast.error('Champs requis')
+  if (!Number.isInteger(Number(form.valeur_jeton)) || Number(form.valeur_jeton) < 1 || Number(form.valeur_jeton) > 1000000) return toast.error('Valeur d\'un jeton invalide (1-1000000 FC)')
+  if (form.seuil === null || form.jetons_attribues === null || form.valeur_jeton === null) return toast.error('Champs requis')
   try {
     if (editingId.value) {
       try {

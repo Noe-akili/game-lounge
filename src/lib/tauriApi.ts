@@ -7,6 +7,7 @@
 declare global {
   interface Window {
     __TAURI__?: any
+    __TAURI_INTERNALS__?: any
   }
 }
 
@@ -27,7 +28,7 @@ function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<any> {
   // connexion lente en faux échec d'identifiants.
   const timeoutMs = cmd === 'auth_login' ? 75000 : cmd === 'auth_refresh' || cmd === 'users_create' || cmd === 'users_update' ? 20000 : 10000
   return Promise.race([
-    fn(cmd, args).then((r:any)=>{ console.log('[TAURI_INVOKE_SUCCESS]', cmd); return r; }).catch((e:any)=>{ console.warn('[TAURI_INVOKE_ERROR]', cmd, e); throw e; }),
+    Promise.resolve(fn.call(w.__TAURI__?.core || w.__TAURI_INTERNALS__, cmd, args)).then((r:any)=>{ console.log('[TAURI_INVOKE_SUCCESS]', cmd); return r; }).catch((e:any)=>{ console.warn('[TAURI_INVOKE_ERROR]', cmd, e); throw e; }),
     new Promise((_, reject) => setTimeout(() => { console.warn('[TAURI_INVOKE_ERROR] timeout', cmd); reject({ message: 'Timeout IPC (Android WebView)', status: 504 }) }, timeoutMs))
   ])
 }
@@ -112,7 +113,7 @@ const ROUTES: RouteDef[] = [
   { m: 'POST', p: '/sessions', f: ({ token, body }) => ({ cmd: 'sessions_create', args: { token, consoleId: num(val(body, 'console_id')), joueurId: num(val(body, 'joueur_id')), jeuId: num(val(body, 'jeu_id')), tarifId: num(val(body, 'tarif_id')) } }) },
   { m: 'PUT', p: '/sessions/:id/pause', f: ({ token, segs }) => ({ cmd: 'sessions_pause', args: { token, id: num(segs.id) } }) },
   { m: 'PUT', p: '/sessions/:id/reprendre', f: ({ token, segs }) => ({ cmd: 'sessions_reprendre', args: { token, id: num(segs.id) } }) },
-  { m: 'PUT', p: '/sessions/:id/terminer', f: ({ token, segs }) => ({ cmd: 'sessions_terminer', args: { token, id: num(segs.id) } }) },
+  { m: 'PUT', p: '/sessions/:id/terminer', f: ({ token, segs, body }) => ({ cmd: 'sessions_terminer', args: { token, id: num(segs.id), modePaiement: val(body, 'mode_paiement') } }) },
   { m: 'PUT', p: '/sessions/:id', f: ({ token, segs, body }) => ({ cmd: 'sessions_update', args: { token, id: num(segs.id), consoleId: num(val(body, 'console_id')), joueurId: num(val(body, 'joueur_id')), jeuId: num(val(body, 'jeu_id')), statut: val(body, 'statut'), dureeMinutes: num(val(body, 'duree_minutes')), montant: num(val(body, 'montant')) } }) },
   { m: 'DELETE', p: '/sessions/:id', f: ({ token, segs }) => ({ cmd: 'sessions_delete', args: { token, id: num(segs.id) } }) },
 
@@ -156,8 +157,8 @@ const ROUTES: RouteDef[] = [
   // ===== PARAMÈTRES FIDÉLITÉ =====
   { m: 'GET', p: '/parametres/fidelite', f: ({ token }) => ({ cmd: 'fidelite_get', args: { token } }) },
   { m: 'GET', p: '/parametres/fidelite/:id', f: ({ token, segs }) => ({ cmd: 'fidelite_get_by_id', args: { token, id: num(segs.id) } }) },
-  { m: 'POST', p: '/parametres/fidelite', f: ({ token, body }) => ({ cmd: 'fidelite_create', args: { token, regleType: val(body, 'regle_type'), seuil: num(val(body, 'seuil')), jetonsAttribues: num(val(body, 'jetons_attribues')), actif: bval(val(body, 'actif')) } }) },
-  { m: 'PUT', p: '/parametres/fidelite', f: ({ token, body }) => ({ cmd: 'fidelite_put', args: { token, regleType: val(body, 'regle_type'), seuil: num(val(body, 'seuil')), jetonsAttribues: num(val(body, 'jetons_attribues')), actif: bval(val(body, 'actif')) } }) },
+  { m: 'POST', p: '/parametres/fidelite', f: ({ token, body }) => ({ cmd: 'fidelite_create', args: { token, regleType: val(body, 'regle_type'), seuil: num(val(body, 'seuil')), jetonsAttribues: num(val(body, 'jetons_attribues')), valeurJeton: num(val(body, 'valeur_jeton')), actif: bval(val(body, 'actif')) } }) },
+  { m: 'PUT', p: '/parametres/fidelite', f: ({ token, body }) => ({ cmd: 'fidelite_put', args: { token, regleType: val(body, 'regle_type'), seuil: num(val(body, 'seuil')), jetonsAttribues: num(val(body, 'jetons_attribues')), valeurJeton: num(val(body, 'valeur_jeton')), actif: bval(val(body, 'actif')) } }) },
   { m: 'DELETE', p: '/parametres/fidelite/:id', f: ({ token, segs }) => ({ cmd: 'fidelite_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== RAPPORTS =====
