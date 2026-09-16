@@ -510,3 +510,104 @@ pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -
 
     Err(ApiError::unauthorized("Aucun compte correspondant trouvé"))
 }
+
+pub fn auth_debug_info(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    let users = db(&state).query_all("users")?;
+    let list: Vec<Value> = users.iter().map(|u| {
+        let hash = u.get("password_hash").and_then(Value::as_str).unwrap_or("");
+        json!({
+            "id": u.get("id"),
+            "email": u.get("email"),
+            "role": u.get("role"),
+            "nom": u.get("nom"),
+            "hash_algo": hash_algo(hash),
+            "hash_len": hash.len(),
+        })
+    }).collect();
+    let failures = state.login_attempts.lock().map(|m| m.get("local").cloned().unwrap_or_default().len()).unwrap_or(0);
+    Ok(json!({ "users": list, "login_failures_recent": failures }))
+}
+
+/// Diagnostic : liste les users côté Supabase (email + algo de hash uniquement)
+#[cfg(feature = "supabase-sync")]
+#[tauri::command(async)]
+pub async fn auth_debug_supabase_users(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    let pool_opt = { state.supabase_pool.lock().ok().and_then(|g| g.clone()) };
+    let Some(pool) = pool_opt else { return Ok(json!({ "users": [], "online": false })) };
+    match crate::supabase::supabase_query(&pool, "SELECT id, email, password_hash, role, nom FROM users ORDER BY id", &[]).await {
+        Ok(rows) => {
+            let list: Vec<Value> = rows.iter().map(|r| {
+                let hash = crate::supabase::pg_col_to_string_pub(r, 2).unwrap_or_default();
+                json!({
+                    "id": r.try_get::<_, i64>(0).unwrap_or(0),
+                    "email": crate::supabase::pg_col_to_string_pub(r, 1).unwrap_or_default(),
+                    "role": crate::supabase::pg_col_to_string_pub(r, 3).unwrap_or_default(),
+                    "nom": crate::supabase::pg_col_to_string_pub(r, 4).unwrap_or_default(),
+                    "hash_algo": hash_algo(&hash),
+                    "hash_len": hash.len(),
+                })
+            }).collect();
+            Ok(json!({ "users": list, "online": true }))
+        }
+        Err(e) => Err(ApiError::internal(format!("Supabase users query: {}", e))),
+    }
+}
+#[cfg(not(feature = "supabase-sync"))]
+#[tauri::command(async)]
+pub async fn auth_debug_supabase_users(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    Ok(json!({ "users": [], "online": false }))
+}
+
+/// RÈGLE ABSOLUE (démarrage) : lève le verrou des processus métier.
+/// Appelé par le frontend UNIQUEMENT après affichage de l'écran d'accueil
+/// (login réussi ou session restaurée) : à partir de là seulement, la sync
+/// automatique, le watcher de sessions et les notifications s'activent.
+#[tauri::command]
+pub fn auth_business_ready(state: State<'_, AppState>) -> ApiResult<Value> {
+    state.session_authenticated.store(true, std::sync::atomic::Ordering::Relaxed);
+    crate::logger::log("session", "business processes ENABLED (accueil affiché)");
+    Ok(json!({ "business_ready": true }))
+}
+
+/// RÈGLE ABSOLUE (démarrage) : abaisse le verrou des processus métier
+/// (déconnexion / session expirée). La sync auto, le watcher et les
+/// notifications se remettent en veille jusqu'à la prochaine authentification.
+#[tauri::command]
+pub fn auth_business_suspend(state: State<'_, AppState>) -> ApiResult<Value> {
+    state.session_authenticated.store(false, std::sync::atomic::Ordering::Relaxed);
+    crate::logger::log("session", "business processes SUSPENDED (déconnexion)");
+    Ok(json!({ "business_ready": false }))
+}
+
+#[tauri::command]
+pub fn auth_refresh(state: State<'_, AppState>, refresh_token: String) -> ApiResult<Value> {
+    if refresh_token.is_empty() {
+        return Err(ApiError::bad_request("Refresh token requis"));
+    }
+    let claims = auth_core::verify_token(&refresh_token, &state.jwt_secret)?;
+    let new_access = auth_core::sign_token(&claims, &state.jwt_secret)?;
+    Ok(json!({ "token": new_access }))
+}
+
+#[tauri::command]
+pub fn auth_logout(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    claims(&state, &token)?;
+    Ok(json!({ "success": true }))
+}
+
+#[tauri::command]
+pub fn auth_me(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    let c = claims(&state, &token)?;
+    let database = db(&state);
+    let user = database.find_one("users", |r| r.get("id").and_then(Value::as_i64) == Some(c.id))?;
+    match user {
+        Some(u) => Ok(json!({ "user": user_public(&u) })),
+        None => Err(ApiError::not_found("Utilisateur non trouvé")),
+    }
+}
