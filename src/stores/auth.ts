@@ -1,13 +1,12 @@
 // @ts-nocheck
-// Auth : Session en MÉMOIRE UNIQUEMENT — AUCUNE persistance entre démarrages.
+// Auth : Session persistante sur l'appareil — Reconnexion automatique au démarrage.
 //
 // Comportement :
-//   App start -> écran LOGIN systématique (token/user en mémoire à null)
-//   Login OK -> session conservée en mémoire pendant l'utilisation
-//   Navigation -> session active
-//   Logout -> session effacée
-//   Fermeture de l'app -> mémoire libérée, l'utilisateur doit se reconnecter
-//   401 -> session effacée -> retour écran login
+//   App start -> vérifie la session dans localStorage.
+//   Si session présente -> utilisateur connecté, redirection directe vers l'écran d'accueil.
+//   Si session absente -> redirection vers l'écran de login.
+//   Logout -> session supprimée du téléphone et retour sur l'écran de login.
+//   401 -> session expirée et supprimée.
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
@@ -17,14 +16,15 @@ import { SessionStorage } from '@/lib/sessionStorage'
 export type AuthState = 'unauthenticated' | 'authenticated' | 'error'
 
 function log(tag: string, msg: string) {
-  console.log(`[${tag}] ${msg}`)
+  console.log()
 }
 
 export const useAuthStore = defineStore('auth', () => {
-  // Session en mémoire uniquement : initialisée à null à chaque démarrage
-  const token = ref<string | null>(null)
-  const user = ref<any | null>(null)
-  const state = ref<AuthState>('unauthenticated')
+  // Initialisation immédiate depuis le stockage persistant
+  const initial = SessionStorage.getSessionSync()
+  const token = ref<string | null>(initial.token || null)
+  const user = ref<any | null>(initial.user || null)
+  const state = ref<AuthState>(initial.token && initial.user ? 'authenticated' : 'unauthenticated')
   const lastError = ref<string | null>(null)
 
   const isAuthenticated = computed(() => state.value === 'authenticated' && !!token.value && !!user.value)
@@ -56,20 +56,20 @@ export const useAuthStore = defineStore('auth', () => {
     lastError.value = null
     const data = await api.post('/auth/login', { email, password })
     await setSession(data)
-    log('AUTH', `login OK via ${data.source || 'local'} (role=${data.user?.role})`)
+    log('AUTH', )
     return data.user
   }
 
   async function setSessionFromBootstrap(data: any) {
     await setSession(data)
-    log('AUTH', `session de secours active (source=${data?.source || 'kiosk-admin'}, role=${data?.user?.role})`)
+    log('AUTH', )
   }
 
   async function logout() {
     try { await api.post('/auth/logout') } catch {}
     try { await api.post('/auth/business-suspend') } catch {}
     await clearSession()
-    log('AUTH', 'logout')
+    log('AUTH', 'logout effectué, session supprimée du téléphone')
   }
 
   async function fetchMe() {
@@ -83,14 +83,16 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // Au boot, aucune restauration automatique : l'utilisateur doit se reconnecter
   function restoreSession(): Promise<boolean> {
-    if (token.value && user.value) {
+    const s = SessionStorage.getSessionSync()
+    if (s.token && s.user) {
+      token.value = s.token
+      user.value = s.user
       state.value = 'authenticated'
+      log('AUTH', )
       return Promise.resolve(true)
     }
     state.value = 'unauthenticated'
-    log('AUTH', 'boot sans session persistée -> écran login')
     return Promise.resolve(false)
   }
 
