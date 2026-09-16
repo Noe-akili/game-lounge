@@ -290,26 +290,21 @@ async function bypassLogin() {
 
 async function handleLogin() {
   if (loginPending.value) return
-  if (!form.email || !form.password) { error.value = 'Saisissez votre email et votre mot de passe'; verdict.value = ''; return }
+  if (!form.email || !form.password) {
+    error.value = "Saisissez votre email et votre mot de passe"
+    return
+  }
   loginPending.value = true
-  error.value = ''
-  success.value = false
-  steps.value = []
-  // Le listener est prêt AVANT l'invoke : aucune étape Rust ne doit être perdue.
-  await loginStepsReady
-  pushStep('Identifiants envoyés au backend…')
-  pushStep('Appel IPC Tauri en cours…')
-  startCountdown()
+  error.value = ""
   try {
     await auth.login(form.email.trim().toLowerCase(), form.password)
-    pushStep('Session créée ✓', 'ok')
-    pendingOutcome = 'success'
-    announceVerdict() // verdict immédiat + redirection
+    success.value = true
+    const role = auth.user?.role || "employe"
+    router.replace(role === "admin" ? "/admin" : "/dashboard")
   } catch (e: any) {
-    pendingError = friendlyError(e)
-    pendingOutcome = 'fail'
-    failStep(pendingError) // ligne rouge dans le journal
-    announceVerdict() // erreur définitive -> verdict immédiat (pas d'attente jusqu'à 0)
+    error.value = e?.message || e?.error || "Identifiants incorrects"
+  } finally {
+    loginPending.value = false
   }
 }
 
