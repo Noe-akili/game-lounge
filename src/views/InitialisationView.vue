@@ -7,8 +7,18 @@
         <p class="text-txt-dim mt-2 text-sm">{{ subtitle }}</p>
       </div>
 
+      <!-- SUCCÈS : synchronisation terminée (redirection auto + bouton immédiat) -->
+      <div v-if="sync.status === 'completed'" class="space-y-4 text-center">
+        <CheckCircle2 class="w-12 h-12 text-neon-green mx-auto" />
+        <p class="text-neon-green font-medium text-lg">Synchronisation terminée avec succès !</p>
+        <p class="text-xs text-txt-dim">Redirection en cours…</p>
+        <button @click="goNext" class="btn-neon-violet w-full flex items-center justify-center gap-2 py-3 text-base font-semibold">
+          Accéder à l'écran d'accueil
+        </button>
+      </div>
+
       <!-- Barre de progression RÉELLE (données du SyncEngine Rust via store sync) -->
-      <div v-if="sync.status !== 'error'" class="space-y-3">
+      <div v-else-if="sync.status !== 'error'" class="space-y-3">
         <div class="w-full h-3 rounded-full bg-bg-hover overflow-hidden">
           <motion.div
             class="h-full rounded-full bg-neon-violet shadow-neon-violet"
@@ -73,10 +83,19 @@ import { useRouter } from 'vue-router'
 import { CheckCircle2, Circle, Loader2, CloudOff, RefreshCw, FastForward } from 'lucide-vue-next'
 import { useSyncStore, SYNC_PHASES, PHASE_LABELS } from '@/stores/sync'
 import { useSettingsStore } from '@/stores/settings'
+import { useAuthStore } from '@/stores/auth'
+import { watch } from 'vue'
 
 const router = useRouter()
 const sync = useSyncStore()
 const settings = useSettingsStore()
+const auth = useAuthStore()
+
+watch(() => sync.status, (newStatus) => {
+  if (newStatus === 'completed') {
+    setTimeout(goNext, 1200)
+  }
+}, { immediate: true })
 const retrying = ref(false)
 const skipping = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -124,9 +143,8 @@ async function skip() {
 }
 
 function goNext() {
-  // Mission §12 : une fois l'init terminée, jamais revu — l'app va directement
-  // à l'interface admin.
-  router.replace('/admin')
+  const role = auth.user?.role || 'admin'
+  router.replace(role === 'admin' ? '/admin' : '/dashboard')
 }
 
 onMounted(async () => {
