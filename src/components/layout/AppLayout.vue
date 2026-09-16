@@ -89,7 +89,7 @@ onMounted(() => {
   const intervalMs = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent) ? 15000 : 10000
   pollInterval = setInterval(() => {
     try {
-      const token = localStorage.getItem('gl_token')
+      const token = (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('gl_token') : null) || localStorage.getItem('gl_token')
       if (token) pollForChanges()
     } catch {}
   }, intervalMs)

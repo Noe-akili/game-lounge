@@ -26,7 +26,7 @@ function base64ToUint8Array(b64: string): Uint8Array {
 }
 
 async function token(): Promise<string | undefined> {
-  try { return localStorage.getItem('gl_token') || undefined } catch { return undefined }
+  try { return (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('gl_token') : null) || localStorage.getItem('gl_token') || undefined } catch { return undefined }
 }
 
 /// Récupère le PDF (base64) d'une facture.

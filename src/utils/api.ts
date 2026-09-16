@@ -1,8 +1,22 @@
 // @ts-nocheck
 import { handleRequest } from '@/lib/transport'
 
+function getToken(): string | null {
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      const s = sessionStorage.getItem('gl_token')
+      if (s) return s
+    }
+    if (typeof localStorage !== 'undefined') {
+      const l = localStorage.getItem('gl_token')
+      if (l) return l
+    }
+  } catch {}
+  return null
+}
+
 async function request(path: string, options: any = {}) {
-  const token = (() => { try { return localStorage.getItem('gl_token') } catch { return null } })()
+  const token = getToken()
   const body = options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined
   const result = await handleRequest(path, options.method || 'GET', body, token)
   if (result.status >= 400) {
