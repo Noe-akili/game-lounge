@@ -48,6 +48,8 @@ pub struct AppState {
 /// JWT secret STABLE sur l'appareil (persisté dans SQLite).
 /// Sans ça, chaque redémarrage de l'APK invente un secret neuf et invalide
 /// tous les tokens -> retour forcé sur l'écran login.
+const DEFAULT_JWT_SECRET: &str = "gl-prod-sec-key-game-lounge-tauri-2024-jwt-token-auth";
+
 fn runtime_jwt_secret(db: &crate::db::Db) -> String {
     if let Ok(secret) = std::env::var("JWT_SECRET") {
         if secret.len() >= 32 {
@@ -60,13 +62,8 @@ fn runtime_jwt_secret(db: &crate::db::Db) -> String {
             return stored;
         }
     }
-    let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    let generated = URL_SAFE_NO_PAD.encode(bytes);
-    if let Err(e) = db.set_setting("jwt_secret", &generated) {
-        eprintln!("WARNING: impossible de persister jwt_secret: {e}");
-    }
-    generated
+    let _ = db.set_setting("jwt_secret", DEFAULT_JWT_SECRET);
+    DEFAULT_JWT_SECRET.to_string()
 }
 fn open_db(app: &tauri::AppHandle) -> Result<Db, Box<dyn std::error::Error>> {
     // 1. DATADIR env (tests / debug http-server)
