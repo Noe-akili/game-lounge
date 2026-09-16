@@ -1,29 +1,9 @@
 // @ts-nocheck
-// Router : LOGIN obligatoire (aucune session automatique).
-//
-// Flux imposé (mission §6-7) :
-//   App start -> écran LOGIN (aucun processus métier, pas de sync, pas de
-//   SQLite business, pas de notifications, pas de watcher).
-//   Login OK -> token/user sauvegardés -> redirection accueil
-//   processus métier démarrent APRÈS affichage de l'écran d'accueil (App.vue).
-//   Login ERREUR -> "Identifiants incorrects" -> rester sur login.
-//
-// Le guard n'effectue AUCUN appel réseau, AUCUN check SQLite, AUCUNES
-// side effects. Il se contente de vérifier la présence locale du token.
-// Si pas de token -> écran login. Si token présent -> user a déjà validé
-// ses identifiants par le passé, on laisse passer (la session a été
-// sauvegardée explicitement lors du login Supabase).
-//
-// /initialisation n'est plus gérée par le guard : elle est atteinte uniquement
-// APRÈS un login réussi via le flux LoginView -> home -> App.vue.
 import { createRouter, createWebHistory, createWebHashHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 const routes = [
   { path: '/login', name: 'Login', component: () => import('@/views/LoginView.vue') },
-  // Écran de première synchronisation (progression réelle du SyncEngine Rust) —
-  // uniquement quand initial_sync_completed = false (première installation).
-  // Atteint APRÈS login réussi, jamais imposé par le guard.
   { path: '/initialisation', name: 'Initialisation', component: () => import('@/views/InitialisationView.vue') },
   {
     path: '/',
@@ -56,20 +36,28 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   const auth = useAuthStore()
-  // Vérification ABSOLUMENT locale : aucun appel API, aucune side effect.
-  // Pas de token (jamais connecté ou session effacée) -> écran login.
+
+  // Si le token n'est pas encore dans le store, tenter la restauration depuis le stockage du téléphone
   if (!auth.token) {
-    // La page login reste accessible si on n'est pas connecté (après logout
-    // ou expiration) : on ne redirige QUE si une session existe.
-    if (to.path === '/login') return auth.isAuthenticated ? '/dashboard' : undefined
+    auth.restoreSession()
+  }
+
+  // Si pas de session valide persistée : accès uniquement à /login
+  if (!auth.token) {
+    if (to.path === '/login') return true
     return '/login'
   }
-  // Token présent -> l'utilisateur a déjà validé ses identifiants.
-  // On laisse passer vers l'accueil.
-  // Les vérifications admin se font via le meta sur les routes.
+
+  // Si session valide et l'utilisateur se rend sur /login : renvoi direct vers l'écran d'accueil
+  if (to.path === '/login') {
+    return auth.isAdmin ? '/admin' : '/dashboard'
+  }
+
+  // Contrôle des routes protégées admin
   if (to.matched.some(record => record.meta.adminOnly) && !auth.isAdmin) {
     return '/dashboard'
   }
+
   if (to.path === '/') {
     return auth.isAdmin ? '/admin' : '/dashboard'
   }
