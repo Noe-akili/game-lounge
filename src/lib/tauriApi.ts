@@ -22,11 +22,10 @@ function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<any> {
   const fn = w.__TAURI__?.core?.invoke || w.__TAURI_INTERNALS__?.invoke
   if (!fn) return Promise.reject({ message: 'Tauri non disponible', status: 500 })
   console.log('[TAURI_INVOKE_START]', cmd, JSON.stringify(args).slice(0,200))
-  // Sur Android, l'IPC peut mettre 2-3s si Rust est occupé (scrypt/argon2).
-  // auth_login peut enchaîner deux tentatives TLS, une reconnexion et une
-  // requête cloud. Le délai doit couvrir ce chemin sans transformer une
-  // connexion lente en faux échec d'identifiants.
-  const timeoutMs = cmd === 'auth_login' ? 75000 : cmd === 'auth_refresh' || cmd === 'users_create' || cmd === 'users_update' ? 20000 : 10000
+  // auth_login est LOCAL-FIRST : le compte présent dans SQLite doit répondre
+  // rapidement. Le cloud n'est utilisé que pour un compte absent/localement
+  // non valide. Le timeout IPC ne doit donc plus masquer un blocage de 75s.
+  const timeoutMs = cmd === 'auth_login' ? 20000 : cmd === 'auth_refresh' || cmd === 'users_create' || cmd === 'users_update' ? 20000 : 10000
   return Promise.race([
     Promise.resolve(fn.call(w.__TAURI__?.core || w.__TAURI_INTERNALS__, cmd, args)).then((r:any)=>{ console.log('[TAURI_INVOKE_SUCCESS]', cmd); return r; }).catch((e:any)=>{ console.warn('[TAURI_INVOKE_ERROR]', cmd, e); throw e; }),
     new Promise((_, reject) => setTimeout(() => { console.warn('[TAURI_INVOKE_ERROR] timeout', cmd); reject({ message: 'Timeout IPC (Android WebView)', status: 504 }) }, timeoutMs))

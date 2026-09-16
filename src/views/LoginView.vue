@@ -156,9 +156,10 @@ function clearConsole() {
 // Étapes émises par le backend Rust (commande auth_login) via l'événement
 // "login-step" : on voit en direct où la vérification en est.
 let unlistenSteps: (() => void) | null = null
+let loginStepsReady: Promise<void> = Promise.resolve()
 function bindLoginSteps() {
-  if (unlistenSteps || typeof window === 'undefined') return
-  listen('login-step', (e: any) => {
+  if (unlistenSteps || typeof window === 'undefined') return loginStepsReady
+  loginStepsReady = listen('login-step', (e: any) => {
     const p = e?.payload || {}
     const step = String(p.step || '')
     const detail = String(p.detail || '')
@@ -166,10 +167,13 @@ function bindLoginSteps() {
     if (step === 'error') failStep(detail)
     else if (step === 'success') pushStep(detail, 'ok')
     else pushStep(detail)
-  }).then((un: any) => { unlistenSteps = un }).catch((e: any) => {
+  }).then((un: any) => {
+    unlistenSteps = un
+  }).catch((e: any) => {
     console.warn('[LOGIN_EVENT_LISTENER_ERROR]', e)
     pushStep('Journal backend indisponible, vérification toujours en cours…')
   })
+  return loginStepsReady
 }
 
 // ============ COMPTE À REBOURS 60s + VERDICT UNIQUE ============
@@ -230,7 +234,7 @@ function announceVerdict() {
   } else if (fromCountdown && remaining.value <= 0) {
     // Timeout sans réponse backend.
     success.value = false
-    verdict.value = "Aucune réponse du backend (20s). Compte local : noeakili@gmail.com / mdp1234 — si ça bloque encore, rebuild + réinstalle l'APK."
+    verdict.value = "Aucune réponse du backend (20s). Le moteur local n'a pas répondu à temps — réessayez."
     loginPending.value = false
   }
 }
@@ -290,8 +294,8 @@ async function handleLogin() {
   error.value = ''
   success.value = false
   steps.value = []
-  // Règle demandée : le compte à rebours démarre dès que le backend reçoit
-  // l'email + le mot de passe (c'est-à-dire dès la soumission).
+  // Le listener est prêt AVANT l'invoke : aucune étape Rust ne doit être perdue.
+  await loginStepsReady
   pushStep('Identifiants envoyés au backend…')
   pushStep('Appel IPC Tauri en cours…')
   startCountdown()

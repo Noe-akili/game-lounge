@@ -88,13 +88,13 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /// CONNEXION (obligatoire) : email + mot de passe -> token + user -> affichage accueil.
-  // Le flux est : email+mdp -> backend Rust/Tauri -> Supabase -> verification email+mot de passe.
-  // Si correct -> session immediate + sauvegarde token+user -> retour accueil.
-  // Si incorrect -> "Identifiants incorrects" immediatement.
-  // AUCUN check SQLite, aucune synchronisation,aucun chargement données AVANT cet appel.
+  // Le flux est LOCAL-FIRST : SQLite -> session immédiate. Supabase n'est utilisé
+  // que si la copie locale ne peut pas authentifier l'utilisateur. Le backend
+  // gère déjà son propre retry cloud : le frontend ne rejoue donc JAMAIS tout
+  // le login après un 503, ce qui évite de doubler les délais sur Android.
   async function login(email: string, password: string) {
     lastError.value = null
-    const data = await withRetry503(() => api.post('/auth/login', { email, password }))
+    const data = await api.post('/auth/login', { email, password })
     await setSession(data) // lève si token/user absent -> pas de session fantôme
     state.value = 'authenticated'
     log('AUTH', `login OK via ${data.source || 'supabase'} (role=${data.user?.role})`)
