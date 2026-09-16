@@ -1,18 +1,9 @@
 // @ts-nocheck
 import { handleRequest } from '@/lib/transport'
+import { SessionStorage } from '@/lib/sessionStorage'
 
 function getToken(): string | null {
-  try {
-    if (typeof sessionStorage !== 'undefined') {
-      const s = sessionStorage.getItem('gl_token')
-      if (s) return s
-    }
-    if (typeof localStorage !== 'undefined') {
-      const l = localStorage.getItem('gl_token')
-      if (l) return l
-    }
-  } catch {}
-  return null
+  return SessionStorage.getToken()
 }
 
 async function request(path: string, options: any = {}) {
@@ -20,7 +11,7 @@ async function request(path: string, options: any = {}) {
   const body = options.body ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body) : undefined
   const result = await handleRequest(path, options.method || 'GET', body, token)
   if (result.status >= 400) {
-    const err: any = new Error(result.body?.message || `Erreur ${result.status}`)
+    const err: any = new Error(result.body?.message || )
     err.status = result.status
     throw err
   }
