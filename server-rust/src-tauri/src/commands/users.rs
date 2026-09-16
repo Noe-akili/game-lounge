@@ -18,14 +18,14 @@ async fn get_supabase(state: &AppState) -> ApiResult<SupabasePool> {
             return Ok(pool.clone());
         }
     }
-    // Tentative de connexion immédiate
+    // Tentative de connexion immédiate si pas encore initialisé
     if let Some(pool) = init_supabase_pool().await {
         if let Ok(mut guard) = state.supabase_pool.lock() {
             *guard = Some(pool.clone());
         }
         return Ok(pool);
     }
-    Err(ApiError::new(503, "Connexion Internet requise pour gérer les utilisateurs"))
+    Err(ApiError::new(503, "Connexion à Supabase impossible. Vérifiez votre connexion Internet."))
 }
 
 fn pg_col_str(row: &tokio_postgres::Row, idx: usize) -> Option<String> {
@@ -38,6 +38,16 @@ fn pg_col_str(row: &tokio_postgres::Row, idx: usize) -> Option<String> {
     None
 }
 
+fn pg_col_id(row: &tokio_postgres::Row, idx: usize) -> i64 {
+    if let Ok(id) = row.try_get::<_, i64>(idx) {
+        return id;
+    }
+    if let Ok(id) = row.try_get::<_, i32>(idx) {
+        return id as i64;
+    }
+    0
+}
+
 /// GET /api/users - Liste des utilisateurs directement depuis Supabase
 #[tauri::command]
 pub async fn users_list(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
@@ -45,14 +55,14 @@ pub async fn users_list(state: State<'_, AppState>, token: Option<String>) -> Ap
     crate::commands::admin_only(&user)?;
 
     let pool = get_supabase(&state).await?;
-    let sql = "SELECT id, email, role, nom, created_at FROM users WHERE deleted = 0 ORDER BY id ASC";
+    let sql = "SELECT id, email, role, nom, created_at FROM users WHERE COALESCE(deleted::text, '0') NOT IN ('1', 'true') ORDER BY id ASC";
     let rows = supabase_query(&pool, sql, &[])
         .await
         .map_err(|e| ApiError::new(503, &format!("Erreur Supabase: {}", e)))?;
 
     let mut list = Vec::new();
     for r in rows {
-        let id = r.try_get::<_, i64>(0).unwrap_or(0);
+        let id = pg_col_id(&r, 0);
         let email = pg_col_str(&r, 1).unwrap_or_default();
         let role = pg_col_str(&r, 2).unwrap_or_else(|| "employe".to_string());
         let nom = pg_col_str(&r, 3).unwrap_or_default();
@@ -80,7 +90,7 @@ pub async fn users_get(state: State<'_, AppState>, token: Option<String>, id: i6
     }
 
     let pool = get_supabase(&state).await?;
-    let sql = format!("SELECT id, email, role, nom, created_at FROM users WHERE id = {} AND deleted = 0 LIMIT 1", id);
+    let sql = format!("SELECT id, email, role, nom, created_at FROM users WHERE id = {} AND COALESCE(deleted::text, '0') NOT IN ('1', 'true') LIMIT 1", id);
     let rows = supabase_query(&pool, &sql, &[])
         .await
         .map_err(|e| ApiError::new(503, &format!("Erreur Supabase: {}", e)))?;
@@ -90,7 +100,7 @@ pub async fn users_get(state: State<'_, AppState>, token: Option<String>, id: i6
     }
 
     let r = &rows[0];
-    let uid = r.try_get::<_, i64>(0).unwrap_or(0);
+    let uid = pg_col_id(r, 0);
     let email = pg_col_str(r, 1).unwrap_or_default();
     let role = pg_col_str(r, 2).unwrap_or_else(|| "employe".to_string());
     let nom = pg_col_str(r, 3).unwrap_or_default();
@@ -155,9 +165,15 @@ pub async fn users_create(
 
     if !existing.is_empty() {
         let r = &existing[0];
-        let ex_id = r.try_get::<_, i64>(0).unwrap_or(0);
-        let deleted = r.try_get::<_, i32>(1).unwrap_or(0);
-        if deleted == 1 {
+        let ex_id = pg_col_id(r, 0);
+        let del_str = pg_col_str(r, 1).unwrap_or_else(|| {
+            if let Ok(d) = r.try_get::<_, i32>(1) { d.to_string() }
+            else if let Ok(b) = r.try_get::<_, bool>(1) { b.to_string() }
+            else { "0".to_string() }
+        });
+        let is_deleted = del_str == "1" || del_str == "true";
+
+        if is_deleted {
             // Réactivation du compte soft-deleted sur Supabase
             let upd_sql = format!(
                 "UPDATE users SET nom = '{}', role = '{}', password_hash = '{}', deleted = 0 WHERE id = {}",
@@ -189,7 +205,7 @@ pub async fn users_create(
         .map_err(|e| ApiError::new(503, &format!("Erreur insertion Supabase: {}", e)))?;
 
     let new_id = if !rows.is_empty() {
-        rows[0].try_get::<_, i64>(0).unwrap_or(0)
+        pg_col_id(&rows[0], 0)
     } else {
         0
     };
@@ -230,7 +246,7 @@ pub async fn users_update(
         }
         // Vérifier conflit avec un autre utilisateur sur Supabase
         let check_sql = format!(
-            "SELECT id FROM users WHERE LOWER(email) = LOWER('{}') AND id <> {} AND deleted = 0 LIMIT 1",
+            "SELECT id FROM users WHERE LOWER(email) = LOWER('{}') AND id <> {} AND COALESCE(deleted::text, '0') NOT IN ('1', 'true') LIMIT 1",
             escape_sql(em), id
         );
         let clash = supabase_query(&pool, &check_sql, &[])
@@ -274,7 +290,7 @@ pub async fn users_update(
     }
 
     let update_sql = format!(
-        "UPDATE users SET {} WHERE id = {} AND deleted = 0",
+        "UPDATE users SET {} WHERE id = {} AND COALESCE(deleted::text, '0') NOT IN ('1', 'true')",
         sets.join(", "), id
     );
 
