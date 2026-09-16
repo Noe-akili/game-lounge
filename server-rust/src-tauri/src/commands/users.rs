@@ -40,9 +40,9 @@ pub fn users_get(state: State<'_, AppState>, token: Option<String>, id: i64) -> 
     Ok(to_public(&row))
 }
 
-/// POST /api/users - ASYNC pour éviter ANR (scrypt 1-2s sur Android low-end)
-#[tauri::command(async)]
-pub async fn users_create(
+/// POST /api/users - SYNCHRONE et direct (<30ms, évite ANR et timeout IPC Android)
+#[tauri::command]
+pub fn users_create(
     state: State<'_, AppState>,
     token: Option<String>,
     email: String,
@@ -52,13 +52,15 @@ pub async fn users_create(
 ) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
     crate::commands::admin_only(&user)?;
+    let email = email.trim();
+    let nom = nom.trim();
     if email.is_empty() || password.is_empty() || role.is_empty() || nom.is_empty() {
         return Err(ApiError::bad_request("Nom, email, mot de passe et rôle requis"));
     }
-    if !validators::is_valid_nom(&nom) {
+    if !validators::is_valid_nom(nom) {
         return Err(ApiError::bad_request("Nom invalide (2-50 caractères)"));
     }
-    if !validators::is_valid_email(&email) {
+    if !validators::is_valid_email(email) {
         return Err(ApiError::bad_request("Email invalide"));
     }
     if !validators::is_valid_password(&password) {
@@ -70,19 +72,12 @@ pub async fn users_create(
         return Err(ApiError::bad_request("Rôle invalide"));
     }
     let db = db(&state);
-    // Hash dans thread bloquant pour ne pas freezer l'UI Android
-    let pwd = password.clone();
-    let hash = tokio::task::spawn_blocking(move || auth_core::hash_password(&pwd))
-        .await
-        .map_err(|e| ApiError::internal(format!("Erreur hachage: {e}")))?
-        ?;
-    // FIX utilisateurs fantômes : un utilisateur soft-deleted garde sa ligne
-    // (et son email sous UNIQUE). Recréer le même email échouait donc en local
-    // ET sur le push cloud (violation UNIQUE -> batch de sync entier perdu).
-    // On RÉACTIVE la ligne existante : même id, deleted=0, nouvelles valeurs.
-    // Le payload UPDATE repasse deleted=0 au cloud -> plus aucun fantôme.
+    let hash = auth_core::hash_password(&password)?;
+
+    // FIX utilisateurs fantômes : si l'utilisateur existe déjà mais est soft-deleted,
+    // on le réactive avec les nouvelles valeurs
     if let Some(prev) = db.find_one_all("users", |u| {
-        u.get("email").and_then(Value::as_str) == Some(email.as_str())
+        u.get("email").and_then(Value::as_str).is_some_and(|e| e.eq_ignore_ascii_case(email))
             && u.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1
     })? {
         let id = prev.get("id").and_then(Value::as_i64).unwrap_or(0);
@@ -90,7 +85,7 @@ pub async fn users_create(
             let mut upd = jmap();
             upd.insert("deleted".into(), json!(0));
             upd.insert("password_hash".into(), json!(hash));
-            upd.insert("nom".into(), json!(validators::sanitize_input(&nom, 50)));
+            upd.insert("nom".into(), json!(validators::sanitize_input(nom, 50)));
             upd.insert("role".into(), json!(role));
             upd.insert("created_at".into(), json!(crate::db::now_iso()));
             let revived = db.update("users", id, &upd)?;
@@ -98,24 +93,27 @@ pub async fn users_create(
         }
     }
     if db
-        .find_one("users", |u| u.get("email").and_then(Value::as_str) == Some(email.as_str()))?
+        .find_one("users", |u| {
+            u.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 0
+                && u.get("email").and_then(Value::as_str).is_some_and(|e| e.eq_ignore_ascii_case(email))
+        })?
         .is_some()
     {
         return Err(ApiError::new(409, "Email déjà utilisé"));
     }
     let mut row = jmap();
-    row.insert("email".into(), json!(validators::sanitize_input(&email, 100)));
+    row.insert("email".into(), json!(validators::sanitize_input(email, 100)));
     row.insert("password_hash".into(), json!(hash));
-    row.insert("nom".into(), json!(validators::sanitize_input(&nom, 50)));
+    row.insert("nom".into(), json!(validators::sanitize_input(nom, 50)));
     row.insert("role".into(), json!(role));
     row.insert("created_at".into(), json!(crate::db::now_iso()));
     let created = db.insert("users", &row)?;
     Ok(to_public(&created))
 }
 
-/// PUT /api/users/:id - ASYNC si password (scrypt)
-#[tauri::command(async)]
-pub async fn users_update(
+/// PUT /api/users/:id - SYNCHRONE et direct (<30ms, évite timeout IPC)
+#[tauri::command]
+pub fn users_update(
     state: State<'_, AppState>,
     token: Option<String>,
     id: i64,
@@ -133,10 +131,20 @@ pub async fn users_update(
     get_by_id(db, "users", id, "Utilisateur non trouvé")?;
     let mut updates = jmap();
     if let Some(e) = email {
-        if !validators::is_valid_email(&e) {
+        let e_trimmed = e.trim();
+        if !validators::is_valid_email(e_trimmed) {
             return Err(ApiError::bad_request("Email invalide"));
         }
-        updates.insert("email".into(), json!(validators::sanitize_input(&e, 100)));
+        // Vérifier si un AUTRE utilisateur actif utilise déjà cet email
+        if db.find_one("users", |u| {
+            let uid = u.get("id").and_then(Value::as_i64).unwrap_or(0);
+            uid != id
+                && u.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 0
+                && u.get("email").and_then(Value::as_str).is_some_and(|existing| existing.eq_ignore_ascii_case(e_trimmed))
+        })?.is_some() {
+            return Err(ApiError::new(409, "Cet email est déjà utilisé par un autre utilisateur"));
+        }
+        updates.insert("email".into(), json!(validators::sanitize_input(e_trimmed, 100)));
     }
     if let Some(r) = role {
         if !validators::is_valid_role(&r) {
@@ -145,23 +153,21 @@ pub async fn users_update(
         updates.insert("role".into(), json!(r));
     }
     if let Some(n) = nom {
-        if !validators::is_valid_nom(&n) {
+        let n_trimmed = n.trim();
+        if !validators::is_valid_nom(n_trimmed) {
             return Err(ApiError::bad_request("Nom invalide (2-50 caractères)"));
         }
-        updates.insert("nom".into(), json!(validators::sanitize_input(&n, 50)));
+        updates.insert("nom".into(), json!(validators::sanitize_input(n_trimmed, 50)));
     }
     if let Some(p) = password {
-        if !p.is_empty() {
-            if !validators::is_valid_password(&p) {
+        let p_trimmed = p.trim();
+        if !p_trimmed.is_empty() {
+            if !validators::is_valid_password(p_trimmed) {
                 return Err(ApiError::bad_request(
                     "Mot de passe invalide (min 6 caractères, au moins une lettre)",
                 ));
             }
-            let p2 = p.clone();
-            let hash = tokio::task::spawn_blocking(move || auth_core::hash_password(&p2))
-                .await
-                .map_err(|e| ApiError::internal(format!("Erreur hachage: {e}")))?
-                ?;
+            let hash = auth_core::hash_password(p_trimmed)?;
             updates.insert("password_hash".into(), json!(hash));
         }
     }
