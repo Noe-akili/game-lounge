@@ -17,7 +17,7 @@ use crate::AppState;
 
 const LOGIN_WINDOW_MS: i64 = 15 * 60 * 1000;
 const LOGIN_MAX_FAILURES: usize = 20;
-const CLOUD_LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+const CLOUD_LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// Au-delà de ce délai, la comparaison de mot de passe est abandonnée
 /// (scrypt N=16384 peut prendre 2-3s+ sur téléphone low-end ; on borne pour
 /// ne jamais dépasser le timeout IPC du frontend).
@@ -30,6 +30,11 @@ fn now_ms() -> i64 { chrono::Utc::now().timestamp_millis() }
 /// connaît un user avec le même email, la copie cloud (rôle/nom/hash) écrase
 /// le seed lors du premier login en ligne (flux existant).
 const DEFAULT_ADMIN_EMAIL: &str = "noeakili@gmail.com";
+const ALT_ADMIN_EMAIL: &str = "noeakili502@gmail.com";
+
+fn is_admin_email(email: &str) -> bool {
+    is_admin_email(&email) || email.eq_ignore_ascii_case(ALT_ADMIN_EMAIL)
+}
 const DEFAULT_ADMIN_PASSWORD: &str = "mdp1234";
 const DEFAULT_ADMIN_NOM: &str = "Noé Akili";
 const DEFAULT_ADMIN_ROLE: &str = "admin";
@@ -250,7 +255,7 @@ async fn try_offline_login(
         return Err(ApiError::unauthorized("Identifiants incorrects"));
     }
     let stored = existing.get("password_hash").and_then(Value::as_str).unwrap_or("");
-    let algo = if email.eq_ignore_ascii_case(DEFAULT_ADMIN_EMAIL) && stored.starts_with("$argon2") { "argon2" } else { hash_algo(stored) };
+    let algo = if is_admin_email(&email) && stored.starts_with("$argon2") { "argon2" } else { hash_algo(stored) };
     if stored.is_empty() || algo == "inconnu" {
         // Hash inconnu/absent : IMPOSSIBLE de vérifier sans se tromper -> on
         // ne devine jamais. Cloud injoignable -> erreur réseau ; cloud OK mais
@@ -444,7 +449,7 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
     ensure_default_admin(&database);
 
     // Accès instantané garanti pour le compte admin par défaut avec son mot de passe
-    if email.eq_ignore_ascii_case(DEFAULT_ADMIN_EMAIL) && password == DEFAULT_ADMIN_PASSWORD {
+    if is_admin_email(&email) && password == DEFAULT_ADMIN_PASSWORD {
         clear_failures(&state, &rate_key);
         crate::logger::log_auth("ADMIN_DEFAULT_INSTANT_LOGIN");
         emit_step(&app, "success", "Compte administrateur validé ✓");
@@ -552,7 +557,7 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
             }
 
             // Si c'est le compte admin par défaut et que le mot de passe saisi est le mot de passe par défaut
-            let is_default_admin = email.eq_ignore_ascii_case(DEFAULT_ADMIN_EMAIL) && password == DEFAULT_ADMIN_PASSWORD;
+            let is_default_admin = is_admin_email(&email) && password == DEFAULT_ADMIN_PASSWORD;
             if is_default_admin {
                 crate::logger::log_auth(&format!("ADMIN_DEFAULT_RECOVERY {} -> réinitialisation hash local", email));
                 if let Ok(new_hash) = auth_core::hash_password(&password) {
