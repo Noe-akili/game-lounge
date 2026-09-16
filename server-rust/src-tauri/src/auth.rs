@@ -15,13 +15,18 @@ const SCRYPT_LOG_N: u8 = 14;
 const SCRYPT_R: u32 = 8;
 const SCRYPT_P: u32 = 1;
 
-// Hash Argon2id (best-practice OWASP)
+// Hash Argon2id (calibré mobile pour exécution synchrone immédiate <30ms)
 pub fn hash_password(password: &str) -> ApiResult<String> {
     if password.len() < 6 || password.len() > 128 {
         return Err(ApiError::bad_request("Mot de passe invalide"));
     }
     let salt = SaltString::generate(&mut OsRng);
-    Ok(Argon2::default()
+    let params = match argon2::Params::new(8192, 1, 1, None) {
+        Ok(p) => p,
+        Err(_) => argon2::Params::default(),
+    };
+    let argon = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+    Ok(argon
         .hash_password(password.as_bytes(), &salt)
         .map_err(|e| ApiError::internal(format!("Argon2: {}", e)))?
         .to_string())
