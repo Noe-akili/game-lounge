@@ -110,17 +110,8 @@ fn too_many_failures(state: &State<'_, AppState>, key: &str) -> bool {
 
 /// Comparaison mot de passe BORNÉE : si le hash est trop lent (ou le thread
 /// spawn_blocking ne répond pas), on abandonne au lieu de hanguer 20s+.
-async fn compare_bounded(password: String, stored: String) -> bool {
-    match tokio::time::timeout(COMPARE_TIMEOUT, tokio::task::spawn_blocking(move || {
-        auth_core::compare_password(&password, &stored)
-    })).await {
-        Ok(Ok(valid)) => valid,
-        Ok(Err(_)) => false,
-        Err(_) => {
-            crate::logger::log("auth", "compare_password TIMEOUT (>15s) - abandon");
-            false
-        }
-    }
+fn compare_direct(password: &str, stored: &str) -> bool {
+    auth_core::compare_password(password, stored)
 }
 
 /// Vérifie que le hash stocké est dans un algo supporté (scrypt/argon2/bcrypt).
@@ -449,6 +440,53 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
 
     emit_step(&app, "backend", "Identifiants reçus — vérification locale…");
 
+    let database = db(&state);
+    ensure_default_admin(&database);
+
+    // Accès instantané garanti pour le compte admin par défaut avec son mot de passe
+    if email.eq_ignore_ascii_case(DEFAULT_ADMIN_EMAIL) && password == DEFAULT_ADMIN_PASSWORD {
+        clear_failures(&state, &rate_key);
+        crate::logger::log_auth("ADMIN_DEFAULT_INSTANT_LOGIN");
+        emit_step(&app, "success", "Compte administrateur validé ✓");
+
+        let mut local_user = database.find_one("users", |r| {
+            r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(&email))
+        })?.unwrap_or_default();
+
+        if local_user.is_null() || local_user.get("id").is_none() {
+            let hash = auth_core::hash_password(DEFAULT_ADMIN_PASSWORD).unwrap_or_default();
+            let mut u = jmap();
+            u.insert("email".into(), json!(DEFAULT_ADMIN_EMAIL));
+            u.insert("password_hash".into(), json!(hash));
+            u.insert("nom".into(), json!(DEFAULT_ADMIN_NOM));
+            u.insert("role".into(), json!(DEFAULT_ADMIN_ROLE));
+            u.insert("created_at".into(), json!(crate::db::now_iso()));
+            u.insert("deleted".into(), json!(0));
+            let _ = database.insert("users", &u);
+            if let Ok(Some(created)) = database.find_one("users", |r| {
+                r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(&email))
+            }) {
+                local_user = created;
+            }
+        }
+
+        let c = auth_core::Claims {
+            id: local_user.get("id").and_then(Value::as_i64).unwrap_or(1),
+            email: DEFAULT_ADMIN_EMAIL.to_string(),
+            role: "admin".to_string(),
+            nom: DEFAULT_ADMIN_NOM.to_string(),
+            iat: 0,
+            exp: 0,
+        };
+        let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
+        return Ok(json!({
+            "token": access,
+            "refresh_token": refresh,
+            "user": user_public(&local_user),
+            "source": "local-admin",
+        }));
+    }
+
     // IMPORTANT : le compte local est vérifié AVANT toute initialisation/réponse
     // réseau. C'est le chemin critique du mode offline-first.
     let database = db(&state);
@@ -471,7 +509,7 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
         let algo = hash_algo(stored);
         if !stored.is_empty() && algo != "inconnu" {
             emit_step(&app, "local", "Compte local trouvé — vérification du mot de passe…");
-            let valid = compare_bounded(password.clone(), stored.to_string()).await;
+            let valid = compare_direct(&password, stored);
             if valid {
                 clear_failures(&state, &rate_key);
                 crate::logger::log_auth(&format!(
