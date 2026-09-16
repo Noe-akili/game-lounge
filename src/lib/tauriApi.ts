@@ -32,18 +32,6 @@ function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<any> {
   ])
 }
 
-// TEST TEMPORAIRE IPC
-export async function testTauriHealth() {
-  console.log('[IPC_HEALTH_TEST] début')
-  try {
-    const result = await invoke('health', {})
-    console.log('[IPC_HEALTH_TEST] SUCCESS', result)
-    return result
-  } catch (e) {
-    console.error('[IPC_HEALTH_TEST] ERROR', e)
-    throw e
-  }
-}
 
 function getPath(url: string): string {
   return url.split('?')[0]
@@ -86,7 +74,6 @@ type RouteDef = {
 }
 
 const ROUTES: RouteDef[] = [
-  { m: 'GET', p: '/health', f: () => ({ cmd: 'health', args: {} }) },
 
   // ===== AUTH =====
   { m: 'POST', p: '/auth/login', f: ({ body }) => ({ cmd: 'auth_login', args: { email: val(body, 'email'), password: val(body, 'password') } }) },

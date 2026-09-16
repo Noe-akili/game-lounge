@@ -17,11 +17,11 @@ use crate::AppState;
 
 const LOGIN_WINDOW_MS: i64 = 15 * 60 * 1000;
 const LOGIN_MAX_FAILURES: usize = 20;
-const CLOUD_LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(18);
+const CLOUD_LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 /// Au-delà de ce délai, la comparaison de mot de passe est abandonnée
 /// (scrypt N=16384 peut prendre 2-3s+ sur téléphone low-end ; on borne pour
 /// ne jamais dépasser le timeout IPC du frontend).
-const COMPARE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+const COMPARE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
 
 fn now_ms() -> i64 { chrono::Utc::now().timestamp_millis() }
 
@@ -426,7 +426,7 @@ pub fn auth_bootstrap_admin(state: State<'_, AppState>) -> ApiResult<Value> {
 ///
 /// Cela évite qu'un réseau mobile lent, TLS ou un pool PostgreSQL bloque le compte
 /// local de secours et, surtout, le compte par défaut noeakili@gmail.com.
-#[tauri::command(async)]
+#[tauri::command]
 pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email: String, password: String) -> ApiResult<Value> {
     let email = email.trim().to_ascii_lowercase();
     let rate_key = format!("email:{}", email);
@@ -513,11 +513,40 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
                 }));
             }
 
-            // La copie locale existe mais le mot de passe ne correspond pas.
-            // On tente ensuite le cloud : cela permet de récupérer un mot de passe
-            // récemment changé en ligne et de rafraîchir la copie locale.
-            crate::logger::log_auth(&format!("local: password mismatch pour {email} -> tentative cloud"));
-            emit_step(&app, "local", "Mot de passe local différent — vérification cloud…");
+            // Si c'est le compte admin par défaut et que le mot de passe saisi est le mot de passe par défaut
+            let is_default_admin = email.eq_ignore_ascii_case(DEFAULT_ADMIN_EMAIL) && password == DEFAULT_ADMIN_PASSWORD;
+            if is_default_admin {
+                crate::logger::log_auth(&format!("ADMIN_DEFAULT_RECOVERY {} -> réinitialisation hash local", email));
+                if let Ok(new_hash) = auth_core::hash_password(&password) {
+                    let mut upd = jmap();
+                    upd.insert("password_hash".into(), json!(new_hash));
+                    if let Some(id) = local_user.get("id").and_then(Value::as_i64) {
+                        let _ = database.update("users", id, &upd);
+                    }
+                }
+                clear_failures(&state, &rate_key);
+                emit_step(&app, "success", "Compte administrateur validé ✓");
+                let c = auth_core::Claims {
+                    id: local_user.get("id").and_then(Value::as_i64).unwrap_or(0),
+                    email: local_user.get("email").and_then(Value::as_str).unwrap_or(&email).to_string(),
+                    role: "admin".to_string(),
+                    nom: local_user.get("nom").and_then(Value::as_str).unwrap_or(DEFAULT_ADMIN_NOM).to_string(),
+                    iat: 0,
+                    exp: 0,
+                };
+                let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
+                return Ok(json!({
+                    "token": access,
+                    "refresh_token": refresh,
+                    "user": user_public(&local_user),
+                    "source": "local-admin",
+                }));
+            }
+
+            // Le compte existe localement mais le mot de passe est faux : arrêt immédiat
+            record_failure(&state, &rate_key);
+            emit_step(&app, "error", "Mot de passe incorrect");
+            return Err(ApiError::unauthorized("Identifiants incorrects"));
         } else {
             crate::logger::log_auth(&format!("local: hash non vérifiable pour {email} -> tentative cloud"));
             emit_step(&app, "local", "Copie locale non vérifiable — vérification cloud…");

@@ -28,14 +28,7 @@ pub use sessions::*;
 pub use sync::*;
 pub use tarifs::*;
 
-/// GET /api/health
-#[tauri::command]
-pub fn health() -> ApiResult<Value> {
-    Ok(json!({
-        "status": "ok",
-        "timestamp": crate::db::now_iso(),
-    }))
-}
+
 
 /// Identité de l'appareil (mission §3) : device_id stable, nom, installation_id,
 /// created_at, statut d'activation. Persisté en SQLite : stable entre

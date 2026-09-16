@@ -1,7 +1,9 @@
 {
   "identifier": "default",
-  "description": "Permissions par défaut pour la fenêtre principale",
-  "windows": ["main"],
+  "description": "Permissions par d\u00e9faut pour la fen\u00eatre principale",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "notification:default",
@@ -11,6 +13,7 @@
     "store:allow-set",
     "store:allow-delete",
     "store:allow-save",
-    "store:allow-load"
+    "store:allow-load",
+    "core:event:default"
   ]
 }
