@@ -394,7 +394,7 @@ pub async fn pull_users(_pool: &()) -> ApiResult<Vec<Value>> {
 
 /// Échappe une valeur pour insertion SQL en dur (protocole simple) : ' -> ''
 #[cfg(feature = "supabase-sync")]
-fn escape_sql(s: &str) -> String {
+pub fn escape_sql(s: &str) -> String {
     s.split("'").collect::<Vec<_>>().join("''")
 }
 
@@ -403,7 +403,7 @@ fn escape_sql(s: &str) -> String {
 /// de tokio-postgres ("prepared statement PGBOUNCER_N does not exist") — le protocole
 /// simple les évite totalement.
 #[cfg(feature = "supabase-sync")]
-async fn supabase_batch_execute(pool: &SupabasePool, sql: &str) -> Result<(), String> {
+pub async fn supabase_batch_execute(pool: &SupabasePool, sql: &str) -> Result<(), String> {
     match tokio::time::timeout(SUPABASE_QUERY_TIMEOUT, pool.client.batch_execute(sql)).await {
         Ok(Ok(())) => Ok(()),
         Ok(Err(e)) => Err(supabase_error_str(e)),
