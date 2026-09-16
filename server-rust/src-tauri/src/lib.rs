@@ -395,19 +395,31 @@ fn auto_sync_loop(handle: tauri::AppHandle, mut wake_rx: tokio::sync::mpsc::Unbo
                 }
             }
             let Some(state) = handle.try_state::<AppState>() else { continue };
-            // RÈGLE ABSOLUE : aucun processus métier avant l'authentification.
-            // Le drapeau est levé par auth_business_ready (accueil affiché).
-            if !state.session_authenticated.load(std::sync::atomic::Ordering::Relaxed) {
-                continue;
-            }
             let enabled = state.db.get_setting("sync_enabled").ok().and_then(|o| o).unwrap_or_default() == "1";
             let running = state.sync_state.lock().ok()
                 .and_then(|g| g.clone())
                 .and_then(|v| v.get("running").and_then(serde_json::Value::as_bool))
                 .unwrap_or(false);
-            if enabled && !running {
-                eprintln!("[sync-auto] sync déclenchée (instantanée ou périodique)");
-                let _ = crate::commands::sync::run_sync_impl(&handle, &state).await;
+            if enabled {
+                if !running {
+                    eprintln!("[sync-auto] sync bidirectionnelle lancée (push local + pull remote)");
+                    let _ = crate::commands::sync::run_sync_impl(&handle, &state).await;
+                } else {
+                    // Si une sync est déjà en vol, planifier un rattrapage à la fin pour ne rien perdre
+                    let retry_handle = handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+                        if let Some(st) = retry_handle.try_state::<AppState>() {
+                            let still_running = st.sync_state.lock().ok()
+                                .and_then(|g| g.clone())
+                                .and_then(|v| v.get("running").and_then(serde_json::Value::as_bool))
+                                .unwrap_or(false);
+                            if !still_running {
+                                let _ = crate::commands::sync::run_sync_impl(&retry_handle, &st).await;
+                            }
+                        }
+                    });
+                }
             }
         }
     });
