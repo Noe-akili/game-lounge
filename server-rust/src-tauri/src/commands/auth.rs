@@ -33,7 +33,7 @@ const DEFAULT_ADMIN_EMAIL: &str = "noeakili@gmail.com";
 const ALT_ADMIN_EMAIL: &str = "noeakili502@gmail.com";
 
 fn is_admin_email(email: &str) -> bool {
-    is_admin_email(&email) || email.eq_ignore_ascii_case(ALT_ADMIN_EMAIL)
+    email.eq_ignore_ascii_case(DEFAULT_ADMIN_EMAIL) || email.eq_ignore_ascii_case(ALT_ADMIN_EMAIL)
 }
 const DEFAULT_ADMIN_PASSWORD: &str = "mdp1234";
 const DEFAULT_ADMIN_NOM: &str = "Noé Akili";
