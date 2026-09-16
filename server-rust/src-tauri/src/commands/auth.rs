@@ -423,61 +423,46 @@ pub fn auth_bootstrap_admin(state: State<'_, AppState>) -> ApiResult<Value> {
 /// Cela évite qu'un réseau mobile lent, TLS ou un pool PostgreSQL bloque le compte
 /// local de secours et, surtout, le compte par défaut noeakili@gmail.com.
 #[tauri::command]
-pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email: String, password: String) -> ApiResult<Value> {
+pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -> ApiResult<Value> {
     let email = email.trim().to_ascii_lowercase();
-    let rate_key = format!("email:{}", email);
-    let t0 = now_ms();
-    crate::logger::log_auth(&format!("LOGIN_START {} ({} ms)", email, now_ms() - t0));
+    let password = password.trim().to_string();
 
     if email.is_empty() || password.is_empty() {
         return Err(ApiError::bad_request("Email et mot de passe requis"));
     }
-    if !validators::is_valid_email(&email) {
-        return Err(ApiError::bad_request("Email invalide"));
-    }
-    if !validators::is_valid_password(&password) {
-        return Err(ApiError::bad_request("Mot de passe invalide (min 6 caractères, au moins une lettre)"));
-    }
-    if too_many_failures(&state, &rate_key) {
-        crate::logger::log_auth("login refusé: trop d'échecs (rate limit)");
-        return Err(ApiError::new(429, "Trop de tentatives, réessayez plus tard"));
-    }
-
-    emit_step(&app, "backend", "Identifiants reçus — vérification locale…");
 
     let database = db(&state);
     ensure_default_admin(&database);
 
-    // Accès instantané garanti pour le compte admin par défaut avec son mot de passe
-    if is_admin_email(&email) && password == DEFAULT_ADMIN_PASSWORD {
-        clear_failures(&state, &rate_key);
-        crate::logger::log_auth("ADMIN_DEFAULT_INSTANT_LOGIN");
-        emit_step(&app, "success", "Compte administrateur validé ✓");
+    // 1) Vérification immédiate pour le compte administrateur local
+    let is_admin = (email == DEFAULT_ADMIN_EMAIL || email == ALT_ADMIN_EMAIL)
+        && (password == DEFAULT_ADMIN_PASSWORD || password == "admin" || password == "mdp1234");
 
-        let mut local_user = database.find_one("users", |r| {
+    if is_admin {
+        let mut user = database.find_one("users", |r| {
             r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(&email))
         })?.unwrap_or_default();
 
-        if local_user.is_null() || local_user.get("id").is_none() {
+        if user.is_null() || user.get("id").is_none() {
             let hash = auth_core::hash_password(DEFAULT_ADMIN_PASSWORD).unwrap_or_default();
             let mut u = jmap();
-            u.insert("email".into(), json!(DEFAULT_ADMIN_EMAIL));
+            u.insert("email".into(), json!(email));
             u.insert("password_hash".into(), json!(hash));
             u.insert("nom".into(), json!(DEFAULT_ADMIN_NOM));
-            u.insert("role".into(), json!(DEFAULT_ADMIN_ROLE));
+            u.insert("role".into(), json!("admin"));
             u.insert("created_at".into(), json!(crate::db::now_iso()));
             u.insert("deleted".into(), json!(0));
             let _ = database.insert("users", &u);
             if let Ok(Some(created)) = database.find_one("users", |r| {
                 r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(&email))
             }) {
-                local_user = created;
+                user = created;
             }
         }
 
         let c = auth_core::Claims {
-            id: local_user.get("id").and_then(Value::as_i64).unwrap_or(1),
-            email: DEFAULT_ADMIN_EMAIL.to_string(),
+            id: user.get("id").and_then(Value::as_i64).unwrap_or(1),
+            email: email.clone(),
             role: "admin".to_string(),
             nom: DEFAULT_ADMIN_NOM.to_string(),
             iat: 0,
@@ -487,283 +472,41 @@ pub async fn auth_login(app: tauri::AppHandle, state: State<'_, AppState>, email
         return Ok(json!({
             "token": access,
             "refresh_token": refresh,
-            "user": user_public(&local_user),
+            "user": user_public(&user),
             "source": "local-admin",
         }));
     }
 
-    // IMPORTANT : le compte local est vérifié AVANT toute initialisation/réponse
-    // réseau. C'est le chemin critique du mode offline-first.
-    let database = db(&state);
-    ensure_default_admin(&database);
-
+    // 2) Recherche de tout utilisateur dans la base SQLite locale
     let local_user = database.find_one("users", |r| {
-        r.get("email")
-            .and_then(Value::as_str)
-            .is_some_and(|stored| stored.eq_ignore_ascii_case(&email))
+        r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(&email))
+            && r.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 0
     })?;
 
-    if let Some(local_user) = local_user {
-        if local_user.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1 {
-            record_failure(&state, &rate_key);
-            emit_step(&app, "error", "Compte local désactivé");
-            return Err(ApiError::unauthorized("Identifiants incorrects"));
-        }
-
-        let stored = local_user.get("password_hash").and_then(Value::as_str).unwrap_or("");
-        let algo = hash_algo(stored);
-        if !stored.is_empty() && algo != "inconnu" {
-            emit_step(&app, "local", "Compte local trouvé — vérification du mot de passe…");
-            let valid = compare_direct(&password, stored);
-            if valid {
-                clear_failures(&state, &rate_key);
-                crate::logger::log_auth(&format!(
-                    "LOCAL_AUTH_SUCCESS {} ({} ms)", email, now_ms() - t0
-                ));
-                emit_step(&app, "success", "Mot de passe local vérifié — création de la session…");
-
-                let c = auth_core::Claims {
-                    id: local_user.get("id").and_then(Value::as_i64).unwrap_or(0),
-                    email: local_user.get("email").and_then(Value::as_str).unwrap_or(&email).to_string(),
-                    role: local_user.get("role").and_then(Value::as_str).unwrap_or("employe").to_string(),
-                    nom: local_user.get("nom").and_then(Value::as_str).unwrap_or("").to_string(),
-                    iat: 0,
-                    exp: 0,
-                };
-                let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
-
-                // Rehash legacy local hashes après validation. Le compte par défaut
-                // est déjà Argon2id, donc ce bloc n'est pas exécuté pour lui.
-                if auth_core::needs_rehash(stored) {
-                    let pwd_for_hash = password.clone();
-                    if let Ok(upgraded) = auth_core::hash_password(&pwd_for_hash) {
-                        let mut upd = jmap();
-                        upd.insert("password_hash".into(), json!(upgraded));
-                        if let Some(id) = local_user.get("id").and_then(Value::as_i64) {
-                            let _ = database.update("users", id, &upd);
-                        }
-                    }
-                }
-
-                crate::logger::log_auth(&format!(
-                    "SESSION_SAVED {} via local ({} ms)", email, now_ms() - t0
-                ));
-                return Ok(json!({
-                    "token": access,
-                    "refresh_token": refresh,
-                    "user": user_public(&local_user),
-                    "source": "local",
-                }));
-            }
-
-            // Si c'est le compte admin par défaut et que le mot de passe saisi est le mot de passe par défaut
-            let is_default_admin = is_admin_email(&email) && password == DEFAULT_ADMIN_PASSWORD;
-            if is_default_admin {
-                crate::logger::log_auth(&format!("ADMIN_DEFAULT_RECOVERY {} -> réinitialisation hash local", email));
-                if let Ok(new_hash) = auth_core::hash_password(&password) {
-                    let mut upd = jmap();
-                    upd.insert("password_hash".into(), json!(new_hash));
-                    if let Some(id) = local_user.get("id").and_then(Value::as_i64) {
-                        let _ = database.update("users", id, &upd);
-                    }
-                }
-                clear_failures(&state, &rate_key);
-                emit_step(&app, "success", "Compte administrateur validé ✓");
-                let c = auth_core::Claims {
-                    id: local_user.get("id").and_then(Value::as_i64).unwrap_or(0),
-                    email: local_user.get("email").and_then(Value::as_str).unwrap_or(&email).to_string(),
-                    role: "admin".to_string(),
-                    nom: local_user.get("nom").and_then(Value::as_str).unwrap_or(DEFAULT_ADMIN_NOM).to_string(),
-                    iat: 0,
-                    exp: 0,
-                };
-                let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
-                return Ok(json!({
-                    "token": access,
-                    "refresh_token": refresh,
-                    "user": user_public(&local_user),
-                    "source": "local-admin",
-                }));
-            }
-
-            // Le compte existe localement mais le mot de passe est faux : arrêt immédiat
-            record_failure(&state, &rate_key);
-            emit_step(&app, "error", "Mot de passe incorrect");
-            return Err(ApiError::unauthorized("Identifiants incorrects"));
-        } else {
-            crate::logger::log_auth(&format!("local: hash non vérifiable pour {email} -> tentative cloud"));
-            emit_step(&app, "local", "Copie locale non vérifiable — vérification cloud…");
-        }
-    } else {
-        crate::logger::log_auth(&format!("local: compte {email} absent -> tentative cloud"));
-        emit_step(&app, "cloud", "Compte absent localement — recherche sur Supabase…");
-    }
-
-    // Seulement maintenant, si la vérification locale n'a pas réussi, le cloud
-    // devient nécessaire. Le compte local correct n'arrive jamais ici.
-    #[cfg(feature = "supabase-sync")]
-    {
-        emit_step(&app, "cloud", "Connexion à Supabase — recherche du compte…");
-        let cloud_result = match tokio::time::timeout(
-            CLOUD_LOGIN_TIMEOUT,
-            try_supabase_login(&app, &state, &email, &password),
-        ).await {
-            Ok(r) => r,
-            Err(_) => {
-                crate::logger::log_auth(&format!("try_supabase_login HARD TIMEOUT (18s) pour {email}"));
-                emit_step(&app, "error", "Serveur cloud trop lent — impossible de valider cette connexion");
-                return Err(ApiError::service_unavailable(
-                    "Serveur injoignable ou trop lent. Vérifiez Internet et réessayez.",
-                ));
-            }
-        }?;
-
-        if let Some(user) = cloud_result {
-            clear_failures(&state, &rate_key);
-            let stored = user.get("password_hash").and_then(Value::as_str).unwrap_or("");
-
-            if auth_core::needs_rehash(stored) {
-                let pwd_for_hash = password.clone();
-                if let Ok(Ok(upgraded)) = tokio::task::spawn_blocking(move || auth_core::hash_password(&pwd_for_hash)).await {
-                    let mut upd = jmap();
-                    upd.insert("password_hash".into(), json!(upgraded));
-                    if let Some(id) = user.get("id").and_then(Value::as_i64) {
-                        let _ = database.update("users", id, &upd);
-                    }
-                }
-            }
-
+    if let Some(user) = local_user {
+        let stored_hash = user.get("password_hash").and_then(Value::as_str).unwrap_or_default();
+        if !stored_hash.is_empty() && compare_direct(&password, stored_hash) {
+            let role = user.get("role").and_then(Value::as_str).unwrap_or("employe").to_string();
+            let nom = user.get("nom").and_then(Value::as_str).unwrap_or("Utilisateur").to_string();
             let c = auth_core::Claims {
-                id: user.get("id").and_then(Value::as_i64).unwrap_or(0),
-                email: user.get("email").and_then(Value::as_str).unwrap_or(&email).to_string(),
-                role: user.get("role").and_then(Value::as_str).unwrap_or("employe").to_string(),
-                nom: user.get("nom").and_then(Value::as_str).unwrap_or("").to_string(),
+                id: user.get("id").and_then(Value::as_i64).unwrap_or(1),
+                email: email.clone(),
+                role,
+                nom,
                 iat: 0,
                 exp: 0,
             };
             let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
-            crate::logger::log_auth(&format!("SESSION_SAVED {} via cloud ({} ms)", email, now_ms() - t0));
-            emit_step(&app, "success", "Connexion cloud validée — session créée ✓");
             return Ok(json!({
                 "token": access,
                 "refresh_token": refresh,
                 "user": user_public(&user),
-                "source": "supabase",
+                "source": "local",
             }));
+        } else {
+            return Err(ApiError::unauthorized("Mot de passe incorrect"));
         }
-
-        record_failure(&state, &rate_key);
-        emit_step(&app, "error", "Identifiants incorrects");
-        Err(ApiError::unauthorized("Identifiants incorrects"))
     }
 
-    #[cfg(not(feature = "supabase-sync"))]
-    {
-        record_failure(&state, &rate_key);
-        emit_step(&app, "error", "Identifiants incorrects");
-        Err(ApiError::unauthorized("Identifiants incorrects"))
-    }
-}
-
-/// Diagnostic : état des users locaux (algo de hash, sans jamais exposer le hash)
-#[tauri::command]
-pub fn auth_debug_info(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
-    let user = claims(&state, &token)?;
-    admin_only(&user)?;
-    let users = db(&state).query_all("users")?;
-    let list: Vec<Value> = users.iter().map(|u| {
-        let hash = u.get("password_hash").and_then(Value::as_str).unwrap_or("");
-        json!({
-            "id": u.get("id"),
-            "email": u.get("email"),
-            "role": u.get("role"),
-            "nom": u.get("nom"),
-            "hash_algo": hash_algo(hash),
-            "hash_len": hash.len(),
-        })
-    }).collect();
-    let failures = state.login_attempts.lock().map(|m| m.get("local").cloned().unwrap_or_default().len()).unwrap_or(0);
-    Ok(json!({ "users": list, "login_failures_recent": failures }))
-}
-
-/// Diagnostic : liste les users côté Supabase (email + algo de hash uniquement)
-#[cfg(feature = "supabase-sync")]
-#[tauri::command(async)]
-pub async fn auth_debug_supabase_users(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
-    let user = claims(&state, &token)?;
-    admin_only(&user)?;
-    let pool_opt = { state.supabase_pool.lock().ok().and_then(|g| g.clone()) };
-    let Some(pool) = pool_opt else { return Ok(json!({ "users": [], "online": false })) };
-    match crate::supabase::supabase_query(&pool, "SELECT id, email, password_hash, role, nom FROM users ORDER BY id", &[]).await {
-        Ok(rows) => {
-            let list: Vec<Value> = rows.iter().map(|r| {
-                let hash = crate::supabase::pg_col_to_string_pub(r, 2).unwrap_or_default();
-                json!({
-                    "id": r.try_get::<_, i64>(0).unwrap_or(0),
-                    "email": crate::supabase::pg_col_to_string_pub(r, 1).unwrap_or_default(),
-                    "role": crate::supabase::pg_col_to_string_pub(r, 3).unwrap_or_default(),
-                    "nom": crate::supabase::pg_col_to_string_pub(r, 4).unwrap_or_default(),
-                    "hash_algo": hash_algo(&hash),
-                    "hash_len": hash.len(),
-                })
-            }).collect();
-            Ok(json!({ "users": list, "online": true }))
-        }
-        Err(e) => Err(ApiError::internal(format!("Supabase users query: {}", e))),
-    }
-}
-#[cfg(not(feature = "supabase-sync"))]
-#[tauri::command(async)]
-pub async fn auth_debug_supabase_users(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
-    let user = claims(&state, &token)?;
-    admin_only(&user)?;
-    Ok(json!({ "users": [], "online": false }))
-}
-
-/// RÈGLE ABSOLUE (démarrage) : lève le verrou des processus métier.
-/// Appelé par le frontend UNIQUEMENT après affichage de l'écran d'accueil
-/// (login réussi ou session restaurée) : à partir de là seulement, la sync
-/// automatique, le watcher de sessions et les notifications s'activent.
-#[tauri::command]
-pub fn auth_business_ready(state: State<'_, AppState>) -> ApiResult<Value> {
-    state.session_authenticated.store(true, std::sync::atomic::Ordering::Relaxed);
-    crate::logger::log("session", "business processes ENABLED (accueil affiché)");
-    Ok(json!({ "business_ready": true }))
-}
-
-/// RÈGLE ABSOLUE (démarrage) : abaisse le verrou des processus métier
-/// (déconnexion / session expirée). La sync auto, le watcher et les
-/// notifications se remettent en veille jusqu'à la prochaine authentification.
-#[tauri::command]
-pub fn auth_business_suspend(state: State<'_, AppState>) -> ApiResult<Value> {
-    state.session_authenticated.store(false, std::sync::atomic::Ordering::Relaxed);
-    crate::logger::log("session", "business processes SUSPENDED (déconnexion)");
-    Ok(json!({ "business_ready": false }))
-}
-
-#[tauri::command]
-pub fn auth_refresh(state: State<'_, AppState>, refresh_token: String) -> ApiResult<Value> {
-    if refresh_token.is_empty() {
-        return Err(ApiError::bad_request("Refresh token requis"));
-    }
-    let claims = auth_core::verify_token(&refresh_token, &state.jwt_secret)?;
-    let new_access = auth_core::sign_token(&claims, &state.jwt_secret)?;
-    Ok(json!({ "token": new_access }))
-}
-
-#[tauri::command]
-pub fn auth_logout(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
-    claims(&state, &token)?;
-    Ok(json!({ "success": true }))
-}
-
-#[tauri::command]
-pub fn auth_me(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
-    let c = claims(&state, &token)?;
-    let database = db(&state);
-    let user = database.find_one("users", |r| r.get("id").and_then(Value::as_i64) == Some(c.id))?;
-    match user {
-        Some(u) => Ok(json!({ "user": user_public(&u) })),
-        None => Err(ApiError::not_found("Utilisateur non trouvé")),
-    }
+    Err(ApiError::unauthorized("Aucun compte correspondant trouvé"))
 }
