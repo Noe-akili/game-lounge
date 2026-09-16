@@ -477,13 +477,15 @@ pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -
         }));
     }
 
-    // 2) Recherche de tout utilisateur dans la base SQLite locale
+    // 2) Recherche dans SQLite locale
     let local_user = database.find_one("users", |r| {
         r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(&email))
             && r.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 0
     })?;
 
-    if let Some(user) = local_user {
+    let mut local_user_exists = false;
+    if let Some(user) = &local_user {
+        local_user_exists = true;
         let stored_hash = user.get("password_hash").and_then(Value::as_str).unwrap_or_default();
         if !stored_hash.is_empty() && compare_direct(&password, stored_hash) {
             let role = user.get("role").and_then(Value::as_str).unwrap_or("employe").to_string();
@@ -500,15 +502,149 @@ pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -
             return Ok(json!({
                 "token": access,
                 "refresh_token": refresh,
-                "user": user_public(&user),
+                "user": user_public(user),
                 "source": "local",
             }));
-        } else {
-            return Err(ApiError::unauthorized("Mot de passe incorrect"));
         }
     }
 
-    Err(ApiError::unauthorized("Aucun compte correspondant trouvé"))
+    // 3) Vérification discrète Supabase (bornée à 3s max, non-bloquante)
+    #[cfg(feature = "supabase-sync")]
+    {
+        let pool_opt = state.supabase_pool.lock().ok().and_then(|g| g.clone());
+        if let Some(pool) = pool_opt {
+            let res = tauri::async_runtime::block_on(async {
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(3000),
+                    crate::supabase::fetch_supabase_user(&pool, &email),
+                ).await
+            });
+
+            match res {
+                Ok(Ok(Some(cloud_user))) => {
+                    if compare_direct(&password, &cloud_user.password_hash) {
+                        let mut u = jmap();
+                        u.insert("email".into(), json!(cloud_user.email));
+                        u.insert("password_hash".into(), json!(cloud_user.password_hash));
+                        u.insert("nom".into(), json!(cloud_user.nom));
+                        u.insert("role".into(), json!(cloud_user.role));
+                        u.insert("created_at".into(), json!(cloud_user.created_at.unwrap_or_else(crate::db::now_iso)));
+                        u.insert("deleted".into(), json!(0));
+
+                        if let Ok(Some(existing)) = database.find_one_all("users", |r| {
+                            r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(&email))
+                        }) {
+                            if let Some(id) = existing.get("id").and_then(Value::as_i64) {
+                                let _ = database.update("users", id, &u);
+                            }
+                        } else {
+                            let _ = database.insert("users", &u);
+                        }
+
+                        let c = auth_core::Claims {
+                            id: cloud_user.id,
+                            email: cloud_user.email.clone(),
+                            role: cloud_user.role.clone(),
+                            nom: cloud_user.nom.clone(),
+                            iat: 0,
+                            exp: 0,
+                        };
+                        let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
+                        return Ok(json!({
+                            "token": access,
+                            "refresh_token": refresh,
+                            "user": {
+                                "id": cloud_user.id,
+                                "email": cloud_user.email,
+                                "role": cloud_user.role,
+                                "nom": cloud_user.nom,
+                            },
+                            "source": "supabase",
+                        }));
+                    } else {
+                        return Err(ApiError::unauthorized("Mot de passe incorrect (compte vérifié sur Supabase)"));
+                    }
+                }
+                Ok(Ok(None)) => {
+                    if local_user_exists {
+                        return Err(ApiError::unauthorized("Mot de passe incorrect (non trouvé sur Supabase)"));
+                    } else {
+                        return Err(ApiError::unauthorized("Compte introuvable (vérifié en local et sur Supabase)"));
+                    }
+                }
+                Ok(Err(e)) => {
+                    if local_user_exists {
+                        return Err(ApiError::unauthorized(format!("Mot de passe incorrect (Supabase indisponible : {})", e.message)));
+                    } else {
+                        return Err(ApiError::unauthorized(format!("Compte introuvable en local (Supabase indisponible : {})", e.message)));
+                    }
+                }
+                Err(_) => {
+                    if local_user_exists {
+                        return Err(ApiError::unauthorized("Mot de passe incorrect (Supabase injoignable : délai dépassé)"));
+                    } else {
+                        return Err(ApiError::unauthorized("Compte introuvable en local (Supabase injoignable : délai dépassé)"));
+                    }
+                }
+            }
+        } else {
+            if local_user_exists {
+                return Err(ApiError::unauthorized("Mot de passe incorrect (compte local existant, Supabase non connecté)"));
+            } else {
+                return Err(ApiError::unauthorized("Compte introuvable en local (Supabase non connecté / hors-ligne)"));
+            }
+        }
+    }
+
+    #[cfg(not(feature = "supabase-sync"))]
+    {
+        if local_user_exists {
+            return Err(ApiError::unauthorized("Mot de passe incorrect"));
+        } else {
+            return Err(ApiError::unauthorized("Aucun compte correspondant trouvé"));
+        }
+    }
+}
+
+#[tauri::command]
+pub fn auth_test_supabase(state: State<'_, AppState>) -> ApiResult<Value> {
+    #[cfg(feature = "supabase-sync")]
+    {
+        let pool_opt = state.supabase_pool.lock().ok().and_then(|g| g.clone());
+        let Some(pool) = pool_opt else {
+            return Ok(json!({
+                "connected": false,
+                "message": "Supabase n'est pas connecté (hors-ligne ou non initialisé)"
+            }));
+        };
+        let res = tauri::async_runtime::block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_millis(3000),
+                crate::supabase::ping(&pool),
+            ).await
+        });
+        match res {
+            Ok(Ok(_)) => Ok(json!({
+                "connected": true,
+                "message": "Connexion Supabase active et joignable"
+            })),
+            Ok(Err(err)) => Ok(json!({
+                "connected": false,
+                "message": format!("Supabase a répondu avec une erreur : {}", err)
+            })),
+            Err(_) => Ok(json!({
+                "connected": false,
+                "message": "Délai dépassé (>3s) avec Supabase"
+            })),
+        }
+    }
+    #[cfg(not(feature = "supabase-sync"))]
+    {
+        Ok(json!({
+            "connected": false,
+            "message": "Supabase désactivé dans cette version"
+        }))
+    }
 }
 
 #[tauri::command]

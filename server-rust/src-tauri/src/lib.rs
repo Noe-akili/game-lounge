@@ -282,6 +282,7 @@ pub fn run() {
             commands::auth_refresh,
             commands::auth_debug_info,
             commands::auth_debug_supabase_users,
+            commands::auth_test_supabase,
             // ==== CONSOLES ====
             commands::consoles_list,
             commands::consoles_get,

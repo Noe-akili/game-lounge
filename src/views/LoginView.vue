@@ -38,6 +38,12 @@
           Entrer sans mot de passe (secours)
         </button>
 
+        <!-- Test diagnostic discret de Supabase -->
+        <button type="button" @click="testSupabase" :disabled="testingSupabase || loginPending"
+                class="w-full text-center text-xs text-txt-dim hover:text-cyan-400 underline underline-offset-4 py-1 transition-colors">
+          {{ testingSupabase ? 'Test Supabase en cours…' : 'Tester la connexion Supabase (diagnostic)' }}
+        </button>
+
         <!-- Verdict final : affiché à la réponse OU à 0 (jamais avant) -->
         <div v-if="verdict" class="text-sm text-center font-medium" :class="verdictClass">{{ verdict }}</div>
 
@@ -288,21 +294,50 @@ async function bypassLogin() {
   }
 }
 
+const testingSupabase = ref(false)
+
+async function testSupabase() {
+  if (testingSupabase.value) return
+  testingSupabase.value = true
+  pushStep('Diagnostic Supabase en cours…')
+  try {
+    const res: any = await api.post('/auth/test-supabase')
+    if (res?.connected) {
+      pushStep(`Supabase en ligne : ${res.message} ✓`, 'ok')
+    } else {
+      failStep(`Supabase injoignable : ${res?.message || 'hors-ligne'}`)
+    }
+  } catch (err: any) {
+    failStep(`Test Supabase : ${err?.message || err}`)
+  } finally {
+    testingSupabase.value = false
+  }
+}
+
 async function handleLogin() {
   if (loginPending.value) return
   if (!form.email || !form.password) {
-    error.value = "Saisissez votre email et votre mot de passe"
+    verdict.value = "Saisissez votre email et votre mot de passe"
     return
   }
   loginPending.value = true
-  error.value = ""
+  verdict.value = ""
+  success.value = false
+  const mail = form.email.trim().toLowerCase()
+  pushStep(`Vérification des identifiants (${mail})…`)
   try {
-    await auth.login(form.email.trim().toLowerCase(), form.password)
+    const data: any = await auth.login(mail, form.password)
+    const source = data?.source || 'local'
+    pushStep(`Connexion validée [source: ${source}] ✓`, 'ok')
+    verdict.value = '✓ Connecté — ouverture de votre espace…'
     success.value = true
     const role = auth.user?.role || "employe"
     router.replace(role === "admin" ? "/admin" : "/dashboard")
   } catch (e: any) {
-    error.value = e?.message || e?.error || "Identifiants incorrects"
+    const msg = e?.message || e?.error || "Identifiants incorrects"
+    failStep(msg)
+    verdict.value = msg
+    success.value = false
   } finally {
     loginPending.value = false
   }
