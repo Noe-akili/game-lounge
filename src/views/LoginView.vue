@@ -30,13 +30,6 @@
           Vérification en cours… réponse dans <span class="font-mono font-bold text-neon-violet">{{ countdownDisplay }}</span>
         </div>
 
-        <!-- BYPASS (secours) : entre sans mot de passe via la session admin
-             locale (auth_bootstrap_admin). À utiliser quand le login normal
-             est bloqué (cloud injoignable, compte inconnu de l'appareil…). -->
-        <button type="button" @click="bypassLogin" :disabled="loginPending"
-                class="w-full text-center text-xs text-txt-dim hover:text-neon-violet underline underline-offset-4 py-1">
-          Entrer sans mot de passe (secours)
-        </button>
 
         <!-- Test diagnostic discret de Supabase -->
         <button type="button" @click="testSupabase" :disabled="testingSupabase || loginPending"

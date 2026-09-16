@@ -361,7 +361,12 @@ async fn try_supabase_login(app: &tauri::AppHandle, state: &State<'_, AppState>,
 /// JAMAIS d'identité fantôme id=0 : le token porte une vraie ligne users, sinon
 /// auth_me répond 404 et la session est réputée invalide.
 #[tauri::command]
-pub fn auth_bootstrap_admin(state: State<'_, AppState>) -> ApiResult<Value> {
+pub fn auth_bootstrap_admin(_state: State<'_, AppState>) -> ApiResult<Value> {
+    Err(ApiError::forbidden("Le mode secours sans mot de passe a été désactivé. Veuillez vous connecter avec vos identifiants."))
+}
+
+#[allow(dead_code)]
+fn auth_bootstrap_admin_disabled(state: State<'_, AppState>) -> ApiResult<Value> {
     let database = db(&state);
     // 1) Seed garanti (idempotent, ~0ms s'il existe déjà).
     ensure_default_admin(&database);

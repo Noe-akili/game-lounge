@@ -1,46 +1,111 @@
-// /api/users - gestion des utilisateurs (admin, stockage local).
+// /api/users - Gestion des utilisateurs 100% sur Supabase.
+// Aucun utilisateur ni mot de passe n'est stocké en local dans SQLite.
+// Toute action (list, get, create, update, delete) nécessite une connexion Internet.
 
 use serde_json::{Value, json};
 use tauri::State;
 
-use crate::auth as auth_core;
-use crate::commands::{claims, db, get_by_id, jmap};
+use crate::commands::claims;
 use crate::error::{ApiError, ApiResult};
+use crate::supabase::{escape_sql, supabase_query, supabase_batch_execute, SupabasePool, init_supabase_pool};
 use crate::validators;
 use crate::AppState;
 
-fn to_public(row: &Value) -> Value {
-    json!({
-        "id": row["id"],
-        "email": row["email"],
-        "role": row["role"],
-        "nom": row["nom"],
-        "created_at": row["created_at"],
-    })
+/// Récupère ou réinitialise le pool Supabase pour garantir l'accès réseau
+async fn get_supabase(state: &AppState) -> ApiResult<SupabasePool> {
+    if let Ok(guard) = state.supabase_pool.lock() {
+        if let Some(ref pool) = *guard {
+            return Ok(pool.clone());
+        }
+    }
+    // Tentative de connexion immédiate
+    if let Some(pool) = init_supabase_pool().await {
+        if let Ok(mut guard) = state.supabase_pool.lock() {
+            *guard = Some(pool.clone());
+        }
+        return Ok(pool);
+    }
+    Err(ApiError::new(503, "Connexion Internet requise pour gérer les utilisateurs"))
 }
 
-/// GET /api/users
+fn pg_col_str(row: &tokio_postgres::Row, idx: usize) -> Option<String> {
+    if let Ok(s) = row.try_get::<_, &str>(idx) {
+        return Some(s.to_string());
+    }
+    if let Ok(s) = row.try_get::<_, String>(idx) {
+        return Some(s);
+    }
+    None
+}
+
+/// GET /api/users - Liste des utilisateurs directement depuis Supabase
 #[tauri::command]
-pub fn users_list(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+pub async fn users_list(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
     crate::commands::admin_only(&user)?;
-    let users = db(&state).query_all("users")?;
-    Ok(Value::Array(users.iter().map(to_public).collect()))
+
+    let pool = get_supabase(&state).await?;
+    let sql = "SELECT id, email, role, nom, created_at FROM users WHERE deleted = 0 ORDER BY id ASC";
+    let rows = supabase_query(&pool, sql, &[])
+        .await
+        .map_err(|e| ApiError::new(503, &format!("Erreur Supabase: {}", e)))?;
+
+    let mut list = Vec::new();
+    for r in rows {
+        let id = r.try_get::<_, i64>(0).unwrap_or(0);
+        let email = pg_col_str(&r, 1).unwrap_or_default();
+        let role = pg_col_str(&r, 2).unwrap_or_else(|| "employe".to_string());
+        let nom = pg_col_str(&r, 3).unwrap_or_default();
+        let created_at = pg_col_str(&r, 4).unwrap_or_default();
+
+        list.push(json!({
+            "id": id,
+            "email": email,
+            "role": role,
+            "nom": nom,
+            "created_at": created_at,
+        }));
+    }
+
+    Ok(Value::Array(list))
 }
 
-/// GET /api/users/:id
+/// GET /api/users/:id - Détail d'un utilisateur depuis Supabase
 #[tauri::command]
-pub fn users_get(state: State<'_, AppState>, token: Option<String>, id: i64) -> ApiResult<Value> {
+pub async fn users_get(state: State<'_, AppState>, token: Option<String>, id: i64) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
     crate::commands::admin_only(&user)?;
     if !validators::is_valid_id(id) {
         return Err(ApiError::bad_request("ID invalide"));
     }
-    let row = get_by_id(db(&state), "users", id, "Utilisateur non trouvé")?;
-    Ok(to_public(&row))
+
+    let pool = get_supabase(&state).await?;
+    let sql = format!("SELECT id, email, role, nom, created_at FROM users WHERE id = {} AND deleted = 0 LIMIT 1", id);
+    let rows = supabase_query(&pool, &sql, &[])
+        .await
+        .map_err(|e| ApiError::new(503, &format!("Erreur Supabase: {}", e)))?;
+
+    if rows.is_empty() {
+        return Err(ApiError::not_found("Utilisateur non trouvé"));
+    }
+
+    let r = &rows[0];
+    let uid = r.try_get::<_, i64>(0).unwrap_or(0);
+    let email = pg_col_str(r, 1).unwrap_or_default();
+    let role = pg_col_str(r, 2).unwrap_or_else(|| "employe".to_string());
+    let nom = pg_col_str(r, 3).unwrap_or_default();
+    let created_at = pg_col_str(r, 4).unwrap_or_default();
+
+    Ok(json!({
+        "id": uid,
+        "email": email,
+        "role": role,
+        "nom": nom,
+        "created_at": created_at,
+    }))
 }
 
-/// POST /api/users - SYNCHRONE et direct (<30ms, évite ANR et timeout IPC Android)
+/// POST /api/users - Création d'un utilisateur DIRECTEMENT sur Supabase
 #[tauri::command]
 pub async fn users_create(
     state: State<'_, AppState>,
@@ -52,6 +117,7 @@ pub async fn users_create(
 ) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
     crate::commands::admin_only(&user)?;
+
     let email = email.trim();
     let nom = nom.trim();
     if email.is_empty() || password.is_empty() || role.is_empty() || nom.is_empty() {
@@ -71,47 +137,72 @@ pub async fn users_create(
     if !validators::is_valid_role(&role) {
         return Err(ApiError::bad_request("Rôle invalide"));
     }
-    let db = db(&state);
-    let hash = auth_core::hash_password(&password)?;
 
-    // FIX utilisateurs fantômes : si l'utilisateur existe déjà mais est soft-deleted,
-    // on le réactive avec les nouvelles valeurs
-    if let Some(prev) = db.find_one_all("users", |u| {
-        u.get("email").and_then(Value::as_str).is_some_and(|e| e.eq_ignore_ascii_case(email))
-            && u.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1
-    })? {
-        let id = prev.get("id").and_then(Value::as_i64).unwrap_or(0);
-        if id > 0 {
-            let mut upd = jmap();
-            upd.insert("deleted".into(), json!(0));
-            upd.insert("password_hash".into(), json!(hash));
-            upd.insert("nom".into(), json!(validators::sanitize_input(nom, 50)));
-            upd.insert("role".into(), json!(role));
-            upd.insert("created_at".into(), json!(crate::db::now_iso()));
-            let revived = db.update("users", id, &upd)?;
-            return Ok(to_public(&revived));
+    let pool = get_supabase(&state).await?;
+
+    // Vérifier l'unicité sur Supabase
+    let check_sql = format!(
+        "SELECT id, deleted FROM users WHERE LOWER(email) = LOWER('{}') LIMIT 1",
+        escape_sql(email)
+    );
+    let existing = supabase_query(&pool, &check_sql, &[])
+        .await
+        .map_err(|e| ApiError::new(503, &format!("Erreur Supabase: {}", e)))?;
+
+    // Hachage sécurisé bcrypt (léger, ne crashe pas sur Android)
+    let hash = bcrypt::hash(&password, 8)
+        .map_err(|e| ApiError::internal(format!("Bcrypt: {}", e)))?;
+
+    if !existing.is_empty() {
+        let r = &existing[0];
+        let ex_id = r.try_get::<_, i64>(0).unwrap_or(0);
+        let deleted = r.try_get::<_, i32>(1).unwrap_or(0);
+        if deleted == 1 {
+            // Réactivation du compte soft-deleted sur Supabase
+            let upd_sql = format!(
+                "UPDATE users SET nom = '{}', role = '{}', password_hash = '{}', deleted = 0 WHERE id = {}",
+                escape_sql(nom), escape_sql(&role), escape_sql(&hash), ex_id
+            );
+            supabase_batch_execute(&pool, &upd_sql)
+                .await
+                .map_err(|e| ApiError::new(503, &format!("Erreur réactivation Supabase: {}", e)))?;
+
+            return Ok(json!({
+                "id": ex_id,
+                "email": email,
+                "role": role,
+                "nom": nom,
+            }));
+        } else {
+            return Err(ApiError::new(409, "Cet email est déjà utilisé sur Supabase"));
         }
     }
-    if db
-        .find_one("users", |u| {
-            u.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 0
-                && u.get("email").and_then(Value::as_str).is_some_and(|e| e.eq_ignore_ascii_case(email))
-        })?
-        .is_some()
-    {
-        return Err(ApiError::new(409, "Email déjà utilisé"));
-    }
-    let mut row = jmap();
-    row.insert("email".into(), json!(validators::sanitize_input(email, 100)));
-    row.insert("password_hash".into(), json!(hash));
-    row.insert("nom".into(), json!(validators::sanitize_input(nom, 50)));
-    row.insert("role".into(), json!(role));
-    row.insert("created_at".into(), json!(crate::db::now_iso()));
-    let created = db.insert("users", &row)?;
-    Ok(to_public(&created))
+
+    // Insertion sur Supabase
+    let insert_sql = format!(
+        "INSERT INTO users (email, password_hash, role, nom, created_at, deleted) VALUES ('{}', '{}', '{}', '{}', NOW(), 0) RETURNING id",
+        escape_sql(email), escape_sql(&hash), escape_sql(&role), escape_sql(nom)
+    );
+
+    let rows = supabase_query(&pool, &insert_sql, &[])
+        .await
+        .map_err(|e| ApiError::new(503, &format!("Erreur insertion Supabase: {}", e)))?;
+
+    let new_id = if !rows.is_empty() {
+        rows[0].try_get::<_, i64>(0).unwrap_or(0)
+    } else {
+        0
+    };
+
+    Ok(json!({
+        "id": new_id,
+        "email": email,
+        "role": role,
+        "nom": nom,
+    }))
 }
 
-/// PUT /api/users/:id - SYNCHRONE et direct (<30ms, évite timeout IPC)
+/// PUT /api/users/:id - Mise à jour d'un utilisateur DIRECTEMENT sur Supabase
 #[tauri::command]
 pub async fn users_update(
     state: State<'_, AppState>,
@@ -122,76 +213,100 @@ pub async fn users_update(
     nom: Option<String>,
     password: Option<String>,
 ) -> ApiResult<Value> {
-    let current = claims(&state, &token)?;
-    crate::commands::admin_only(&current)?;
+    let user = claims(&state, &token)?;
+    crate::commands::admin_only(&user)?;
     if !validators::is_valid_id(id) {
         return Err(ApiError::bad_request("ID invalide"));
     }
-    let db = db(&state);
-    get_by_id(db, "users", id, "Utilisateur non trouvé")?;
-    let mut updates = jmap();
-    if let Some(e) = email {
-        let e_trimmed = e.trim();
-        if !validators::is_valid_email(e_trimmed) {
+
+    let pool = get_supabase(&state).await?;
+
+    let mut sets = Vec::new();
+
+    if let Some(ref em) = email {
+        let em = em.trim();
+        if !validators::is_valid_email(em) {
             return Err(ApiError::bad_request("Email invalide"));
         }
-        // Vérifier si un AUTRE utilisateur actif utilise déjà cet email
-        if db.find_one("users", |u| {
-            let uid = u.get("id").and_then(Value::as_i64).unwrap_or(0);
-            uid != id
-                && u.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 0
-                && u.get("email").and_then(Value::as_str).is_some_and(|existing| existing.eq_ignore_ascii_case(e_trimmed))
-        })?.is_some() {
-            return Err(ApiError::new(409, "Cet email est déjà utilisé par un autre utilisateur"));
+        // Vérifier conflit avec un autre utilisateur sur Supabase
+        let check_sql = format!(
+            "SELECT id FROM users WHERE LOWER(email) = LOWER('{}') AND id <> {} AND deleted = 0 LIMIT 1",
+            escape_sql(em), id
+        );
+        let clash = supabase_query(&pool, &check_sql, &[])
+            .await
+            .map_err(|e| ApiError::new(503, &format!("Erreur Supabase: {}", e)))?;
+        if !clash.is_empty() {
+            return Err(ApiError::new(409, "Email déjà utilisé par un autre utilisateur sur Supabase"));
         }
-        updates.insert("email".into(), json!(validators::sanitize_input(e_trimmed, 100)));
+        sets.push(format!("email = '{}'", escape_sql(em)));
     }
-    if let Some(r) = role {
-        if !validators::is_valid_role(&r) {
+
+    if let Some(ref n) = nom {
+        let n = n.trim();
+        if !validators::is_valid_nom(n) {
+            return Err(ApiError::bad_request("Nom invalide"));
+        }
+        sets.push(format!("nom = '{}'", escape_sql(n)));
+    }
+
+    if let Some(ref r) = role {
+        if !validators::is_valid_role(r) {
             return Err(ApiError::bad_request("Rôle invalide"));
         }
-        updates.insert("role".into(), json!(r));
+        sets.push(format!("role = '{}'", escape_sql(r)));
     }
-    if let Some(n) = nom {
-        let n_trimmed = n.trim();
-        if !validators::is_valid_nom(n_trimmed) {
-            return Err(ApiError::bad_request("Nom invalide (2-50 caractères)"));
-        }
-        updates.insert("nom".into(), json!(validators::sanitize_input(n_trimmed, 50)));
-    }
-    if let Some(p) = password {
-        let p_trimmed = p.trim();
-        if !p_trimmed.is_empty() {
-            if !validators::is_valid_password(p_trimmed) {
-                return Err(ApiError::bad_request(
-                    "Mot de passe invalide (min 6 caractères, au moins une lettre)",
-                ));
+
+    if let Some(ref pwd) = password {
+        let pwd = pwd.trim();
+        if !pwd.is_empty() {
+            if !validators::is_valid_password(pwd) {
+                return Err(ApiError::bad_request("Mot de passe invalide (min 6 caractères, au moins une lettre)"));
             }
-            let hash = auth_core::hash_password(p_trimmed)?;
-            updates.insert("password_hash".into(), json!(hash));
+            let hash = bcrypt::hash(pwd, 8)
+                .map_err(|e| ApiError::internal(format!("Bcrypt: {}", e)))?;
+            sets.push(format!("password_hash = '{}'", escape_sql(&hash)));
         }
     }
-    let updated = db.update("users", id, &updates)?;
-    Ok(to_public(&updated))
+
+    if sets.is_empty() {
+        return Err(ApiError::bad_request("Aucun champ à modifier"));
+    }
+
+    let update_sql = format!(
+        "UPDATE users SET {} WHERE id = {} AND deleted = 0",
+        sets.join(", "), id
+    );
+
+    supabase_batch_execute(&pool, &update_sql)
+        .await
+        .map_err(|e| ApiError::new(503, &format!("Erreur mise à jour Supabase: {}", e)))?;
+
+    Ok(json!({
+        "id": id,
+        "email": email,
+        "role": role,
+        "nom": nom,
+    }))
 }
 
-/// DELETE /api/users/:id
+/// DELETE /api/users/:id - Suppression (soft-delete) DIRECTEMENT sur Supabase
 #[tauri::command]
-pub fn users_delete(
-    state: State<'_, AppState>,
-    token: Option<String>,
-    id: i64,
-) -> ApiResult<Value> {
-    let current = claims(&state, &token)?;
-    crate::commands::admin_only(&current)?;
+pub async fn users_delete(state: State<'_, AppState>, token: Option<String>, id: i64) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    crate::commands::admin_only(&user)?;
     if !validators::is_valid_id(id) {
         return Err(ApiError::bad_request("ID invalide"));
     }
-    if id == current.id {
-        return Err(ApiError::bad_request("Impossible de supprimer votre propre compte"));
+    if user.id == id {
+        return Err(ApiError::bad_request("Impossible de supprimer son propre compte"));
     }
-    let db = db(&state);
-    get_by_id(db, "users", id, "Utilisateur non trouvé")?;
-    db.remove("users", id)?;
-    Ok(json!({ "success": true }))
+
+    let pool = get_supabase(&state).await?;
+    let sql = format!("UPDATE users SET deleted = 1 WHERE id = {}", id);
+    supabase_batch_execute(&pool, &sql)
+        .await
+        .map_err(|e| ApiError::new(503, &format!("Erreur suppression Supabase: {}", e)))?;
+
+    Ok(json!({ "id": id, "deleted": true }))
 }
