@@ -12,6 +12,14 @@ const K_TOKEN = 'gl_token'
 const K_REFRESH = 'gl_refresh_token'
 const K_USER = 'gl_user'
 
+// Pont Tauri direct (sans import afin de rester utilisable partout).
+function tauriInvoke(cmd: string, args: Record<string, unknown>): Promise<any> {
+  const w: any = window as any
+  const fn = w.__TAURI__?.core?.invoke || w.__TAURI_INTERNALS__?.invoke
+  if (!fn) return Promise.reject(new Error('Tauri indisponible'))
+  return Promise.resolve(fn.call(w.__TAURI__?.core || w.__TAURI_INTERNALS__, cmd, args))
+}
+
 export const SessionStorage = {
   /** Lit la session persistée (localStorage prioritaire, fallback sessionStorage). */
   getSessionSync(): StoredSession {
@@ -50,6 +58,9 @@ export const SessionStorage = {
         if (s.refresh_token) sessionStorage.setItem(K_REFRESH, s.refresh_token)
         if (s.user) sessionStorage.setItem(K_USER, JSON.stringify(s.user))
       }
+      // Copie durable cote Rust/SQLite : le localStorage du WebView Android
+      // n'est pas garanti persistant apres redemarrage de l'application.
+      void this.saveDurable(s).catch(() => {})
     } catch (e) {
       console.warn('[SessionStorage] Erreur sauvegarde session:', e)
     }
@@ -68,6 +79,7 @@ export const SessionStorage = {
         sessionStorage.removeItem(K_REFRESH)
         sessionStorage.removeItem(K_USER)
       }
+      void this.clearDurable().catch(() => {})
     } catch (e) {
       console.warn('[SessionStorage] Erreur nettoyage session:', e)
     }
@@ -87,5 +99,31 @@ export const SessionStorage = {
     } catch {
       return null
     }
+  },
+
+  /** Sauvegarde durable cote Rust (SQLite settings). */
+  async saveDurable(s: StoredSession): Promise<void> {
+    await tauriInvoke('auth_session_save', {
+      payload: JSON.stringify({ token: s.token, refresh_token: s.refresh_token, user: s.user }),
+    })
+  },
+
+  /** Charge la session depuis la sauvegarde durable Rust (SQLite). */
+  async loadDurable(): Promise<StoredSession | null> {
+    try {
+      const res = await tauriInvoke('auth_session_load', {})
+      const raw = res?.session
+      if (!raw) return null
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+      if (parsed?.token && parsed?.user) return parsed as StoredSession
+      return null
+    } catch {
+      return null
+    }
+  },
+
+  /** Efface la sauvegarde durable cote Rust (Logout). */
+  async clearDurable(): Promise<void> {
+    try { await tauriInvoke('auth_session_clear', {}) } catch {}
   }
 }

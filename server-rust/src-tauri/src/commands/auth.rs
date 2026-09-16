@@ -751,3 +751,37 @@ pub fn auth_me(state: State<'_, AppState>, token: Option<String>) -> ApiResult<V
         None => Err(ApiError::not_found("Utilisateur non trouvé")),
     }
 }
+
+// ===== Session persistante durable (SQLite) =====
+// Le localStorage du WebView Android n'est pas garanti persistant apres un
+// redemarrage de l'application. On garde donc une copie de la session dans
+// la table settings de SQLite pour pouvoir restaurer la connexion.
+
+#[tauri::command]
+pub fn auth_session_save(
+    state: tauri::State<'_, crate::AppState>,
+    payload: String,
+) -> crate::error::ApiResult<serde_json::Value> {
+    let db = crate::commands::db(&state);
+    db.set_setting("session_backup", &payload)
+        .map_err(|e| crate::error::ApiError::new(500, &format!("Sauvegarde de session impossible: {e}")))?;
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+#[tauri::command]
+pub fn auth_session_load(
+    state: tauri::State<'_, crate::AppState>,
+) -> crate::error::ApiResult<serde_json::Value> {
+    let db = crate::commands::db(&state);
+    let session = db.get_setting("session_backup").ok().flatten().unwrap_or_default();
+    Ok(serde_json::json!({ "session": session }))
+}
+
+#[tauri::command]
+pub fn auth_session_clear(
+    state: tauri::State<'_, crate::AppState>,
+) -> crate::error::ApiResult<serde_json::Value> {
+    let db = crate::commands::db(&state);
+    let _ = db.set_setting("session_backup", "");
+    Ok(serde_json::json!({ "ok": true }))
+}

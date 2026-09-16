@@ -237,7 +237,9 @@ export async function handleTauriRequest(
           message = 'Base temporairement verrouillée, réessayez'
         }
       }
-      if (status === 401) {
+      // Ne JAMAIS detruire la session persistee si la requete etait partie
+      // sans token (race au demarrage) : ca ne peut pas etre un token invalide.
+      if (status === 401 && authToken) {
         try { localStorage.removeItem('gl_token'); localStorage.removeItem('gl_user'); localStorage.removeItem('gl_refresh_token'); window.dispatchEvent(new Event('gl:unauthorized')) } catch {}
       }
       console.warn(`[tauriApi] ${cmd} failed:`, { status, message, raw: e })

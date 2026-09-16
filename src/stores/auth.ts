@@ -83,17 +83,34 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  function restoreSession(): Promise<boolean> {
+  async function restoreSession(): Promise<boolean> {
     const s = SessionStorage.getSessionSync()
     if (s.token && s.user) {
       token.value = s.token
       user.value = s.user
       state.value = 'authenticated'
-      log('AUTH', )
-      return Promise.resolve(true)
+      log('AUTH', 'session restauree depuis le stockage local')
+      return true
     }
+    // Stockage WebView vide (cas Android frequent) : tenter la sauvegarde
+    // durable cote Rust/SQLite avant de renvoyer l'utilisateur au login.
+    try {
+      const durable = await SessionStorage.loadDurable()
+      if (durable?.token && durable?.user) {
+        token.value = durable.token
+        user.value = durable.user
+        state.value = 'authenticated'
+        await SessionStorage.saveSession({
+          token: durable.token,
+          refresh_token: durable.refresh_token || null,
+          user: durable.user,
+        })
+        log('AUTH', 'session restauree depuis la sauvegarde durable SQLite')
+        return true
+      }
+    } catch {}
     state.value = 'unauthenticated'
-    return Promise.resolve(false)
+    return false
   }
 
   async function refreshSession(): Promise<boolean> {

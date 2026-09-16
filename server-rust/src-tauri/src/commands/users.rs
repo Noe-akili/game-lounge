@@ -42,7 +42,7 @@ pub fn users_get(state: State<'_, AppState>, token: Option<String>, id: i64) -> 
 
 /// POST /api/users - SYNCHRONE et direct (<30ms, évite ANR et timeout IPC Android)
 #[tauri::command]
-pub fn users_create(
+pub async fn users_create(
     state: State<'_, AppState>,
     token: Option<String>,
     email: String,
@@ -113,7 +113,7 @@ pub fn users_create(
 
 /// PUT /api/users/:id - SYNCHRONE et direct (<30ms, évite timeout IPC)
 #[tauri::command]
-pub fn users_update(
+pub async fn users_update(
     state: State<'_, AppState>,
     token: Option<String>,
     id: i64,

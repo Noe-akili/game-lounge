@@ -34,12 +34,13 @@ const router = createRouter({
   routes
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
-  // Si le token n'est pas encore dans le store, tenter la restauration depuis le stockage du téléphone
+  // Restauration du token : localStorage d'abord, puis sauvegarde durable
+  // SQLite cote Rust (le localStorage Android peut etre vide au redemarrage).
   if (!auth.token) {
-    auth.restoreSession()
+    await auth.restoreSession()
   }
 
   // Si pas de session valide persistée : accès uniquement à /login
