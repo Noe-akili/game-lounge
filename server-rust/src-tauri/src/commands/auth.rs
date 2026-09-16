@@ -266,7 +266,7 @@ async fn try_offline_login(
     }
     let mode_label = if cloud_ok { "Vérification avec la copie locale de l'appareil…" } else { "Hors ligne — vérification avec la copie locale de l'appareil…" };
     emit_step(app, "offline", mode_label);
-    let valid = compare_bounded(password.to_string(), stored.to_string()).await;
+    let valid = compare_direct(password, stored);
     if !valid {
         crate::logger::log_auth(&format!("offline: password MISMATCH pour {email}"));
         record_failure(state, &format!("email:{email}"));
@@ -299,7 +299,7 @@ async fn finish_supabase_login(
     };
     crate::logger::log_auth(&format!("supabase: user trouvé, algo hash Supabase = {}", hash_algo(&supabase_user.password_hash)));
     emit_step(app, "cloud", "Compte trouvé — vérification du mot de passe…");
-    let valid = compare_bounded(password.to_string(), supabase_user.password_hash.clone()).await;
+    let valid = compare_direct(password, &supabase_user.password_hash);
     if !valid {
         // Erreur DÉFINITIVE (le mot de passe ne correspond pas côté cloud) :
         // on ne retente PAS la copie locale, qui pourrait accepter un ancien
