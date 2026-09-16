@@ -469,6 +469,7 @@ pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -
             exp: 0,
         };
         let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
+        state.session_authenticated.store(true, std::sync::atomic::Ordering::Relaxed);
         return Ok(json!({
             "token": access,
             "refresh_token": refresh,
@@ -499,6 +500,7 @@ pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -
                 exp: 0,
             };
             let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
+            state.session_authenticated.store(true, std::sync::atomic::Ordering::Relaxed);
             return Ok(json!({
                 "token": access,
                 "refresh_token": refresh,
@@ -550,6 +552,7 @@ pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -
                             exp: 0,
                         };
                         let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
+                        state.session_authenticated.store(true, std::sync::atomic::Ordering::Relaxed);
                         return Ok(json!({
                             "token": access,
                             "refresh_token": refresh,
