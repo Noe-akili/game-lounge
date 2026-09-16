@@ -92,13 +92,7 @@ function startBusinessProcesses() {
 // est bien affiché. On attend la prochaine frame / stabilisation de route.
 function maybeStartBusinessProcesses() {
   if (businessStarted) return
-  // On ne démarre que si on est sur une route d'accueil et que l'utilisateur
-  // est authentifié. Cela évite de démarrer avant le affichage de l'accueil.
-  const currentRoute = router.currentRoute.value
-  const onHomeRoute = currentRoute.path === '/' || 
-                      currentRoute.path === '/dashboard' || 
-                      currentRoute.path === '/admin'
-  if (auth.isAuthenticated && onHomeRoute) {
+  if (auth.isAuthenticated) {
     startBusinessProcesses()
   }
 }
