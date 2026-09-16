@@ -32,6 +32,19 @@ function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<any> {
   ])
 }
 
+// TEST TEMPORAIRE IPC
+export async function testTauriHealth() {
+  console.log('[IPC_HEALTH_TEST] début')
+  try {
+    const result = await invoke('health', {})
+    console.log('[IPC_HEALTH_TEST] SUCCESS', result)
+    return result
+  } catch (e) {
+    console.error('[IPC_HEALTH_TEST] ERROR', e)
+    throw e
+  }
+}
+
 function getPath(url: string): string {
   return url.split('?')[0]
 }

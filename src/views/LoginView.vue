@@ -77,6 +77,8 @@
 //  - Compte à rebours 60s : lancé dès la soumission. TANT QUE le compte
 //    tourne, aucun verdict (ni succès ni échec). À la réponse du backend OU
 //    à zéro, un verdict unique et clair est annoncé à l'utilisateur.
+import { testTauriHealth } from '@/lib/tauriApi'
+
 import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { Loader2 } from 'lucide-vue-next'
@@ -311,4 +313,10 @@ async function handleLogin() {
     announceVerdict() // erreur définitive -> verdict immédiat (pas d'attente jusqu'à 0)
   }
 }
+
+// TEST TEMPORAIRE : vérification directe de l'IPC Tauri
+testTauriHealth()
+  .then((r) => console.log('[LOGIN_IPC_HEALTH]', r))
+  .catch((e) => console.error('[LOGIN_IPC_HEALTH_ERROR]', e))
+
 </script>
