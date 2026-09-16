@@ -67,9 +67,9 @@ pub struct SupabasePool {
 // ou changement réseau mobile) fait HANGUER une query pendant des minutes (retransmission TCP).
 // C'était la cause du "Timeout IPC (Android WebView)" : auth_login/test_supabase_connection ne répondaient jamais.
 #[cfg(feature = "supabase-sync")]
-const SUPABASE_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+const SUPABASE_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 #[cfg(feature = "supabase-sync")]
-const SUPABASE_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(6);
+const SUPABASE_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// Message d'erreur Supabase LISIBLE : le Display générique des erreurs serveur est
 /// "db error" (Kind::Db) — le VRAI message SQL (ex: "column deleted does not exist",
