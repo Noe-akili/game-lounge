@@ -511,6 +511,7 @@ pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -
     Err(ApiError::unauthorized("Aucun compte correspondant trouvé"))
 }
 
+#[tauri::command]
 pub fn auth_debug_info(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
     admin_only(&user)?;
