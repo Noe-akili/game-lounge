@@ -11,7 +11,7 @@ use crate::supabase::{escape_sql, supabase_query, supabase_batch_execute, Supaba
 use crate::validators;
 use crate::AppState;
 
-/// Récupère ou réinitialise le pool Supabase pour garantir l'accès réseau
+/// Récupère le pool Supabase ou le reconnecte si le socket a été fermé par PgBouncer
 async fn get_supabase(state: &AppState) -> ApiResult<SupabasePool> {
     if let Ok(guard) = state.supabase_pool.lock() {
         if let Some(ref pool) = *guard {
@@ -26,6 +26,55 @@ async fn get_supabase(state: &AppState) -> ApiResult<SupabasePool> {
         return Ok(pool);
     }
     Err(ApiError::new(503, "Connexion à Supabase impossible. Vérifiez votre connexion Internet."))
+}
+
+/// Exécute une requête avec un retry automatique si le pool contenait une connexion fermée
+async fn query_with_retry(state: &AppState, sql: &str) -> ApiResult<Vec<tokio_postgres::Row>> {
+    let pool = get_supabase(state).await?;
+    match supabase_query(&pool, sql, &[]).await {
+        Ok(rows) => Ok(rows),
+        Err(e) => {
+            // Si la connexion a sauté (idle closed / timeout), on force un nouveau pool et on retente 1 fois
+            eprintln!("[users] première tentative échouée ({e}), reconnexion au pool Supabase...");
+            if let Ok(mut guard) = state.supabase_pool.lock() {
+                *guard = None;
+            }
+            if let Some(new_pool) = init_supabase_pool().await {
+                if let Ok(mut guard) = state.supabase_pool.lock() {
+                    *guard = Some(new_pool.clone());
+                }
+                supabase_query(&new_pool, sql, &[])
+                    .await
+                    .map_err(|e2| ApiError::new(503, &format!("Erreur Supabase: {}", e2)))
+            } else {
+                Err(ApiError::new(503, &format!("Erreur Supabase: {}", e)))
+            }
+        }
+    }
+}
+
+/// Exécute un batch avec retry automatique si connexion fermée
+async fn execute_with_retry(state: &AppState, sql: &str) -> ApiResult<()> {
+    let pool = get_supabase(state).await?;
+    match supabase_batch_execute(&pool, sql).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            eprintln!("[users] premier execute échoué ({e}), reconnexion...");
+            if let Ok(mut guard) = state.supabase_pool.lock() {
+                *guard = None;
+            }
+            if let Some(new_pool) = init_supabase_pool().await {
+                if let Ok(mut guard) = state.supabase_pool.lock() {
+                    *guard = Some(new_pool.clone());
+                }
+                supabase_batch_execute(&new_pool, sql)
+                    .await
+                    .map_err(|e2| ApiError::new(503, &format!("Erreur Supabase: {}", e2)))
+            } else {
+                Err(ApiError::new(503, &format!("Erreur Supabase: {}", e)))
+            }
+        }
+    }
 }
 
 fn pg_col_str(row: &tokio_postgres::Row, idx: usize) -> Option<String> {
@@ -54,11 +103,8 @@ pub async fn users_list(state: State<'_, AppState>, token: Option<String>) -> Ap
     let user = claims(&state, &token)?;
     crate::commands::admin_only(&user)?;
 
-    let pool = get_supabase(&state).await?;
     let sql = "SELECT id, email, role, nom, created_at FROM users WHERE COALESCE(deleted::text, '0') NOT IN ('1', 'true') ORDER BY id ASC";
-    let rows = supabase_query(&pool, sql, &[])
-        .await
-        .map_err(|e| ApiError::new(503, &format!("Erreur Supabase: {}", e)))?;
+    let rows = query_with_retry(&state, sql).await?;
 
     let mut list = Vec::new();
     for r in rows {
@@ -89,11 +135,8 @@ pub async fn users_get(state: State<'_, AppState>, token: Option<String>, id: i6
         return Err(ApiError::bad_request("ID invalide"));
     }
 
-    let pool = get_supabase(&state).await?;
     let sql = format!("SELECT id, email, role, nom, created_at FROM users WHERE id = {} AND COALESCE(deleted::text, '0') NOT IN ('1', 'true') LIMIT 1", id);
-    let rows = supabase_query(&pool, &sql, &[])
-        .await
-        .map_err(|e| ApiError::new(503, &format!("Erreur Supabase: {}", e)))?;
+    let rows = query_with_retry(&state, &sql).await?;
 
     if rows.is_empty() {
         return Err(ApiError::not_found("Utilisateur non trouvé"));
@@ -148,18 +191,14 @@ pub async fn users_create(
         return Err(ApiError::bad_request("Rôle invalide"));
     }
 
-    let pool = get_supabase(&state).await?;
-
     // Vérifier l'unicité sur Supabase
     let check_sql = format!(
         "SELECT id, deleted FROM users WHERE LOWER(email) = LOWER('{}') LIMIT 1",
         escape_sql(email)
     );
-    let existing = supabase_query(&pool, &check_sql, &[])
-        .await
-        .map_err(|e| ApiError::new(503, &format!("Erreur Supabase: {}", e)))?;
+    let existing = query_with_retry(&state, &check_sql).await?;
 
-    // Hachage sécurisé bcrypt (léger, ne crashe pas sur Android)
+    // Hachage sécurisé bcrypt (coût 8, léger pour CPU mobile)
     let hash = bcrypt::hash(&password, 8)
         .map_err(|e| ApiError::internal(format!("Bcrypt: {}", e)))?;
 
@@ -179,9 +218,7 @@ pub async fn users_create(
                 "UPDATE users SET nom = '{}', role = '{}', password_hash = '{}', deleted = 0 WHERE id = {}",
                 escape_sql(nom), escape_sql(&role), escape_sql(&hash), ex_id
             );
-            supabase_batch_execute(&pool, &upd_sql)
-                .await
-                .map_err(|e| ApiError::new(503, &format!("Erreur réactivation Supabase: {}", e)))?;
+            execute_with_retry(&state, &upd_sql).await?;
 
             return Ok(json!({
                 "id": ex_id,
@@ -194,15 +231,16 @@ pub async fn users_create(
         }
     }
 
+    // Date courante au format ISO 8601
+    let now_str = crate::db::now_iso();
+
     // Insertion sur Supabase
     let insert_sql = format!(
-        "INSERT INTO users (email, password_hash, role, nom, created_at, deleted) VALUES ('{}', '{}', '{}', '{}', NOW(), 0) RETURNING id",
-        escape_sql(email), escape_sql(&hash), escape_sql(&role), escape_sql(nom)
+        "INSERT INTO users (email, password_hash, role, nom, created_at, deleted) VALUES ('{}', '{}', '{}', '{}', '{}', 0) RETURNING id",
+        escape_sql(email), escape_sql(&hash), escape_sql(&role), escape_sql(nom), now_str
     );
 
-    let rows = supabase_query(&pool, &insert_sql, &[])
-        .await
-        .map_err(|e| ApiError::new(503, &format!("Erreur insertion Supabase: {}", e)))?;
+    let rows = query_with_retry(&state, &insert_sql).await?;
 
     let new_id = if !rows.is_empty() {
         pg_col_id(&rows[0], 0)
@@ -235,8 +273,6 @@ pub async fn users_update(
         return Err(ApiError::bad_request("ID invalide"));
     }
 
-    let pool = get_supabase(&state).await?;
-
     let mut sets = Vec::new();
 
     if let Some(ref em) = email {
@@ -249,9 +285,7 @@ pub async fn users_update(
             "SELECT id FROM users WHERE LOWER(email) = LOWER('{}') AND id <> {} AND COALESCE(deleted::text, '0') NOT IN ('1', 'true') LIMIT 1",
             escape_sql(em), id
         );
-        let clash = supabase_query(&pool, &check_sql, &[])
-            .await
-            .map_err(|e| ApiError::new(503, &format!("Erreur Supabase: {}", e)))?;
+        let clash = query_with_retry(&state, &check_sql).await?;
         if !clash.is_empty() {
             return Err(ApiError::new(409, "Email déjà utilisé par un autre utilisateur sur Supabase"));
         }
@@ -294,9 +328,7 @@ pub async fn users_update(
         sets.join(", "), id
     );
 
-    supabase_batch_execute(&pool, &update_sql)
-        .await
-        .map_err(|e| ApiError::new(503, &format!("Erreur mise à jour Supabase: {}", e)))?;
+    execute_with_retry(&state, &update_sql).await?;
 
     Ok(json!({
         "id": id,
@@ -318,11 +350,8 @@ pub async fn users_delete(state: State<'_, AppState>, token: Option<String>, id:
         return Err(ApiError::bad_request("Impossible de supprimer son propre compte"));
     }
 
-    let pool = get_supabase(&state).await?;
     let sql = format!("UPDATE users SET deleted = 1 WHERE id = {}", id);
-    supabase_batch_execute(&pool, &sql)
-        .await
-        .map_err(|e| ApiError::new(503, &format!("Erreur suppression Supabase: {}", e)))?;
+    execute_with_retry(&state, &sql).await?;
 
     Ok(json!({ "id": id, "deleted": true }))
 }

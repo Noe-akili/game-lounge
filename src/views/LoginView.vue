@@ -58,10 +58,12 @@
         </div>
       </form>
     </div>
-  </div>
+  <WelcomeModal :open="showWelcome" :user="auth.user" @continue="proceedToApp" />
+</div>
 </template>
 
 <script setup lang="ts">
+import WelcomeModal from '@/components/ui/WelcomeModal.vue'
 // Écran de CONNEXION — TOTALEMENT INDÉPENDANT du métier (règle absolue).
 //
 // Ici : UNIQUEMENT l'authentification (email + mot de passe -> token/user).
@@ -90,6 +92,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const settings = useSettingsStore()
 const success = ref(false)
+const showWelcome = ref(false)
 const error = ref('')
 const showPassword = ref(false)
 
@@ -307,6 +310,12 @@ async function testSupabase() {
   }
 }
 
+
+function proceedToApp() {
+  const role = auth.user?.role || "employe"
+  router.replace(role === "admin" ? "/admin" : "/dashboard")
+}
+
 async function handleLogin() {
   if (loginPending.value) return
   if (!form.email || !form.password) {
@@ -324,8 +333,11 @@ async function handleLogin() {
     pushStep(`Connexion validée [source: ${source}] ✓`, 'ok')
     verdict.value = '✓ Connecté — ouverture de votre espace…'
     success.value = true
-    const role = auth.user?.role || "employe"
-    router.replace(role === "admin" ? "/admin" : "/dashboard")
+    showWelcome.value = true
+    // Redirection automatique fluide après 1.6s ou clic direct
+    setTimeout(() => {
+      proceedToApp()
+    }, 1700)
   } catch (e: any) {
     const msg = e?.message || e?.error || "Identifiants incorrects"
     failStep(msg)

@@ -47,11 +47,17 @@ CREATE TABLE IF NOT EXISTS sync_outbox (change_id TEXT PRIMARY KEY, device_id TE
 CREATE INDEX IF NOT EXISTS idx_outbox_status ON sync_outbox(status);
 -- sync_state : position de sync de CET appareil (curseurs last_uploaded / last_received)
 -- + identité appareil (mission §3) : nom lisible, date d'installation, statut d'activation.
-CREATE TABLE IF NOT EXISTS sync_state (device_id TEXT PRIMARY KEY, device_sequence INTEGER DEFAULT 0, last_uploaded TEXT, last_received TEXT, last_sync_at TEXT);
-ALTER TABLE sync_state ADD COLUMN device_name TEXT DEFAULT '';
-ALTER TABLE sync_state ADD COLUMN installation_id TEXT DEFAULT '';
-ALTER TABLE sync_state ADD COLUMN created_at TEXT DEFAULT '';
-ALTER TABLE sync_state ADD COLUMN activated INTEGER DEFAULT 0;
+CREATE TABLE IF NOT EXISTS sync_state (
+    device_id TEXT PRIMARY KEY,
+    device_sequence INTEGER DEFAULT 0,
+    last_uploaded TEXT,
+    last_received TEXT,
+    last_sync_at TEXT,
+    device_name TEXT DEFAULT '',
+    installation_id TEXT DEFAULT '',
+    created_at TEXT DEFAULT '',
+    activated INTEGER DEFAULT 0
+);
 -- sync_conflicts : journal des conflits détectés pendant le pull delta (audit, spec §9).
 CREATE TABLE IF NOT EXISTS sync_conflicts (id INTEGER PRIMARY KEY, change_id TEXT, entity TEXT, record_id INTEGER, reason TEXT, remote_payload TEXT, resolved INTEGER DEFAULT 0, created_at TEXT);
 "#;
@@ -275,6 +281,9 @@ impl Db {
              ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER;",
         );
         // Soft-delete : colonne deleted sur les bases existantes (idempotent, erreurs ignorées)
+        let _ = conn.execute_batch(
+            "ALTER TABLE sync_state ADD COLUMN device_name TEXT DEFAULT '';              ALTER TABLE sync_state ADD COLUMN installation_id TEXT DEFAULT '';              ALTER TABLE sync_state ADD COLUMN created_at TEXT DEFAULT '';              ALTER TABLE sync_state ADD COLUMN activated INTEGER DEFAULT 0;"
+        );
         let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
         // Colonnes visuels (sticker joueur, image console/jeu) + index unique
         // partiel sur users (fix utilisateurs fantômes). Idempotent.
@@ -316,7 +325,10 @@ impl Db {
             "ALTER TABLE consoles ADD COLUMN created_at TEXT; \
              ALTER TABLE consoles ADD COLUMN date_ajout TEXT; \
              ALTER TABLE joueurs ADD COLUMN derniere_visite TEXT; \
-             ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER;",            );            let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
+             ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER;",            );            let _ = conn.execute_batch(
+            "ALTER TABLE sync_state ADD COLUMN device_name TEXT DEFAULT '';              ALTER TABLE sync_state ADD COLUMN installation_id TEXT DEFAULT '';              ALTER TABLE sync_state ADD COLUMN created_at TEXT DEFAULT '';              ALTER TABLE sync_state ADD COLUMN activated INTEGER DEFAULT 0;"
+        );
+        let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
         let _ = conn.execute_batch(IMAGE_COLUMNS_MIGRATION);
         let _ = conn.execute_batch(TOKEN_VALUE_MIGRATION);
         let _ = conn.execute_batch("ALTER TABLE sessions_jeu ADD COLUMN duree_allouee INTEGER DEFAULT 60;");
