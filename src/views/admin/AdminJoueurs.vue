@@ -1,10 +1,19 @@
 <template>
   <div class="space-y-6 w-full max-w-full min-w-0 overflow-hidden">
-    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 w-full max-w-full min-w-0">
-      <h3 class="font-gaming text-lg font-bold">Gestion des joueurs</h3>
-      <button @click="showAdd = true" class="btn-neon-violet flex items-center gap-2">
-        <UserPlus class="w-4 h-4" /> Ajouter
-      </button>
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full max-w-full min-w-0">
+      <div>
+        <h3 class="font-gaming text-lg font-bold">Gestion des joueurs</h3>
+        <p class="text-xs text-txt-dim">Consultez, modifiez ou restaurez les joueurs</p>
+      </div>
+      <div class="flex items-center gap-3 flex-wrap">
+        <label class="flex items-center gap-2 cursor-pointer text-xs text-txt-dim bg-bg-card px-3 py-1.5 rounded-lg border border-border/50 hover:border-neon-violet/30 transition-colors">
+          <input type="checkbox" v-model="showArchived" @change="fetchJoueurs" class="rounded accent-neon-violet cursor-pointer" />
+          <span>Afficher archivés</span>
+        </label>
+        <button @click="showAdd = true" class="btn-neon-violet flex items-center gap-2 text-sm">
+          <UserPlus class="w-4 h-4" /> Ajouter
+        </button>
+      </div>
     </div>
 
     <div class="relative mb-4 w-full max-w-full min-w-0 overflow-hidden">

@@ -86,11 +86,13 @@ const ROUTES: RouteDef[] = [
   { m: 'GET', p: '/auth/me', f: ({ token }) => ({ cmd: 'auth_me', args: { token } }) },
 
   // ===== CONSOLES =====
-  { m: 'GET', p: '/consoles', f: ({ token }) => ({ cmd: 'consoles_list', args: { token } }) },
+  { m: 'GET', p: '/consoles', f: ({ token, query }) => ({ cmd: 'consoles_list', args: { token, includeDeleted: bval(query.include_deleted) || false } }) },
   { m: 'GET', p: '/consoles/:id', f: ({ token, segs }) => ({ cmd: 'consoles_get', args: { token, id: num(segs.id) } }) },
   { m: 'POST', p: '/consoles', f: ({ token, body }) => ({ cmd: 'consoles_create', args: { token, nom: val(body, 'nom'), type: val(body, 'type'), posteNumero: num(val(body, 'poste_numero')), etat: val(body, 'etat'), imageUrl: val(body, 'image_url') } }) },
   { m: 'PUT', p: '/consoles/:id', f: ({ token, segs, body }) => ({ cmd: 'consoles_update', args: { token, id: num(segs.id), nom: val(body, 'nom'), type: val(body, 'type'), posteNumero: num(val(body, 'poste_numero')), etat: val(body, 'etat'), imageUrl: val(body, 'image_url') } }) },
   { m: 'DELETE', p: '/consoles/:id', f: ({ token, segs }) => ({ cmd: 'consoles_delete', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/consoles/:id/restore', f: ({ token, segs }) => ({ cmd: 'consoles_restore', args: { token, id: num(segs.id) } }) },
+  { m: 'DELETE', p: '/consoles/:id/permanent', f: ({ token, segs }) => ({ cmd: 'consoles_permanent_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== JEUX =====
   { m: 'GET', p: '/jeux', f: ({ token, query }) => ({ cmd: 'jeux_list', args: { token, consoleId: num(query.console_id) } }) },
@@ -98,6 +100,8 @@ const ROUTES: RouteDef[] = [
   { m: 'POST', p: '/jeux', f: ({ token, body }) => ({ cmd: 'jeux_create', args: { token, titre: val(body, 'titre'), genre: val(body, 'genre'), consoleId: num(val(body, 'console_id')), jaquetteUrl: val(body, 'jaquette_url') } }) },
   { m: 'PUT', p: '/jeux/:id', f: ({ token, segs, body }) => ({ cmd: 'jeux_update', args: { token, id: num(segs.id), titre: val(body, 'titre'), genre: val(body, 'genre'), consoleId: val(body, 'console_id'), jaquetteUrl: val(body, 'jaquette_url') } }) },
   { m: 'DELETE', p: '/jeux/:id', f: ({ token, segs }) => ({ cmd: 'jeux_delete', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/jeux/:id/restore', f: ({ token, segs }) => ({ cmd: 'jeux_restore', args: { token, id: num(segs.id) } }) },
+  { m: 'DELETE', p: '/jeux/:id/permanent', f: ({ token, segs }) => ({ cmd: 'jeux_permanent_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== JOUEURS =====
   { m: 'GET', p: '/joueurs', f: ({ token, query }) => ({ cmd: 'joueurs_list', args: { token, search: query.search } }) },
@@ -106,6 +110,8 @@ const ROUTES: RouteDef[] = [
   { m: 'POST', p: '/joueurs', f: ({ token, body }) => ({ cmd: 'joueurs_create', args: { token, nom: val(body, 'nom'), telephone: val(body, 'telephone'), email: val(body, 'email'), sticker: val(body, 'sticker') } }) },
   { m: 'PUT', p: '/joueurs/:id', f: ({ token, segs, body }) => ({ cmd: 'joueurs_update', args: { token, id: num(segs.id), nom: val(body, 'nom'), telephone: val(body, 'telephone'), email: val(body, 'email'), jetonsSolde: num(val(body, 'jetons_solde')), sticker: val(body, 'sticker') } }) },
   { m: 'DELETE', p: '/joueurs/:id', f: ({ token, segs }) => ({ cmd: 'joueurs_delete', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/joueurs/:id/restore', f: ({ token, segs }) => ({ cmd: 'joueurs_restore', args: { token, id: num(segs.id) } }) },
+  { m: 'DELETE', p: '/joueurs/:id/permanent', f: ({ token, segs }) => ({ cmd: 'joueurs_permanent_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== SESSIONS =====
   { m: 'GET', p: '/sessions', f: ({ token, query }) => ({ cmd: 'sessions_list', args: { token, statut: query.statut } }) },

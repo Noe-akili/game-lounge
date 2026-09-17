@@ -1216,6 +1216,63 @@ impl Db {
     /// SOFT-DELETE : rien n'est supprimé physiquement, la ligne passe deleted=1.
     /// C'est ce qui permet à la sync de propager la suppression vers Supabase (qui ne
     /// supprime jamais non plus) sans que la donnée ne réapparaisse au prochain pull.
+    pub fn restore(&self, table: &str, id: i64) -> ApiResult<Value> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let tx = rusqlite::Transaction::new_unchecked(
+            &*conn,
+            rusqlite::TransactionBehavior::Deferred,
+        )
+        .map_err(|e| ApiError::internal(format!("BEGIN restore {table}: {e}")))?;
+        tx.execute(&format!("UPDATE "{table}" SET deleted=0 WHERE id=?"), [id])
+            .map_err(|e| ApiError::internal(format!("Restore {table}: {e}")))?;
+        let mut stmt = tx
+            .prepare(&format!("SELECT * FROM "{table}" WHERE id=?"))
+            .map_err(|e| ApiError::internal(format!("Get {table}: {e}")))?;
+        let mut rows = stmt
+            .query_map([id], |r| row_to_value(r))
+            .map_err(|e| ApiError::internal(format!("Get {table}: {e}")))?;
+        let row = match rows.next() {
+            Some(Ok(r)) => Ok(r),
+            Some(Err(e)) => Err(ApiError::internal(format!("Get {table}: {e}"))),
+            None => Err(ApiError::not_found(format!("Ligne {table} introuvable"))),
+        }?;
+        self.enqueue_outbox(&*tx, "UPDATE", table, id, &row)?;
+        drop(rows);
+        drop(stmt);
+        tx.commit()
+            .map_err(|e| ApiError::internal(format!("Commit restore {table}: {e}")))?;
+        self.mark_dirty(table);
+        self.notify_change(table, "UPDATE", row.clone());
+        Ok(row)
+    }
+
+    pub fn permanent_delete(&self, table: &str, id: i64) -> ApiResult<()> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let tx = rusqlite::Transaction::new_unchecked(
+            &*conn,
+            rusqlite::TransactionBehavior::Deferred,
+        )
+        .map_err(|e| ApiError::internal(format!("BEGIN permanent_delete {table}: {e}")))?;
+        tx.execute(&format!("DELETE FROM "{table}" WHERE id=?"), [id])
+            .map_err(|e| ApiError::internal(format!("Permanent delete {table}: {e}")))?;
+        let mut payload = Map::new();
+        payload.insert("id".into(), json!(id));
+        payload.insert("permanent_delete".into(), json!(true));
+        payload.insert("deleted".into(), json!(1));
+        self.enqueue_outbox(&*tx, "DELETE", table, id, &Value::Object(payload))?;
+        tx.commit()
+            .map_err(|e| ApiError::internal(format!("Commit permanent_delete {table}: {e}")))?;
+        self.mark_dirty(table);
+        self.notify_change(table, "DELETE", json!({ "id": id, "permanent": true }));
+        Ok(())
+    }
+
     pub fn remove(&self, table: &str, id: i64) -> ApiResult<()> {
         let conn = match self.0.lock() {
             Ok(g) => g,

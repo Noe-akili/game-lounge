@@ -53,10 +53,14 @@ fn enrich(
 
 /// GET /api/consoles
 #[tauri::command]
-pub fn consoles_list(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+pub fn consoles_list(state: State<'_, AppState>, token: Option<String>, include_deleted: Option<bool>) -> ApiResult<Value> {
     claims(&state, &token)?;
     let db = db(&state);
-    let consoles = db.query_all("consoles")?;
+    let consoles = if include_deleted.unwrap_or(false) {
+        db.query_all_all("consoles")?
+    } else {
+        db.query_all("consoles")?
+    };
     let sessions: Vec<Value> = db
         .query_all("sessions_jeu")?
         .into_iter()
@@ -202,4 +206,36 @@ pub fn consoles_delete(
     }
     db(&state).remove("consoles", id)?;
     Ok(json!({ "success": true }))
+}
+
+
+/// POST /api/consoles/:id/restore
+#[tauri::command]
+pub fn consoles_restore(
+    state: State<'_, AppState>,
+    token: Option<String>,
+    id: i64,
+) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    if !validators::is_valid_id(id) {
+        return Err(ApiError::bad_request("ID invalide"));
+    }
+    db(&state).restore("consoles", id)
+}
+
+/// DELETE /api/consoles/:id/permanent
+#[tauri::command]
+pub fn consoles_permanent_delete(
+    state: State<'_, AppState>,
+    token: Option<String>,
+    id: i64,
+) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    if !validators::is_valid_id(id) {
+        return Err(ApiError::bad_request("ID invalide"));
+    }
+    db(&state).permanent_delete("consoles", id)?;
+    Ok(json!({ "success": true, "permanently_deleted": true }))
 }

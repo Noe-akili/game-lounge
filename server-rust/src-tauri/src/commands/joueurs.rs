@@ -34,9 +34,14 @@ pub fn joueurs_list(
     state: State<'_, AppState>,
     token: Option<String>,
     search: Option<String>,
+    include_deleted: Option<bool>,
 ) -> ApiResult<Value> {
     claims(&state, &token)?;
-    let mut joueurs = db(&state).query_all("joueurs")?;
+    let mut joueurs = if include_deleted.unwrap_or(false) {
+        db(&state).query_all_all("joueurs")?
+    } else {
+        db(&state).query_all("joueurs")?
+    };
     if let Some(q) = search {
         let q = q.to_lowercase();
         joueurs.retain(|j| {
@@ -284,4 +289,36 @@ pub fn joueurs_delete(
     get_by_id(db(&state), "joueurs", id, "Joueur non trouvé")?;
     db(&state).remove("joueurs", id)?;
     Ok(json!({ "success": true }))
+}
+
+
+/// POST /api/joueurs/:id/restore
+#[tauri::command]
+pub fn joueurs_restore(
+    state: State<'_, AppState>,
+    token: Option<String>,
+    id: i64,
+) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    crate::commands::admin_only(&user)?;
+    if !validators::is_valid_id(id) {
+        return Err(ApiError::bad_request("ID invalide"));
+    }
+    db(&state).restore("joueurs", id)
+}
+
+/// DELETE /api/joueurs/:id/permanent
+#[tauri::command]
+pub fn joueurs_permanent_delete(
+    state: State<'_, AppState>,
+    token: Option<String>,
+    id: i64,
+) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    crate::commands::admin_only(&user)?;
+    if !validators::is_valid_id(id) {
+        return Err(ApiError::bad_request("ID invalide"));
+    }
+    db(&state).permanent_delete("joueurs", id)?;
+    Ok(json!({ "success": true, "permanently_deleted": true }))
 }
