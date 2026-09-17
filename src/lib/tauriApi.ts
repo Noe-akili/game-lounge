@@ -165,11 +165,13 @@ const ROUTES: RouteDef[] = [
   { m: 'GET', p: '/rapports/ca', f: ({ token }) => ({ cmd: 'rapports_ca', args: { token } }) },
 
   // ===== USERS (admin) =====
-  { m: 'GET', p: '/users', f: ({ token }) => ({ cmd: 'users_list', args: { token } }) },
+  { m: 'GET', p: '/users', f: ({ token, query }) => ({ cmd: 'users_list', args: { token, includeDeleted: bval(query.include_deleted) || false } }) },
   { m: 'GET', p: '/users/:id', f: ({ token, segs }) => ({ cmd: 'users_get', args: { token, id: num(segs.id) } }) },
   { m: 'POST', p: '/users', f: ({ token, body }) => ({ cmd: 'users_create', args: { token, email: val(body, 'email'), password: val(body, 'password'), role: val(body, 'role'), nom: val(body, 'nom') } }) },
   { m: 'PUT', p: '/users/:id', f: ({ token, segs, body }) => ({ cmd: 'users_update', args: { token, id: num(segs.id), email: val(body, 'email'), role: val(body, 'role'), nom: val(body, 'nom'), password: val(body, 'password') } }) },
   { m: 'DELETE', p: '/users/:id', f: ({ token, segs }) => ({ cmd: 'users_delete', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/users/:id/restore', f: ({ token, segs }) => ({ cmd: 'users_restore', args: { token, id: num(segs.id) } }) },
+  { m: 'DELETE', p: '/users/:id/permanent', f: ({ token, segs }) => ({ cmd: 'users_permanent_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== SYNC =====
   { m: 'GET', p: '/sync/status', f: ({ token }) => ({ cmd: 'sync_status', args: { token } }) },

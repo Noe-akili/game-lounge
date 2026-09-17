@@ -356,6 +356,8 @@ pub fn run() {
             commands::users::users_create,
             commands::users::users_update,
             commands::users::users_delete,
+            commands::users::users_restore,
+            commands::users::users_permanent_delete,
             // ==== SYNC ====
             commands::sync_status,
             commands::sync_toggle,

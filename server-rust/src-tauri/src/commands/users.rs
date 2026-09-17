@@ -1,6 +1,6 @@
 // /api/users - Gestion des utilisateurs 100% sur Supabase.
 // Aucun utilisateur ni mot de passe n'est stocké en local dans SQLite.
-// Toute action (list, get, create, update, delete) nécessite une connexion Internet.
+// Toute action (list, get, create, update, delete, restore, permanent_delete) nécessite une connexion Internet.
 
 use serde_json::{Value, json};
 use tauri::State;
@@ -34,7 +34,6 @@ async fn query_with_retry(state: &AppState, sql: &str) -> ApiResult<Vec<tokio_po
     match supabase_query(&pool, sql, &[]).await {
         Ok(rows) => Ok(rows),
         Err(e) => {
-            // Si la connexion a sauté (idle closed / timeout), on force un nouveau pool et on retente 1 fois
             eprintln!("[users] première tentative échouée ({e}), reconnexion au pool Supabase...");
             if let Ok(mut guard) = state.supabase_pool.lock() {
                 *guard = None;
@@ -99,12 +98,16 @@ fn pg_col_id(row: &tokio_postgres::Row, idx: usize) -> i64 {
 
 /// GET /api/users - Liste des utilisateurs directement depuis Supabase
 #[tauri::command]
-pub async fn users_list(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+pub async fn users_list(state: State<'_, AppState>, token: Option<String>, include_deleted: Option<bool>) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
     crate::commands::admin_only(&user)?;
 
-    let sql = "SELECT id, email, role, nom, created_at FROM users WHERE COALESCE(deleted::text, '0') NOT IN ('1', 'true') ORDER BY id ASC";
-    let rows = query_with_retry(&state, sql).await?;
+    let sql = if include_deleted.unwrap_or(false) {
+        "SELECT id, email, role, nom, created_at, COALESCE(deleted::text, '0') as deleted FROM users ORDER BY id ASC".to_string()
+    } else {
+        "SELECT id, email, role, nom, created_at, COALESCE(deleted::text, '0') as deleted FROM users WHERE COALESCE(deleted::text, '0') NOT IN ('1', 'true') ORDER BY id ASC".to_string()
+    };
+    let rows = query_with_retry(&state, &sql).await?;
 
     let mut list = Vec::new();
     for r in rows {
@@ -113,6 +116,8 @@ pub async fn users_list(state: State<'_, AppState>, token: Option<String>) -> Ap
         let role = pg_col_str(&r, 2).unwrap_or_else(|| "employe".to_string());
         let nom = pg_col_str(&r, 3).unwrap_or_default();
         let created_at = pg_col_str(&r, 4).unwrap_or_default();
+        let del_str = pg_col_str(&r, 5).unwrap_or_default();
+        let is_deleted = del_str == "1" || del_str == "true";
 
         list.push(json!({
             "id": id,
@@ -120,6 +125,7 @@ pub async fn users_list(state: State<'_, AppState>, token: Option<String>) -> Ap
             "role": role,
             "nom": nom,
             "created_at": created_at,
+            "deleted": is_deleted,
         }));
     }
 
@@ -135,7 +141,7 @@ pub async fn users_get(state: State<'_, AppState>, token: Option<String>, id: i6
         return Err(ApiError::bad_request("ID invalide"));
     }
 
-    let sql = format!("SELECT id, email, role, nom, created_at FROM users WHERE id = {} AND COALESCE(deleted::text, '0') NOT IN ('1', 'true') LIMIT 1", id);
+    let sql = format!("SELECT id, email, role, nom, created_at, COALESCE(deleted::text, '0') FROM users WHERE id = {} LIMIT 1", id);
     let rows = query_with_retry(&state, &sql).await?;
 
     if rows.is_empty() {
@@ -148,6 +154,7 @@ pub async fn users_get(state: State<'_, AppState>, token: Option<String>, id: i6
     let role = pg_col_str(r, 2).unwrap_or_else(|| "employe".to_string());
     let nom = pg_col_str(r, 3).unwrap_or_default();
     let created_at = pg_col_str(r, 4).unwrap_or_default();
+    let del_str = pg_col_str(r, 5).unwrap_or_default();
 
     Ok(json!({
         "id": uid,
@@ -155,6 +162,7 @@ pub async fn users_get(state: State<'_, AppState>, token: Option<String>, id: i6
         "role": role,
         "nom": nom,
         "created_at": created_at,
+        "deleted": del_str == "1" || del_str == "true",
     }))
 }
 
@@ -188,32 +196,28 @@ pub async fn users_create(
         ));
     }
     if !validators::is_valid_role(&role) {
-        return Err(ApiError::bad_request("Rôle invalide"));
+        return Err(ApiError::bad_request("Rôle invalide (admin ou employe)"));
     }
 
-    // Vérifier l'unicité sur Supabase
+    // Vérifier l'existence sur Supabase (actif ou archivé)
     let check_sql = format!(
-        "SELECT id, deleted FROM users WHERE LOWER(email) = LOWER('{}') LIMIT 1",
+        "SELECT id, COALESCE(deleted::text, '0') FROM users WHERE LOWER(email) = LOWER('{}') LIMIT 1",
         escape_sql(email)
     );
     let existing = query_with_retry(&state, &check_sql).await?;
 
-    // Hachage sécurisé bcrypt (coût 8, léger pour CPU mobile)
+    // Hachage sécurisé bcrypt (coût 8)
     let hash = bcrypt::hash(&password, 8)
         .map_err(|e| ApiError::internal(format!("Bcrypt: {}", e)))?;
 
     if !existing.is_empty() {
         let r = &existing[0];
         let ex_id = pg_col_id(r, 0);
-        let del_str = pg_col_str(r, 1).unwrap_or_else(|| {
-            if let Ok(d) = r.try_get::<_, i32>(1) { d.to_string() }
-            else if let Ok(b) = r.try_get::<_, bool>(1) { b.to_string() }
-            else { "0".to_string() }
-        });
+        let del_str = pg_col_str(r, 1).unwrap_or_default();
         let is_deleted = del_str == "1" || del_str == "true";
 
         if is_deleted {
-            // Réactivation du compte soft-deleted sur Supabase
+            // Réactivation automatique du compte précédemment archivé
             let upd_sql = format!(
                 "UPDATE users SET nom = '{}', role = '{}', password_hash = '{}', deleted = 0 WHERE id = {}",
                 escape_sql(nom), escape_sql(&role), escape_sql(&hash), ex_id
@@ -225,13 +229,13 @@ pub async fn users_create(
                 "email": email,
                 "role": role,
                 "nom": nom,
+                "reactivated": true
             }));
         } else {
-            return Err(ApiError::new(409, "Cet email est déjà utilisé sur Supabase"));
+            return Err(ApiError::new(409, "Cet email est déjà utilisé par un compte actif"));
         }
     }
 
-    // Date courante au format ISO 8601
     let now_str = crate::db::now_iso();
 
     // Insertion sur Supabase
@@ -241,7 +245,6 @@ pub async fn users_create(
     );
 
     let rows = query_with_retry(&state, &insert_sql).await?;
-
     let new_id = if !rows.is_empty() {
         pg_col_id(&rows[0], 0)
     } else {
@@ -280,7 +283,7 @@ pub async fn users_update(
         if !validators::is_valid_email(em) {
             return Err(ApiError::bad_request("Email invalide"));
         }
-        // Vérifier conflit avec un autre utilisateur sur Supabase
+        // Vérifier conflit avec un autre utilisateur
         let check_sql = format!(
             "SELECT id FROM users WHERE LOWER(email) = LOWER('{}') AND id <> {} AND COALESCE(deleted::text, '0') NOT IN ('1', 'true') LIMIT 1",
             escape_sql(em), id
@@ -301,8 +304,9 @@ pub async fn users_update(
     }
 
     if let Some(ref r) = role {
+        let r = r.trim();
         if !validators::is_valid_role(r) {
-            return Err(ApiError::bad_request("Rôle invalide"));
+            return Err(ApiError::bad_request("Rôle invalide (admin ou employe)"));
         }
         sets.push(format!("role = '{}'", escape_sql(r)));
     }
@@ -324,7 +328,7 @@ pub async fn users_update(
     }
 
     let update_sql = format!(
-        "UPDATE users SET {} WHERE id = {} AND COALESCE(deleted::text, '0') NOT IN ('1', 'true')",
+        "UPDATE users SET {} WHERE id = {}",
         sets.join(", "), id
     );
 
@@ -338,7 +342,7 @@ pub async fn users_update(
     }))
 }
 
-/// DELETE /api/users/:id - Suppression (soft-delete) DIRECTEMENT sur Supabase
+/// DELETE /api/users/:id - Archivage (soft-delete) DIRECTEMENT sur Supabase
 #[tauri::command]
 pub async fn users_delete(state: State<'_, AppState>, token: Option<String>, id: i64) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
@@ -354,4 +358,37 @@ pub async fn users_delete(state: State<'_, AppState>, token: Option<String>, id:
     execute_with_retry(&state, &sql).await?;
 
     Ok(json!({ "id": id, "deleted": true }))
+}
+
+/// POST /api/users/:id/restore - Restauration d'un utilisateur archivé sur Supabase
+#[tauri::command]
+pub async fn users_restore(state: State<'_, AppState>, token: Option<String>, id: i64) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    crate::commands::admin_only(&user)?;
+    if !validators::is_valid_id(id) {
+        return Err(ApiError::bad_request("ID invalide"));
+    }
+
+    let sql = format!("UPDATE users SET deleted = 0 WHERE id = {}", id);
+    execute_with_retry(&state, &sql).await?;
+
+    Ok(json!({ "id": id, "restored": true }))
+}
+
+/// DELETE /api/users/:id/permanent - Suppression DÉFINITIVE sur Supabase
+#[tauri::command]
+pub async fn users_permanent_delete(state: State<'_, AppState>, token: Option<String>, id: i64) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    crate::commands::admin_only(&user)?;
+    if !validators::is_valid_id(id) {
+        return Err(ApiError::bad_request("ID invalide"));
+    }
+    if user.id == id {
+        return Err(ApiError::bad_request("Impossible de supprimer définitivement son propre compte"));
+    }
+
+    let sql = format!("DELETE FROM users WHERE id = {}", id);
+    execute_with_retry(&state, &sql).await?;
+
+    Ok(json!({ "id": id, "permanently_deleted": true }))
 }
