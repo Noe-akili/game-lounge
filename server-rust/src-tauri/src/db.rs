@@ -1226,10 +1226,10 @@ impl Db {
             rusqlite::TransactionBehavior::Deferred,
         )
         .map_err(|e| ApiError::internal(format!("BEGIN restore {table}: {e}")))?;
-        tx.execute(&format!("UPDATE "{table}" SET deleted=0 WHERE id=?"), [id])
+        tx.execute(&format!("UPDATE \"{table}\" SET deleted=0 WHERE id=?"), [id])
             .map_err(|e| ApiError::internal(format!("Restore {table}: {e}")))?;
         let mut stmt = tx
-            .prepare(&format!("SELECT * FROM "{table}" WHERE id=?"))
+            .prepare(&format!("SELECT * FROM \"{table}\" WHERE id=?"))
             .map_err(|e| ApiError::internal(format!("Get {table}: {e}")))?;
         let mut rows = stmt
             .query_map([id], |r| row_to_value(r))
@@ -1259,7 +1259,7 @@ impl Db {
             rusqlite::TransactionBehavior::Deferred,
         )
         .map_err(|e| ApiError::internal(format!("BEGIN permanent_delete {table}: {e}")))?;
-        tx.execute(&format!("DELETE FROM "{table}" WHERE id=?"), [id])
+        tx.execute(&format!("DELETE FROM \"{table}\" WHERE id=?"), [id])
             .map_err(|e| ApiError::internal(format!("Permanent delete {table}: {e}")))?;
         let mut payload = Map::new();
         payload.insert("id".into(), json!(id));
