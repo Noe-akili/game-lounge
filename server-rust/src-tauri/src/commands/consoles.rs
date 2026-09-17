@@ -9,6 +9,10 @@ use crate::error::{ApiError, ApiResult};
 use crate::validators;
 use crate::AppState;
 
+fn is_del(v: Option<&Value>) -> bool {
+    v.map(|val| val.as_bool().unwrap_or(false) || val.as_i64().unwrap_or(0) == 1).unwrap_or(false)
+}
+
 fn enrich(
     consoles: &[Value],
     sessions: &[Value],
@@ -23,6 +27,7 @@ fn enrich(
                 .find(|s| s.get("console_id").and_then(Value::as_i64) == c.get("id").and_then(Value::as_i64));
             let joueur_id = session.and_then(|s| s.get("joueur_id").and_then(Value::as_i64));
             let jeu_id = session.and_then(|s| s.get("jeu_id").and_then(Value::as_i64));
+            let deleted = is_del(c.get("deleted"));
             json!({
                 "id": c["id"],
                 "nom": c["nom"],
@@ -31,15 +36,12 @@ fn enrich(
                 "poste_numero": c["poste_numero"],
                 "date_ajout": c["date_ajout"],
                 "image_url": c.get("image_url").cloned().unwrap_or(Value::Null),
+                "deleted": deleted,
                 "session_id": session.and_then(|s| s.get("id")).cloned().unwrap_or(Value::Null),
                 "session_statut": session.and_then(|s| s.get("statut")).cloned().unwrap_or(Value::Null),
                 "session_debut": session.and_then(|s| s.get("debut")).cloned().unwrap_or(Value::Null),
-                // Temps alloué + accumulé : pour le chrono temps réel et la
-                // barre de progression de fin de session (ConsoleCard).
                 "duree_allouee": session.and_then(|s| s.get("duree_allouee")).cloned().unwrap_or(Value::Null),
                 "duree_minutes": session.and_then(|s| s.get("duree_minutes")).cloned().unwrap_or(Value::Null),
-                // Secondes exactes déjà jouées : le chrono temps réel reste
-                // correct même après pause (sinon dérive à chaque pause).
                 "duree_secondes": session.and_then(|s| s.get("duree_secondes")).cloned().unwrap_or(Value::Null),
                 "joueur_id": joueur_id.map(Value::from).unwrap_or(Value::Null),
                 "jeu_id": jeu_id.map(Value::from).unwrap_or(Value::Null),
@@ -53,11 +55,19 @@ fn enrich(
 
 /// GET /api/consoles
 #[tauri::command]
-pub fn consoles_list(state: State<'_, AppState>, token: Option<String>, include_deleted: Option<bool>) -> ApiResult<Value> {
+pub async fn consoles_list(state: State<'_, AppState>, token: Option<String>, include_deleted: Option<bool>) -> ApiResult<Value> {
     claims(&state, &token)?;
     let db = db(&state);
-    let consoles = if include_deleted.unwrap_or(false) {
-        db.query_all_all("consoles")?
+    let include_del = include_deleted.unwrap_or(false);
+    let consoles = if include_del {
+        let mut cloud_rows = None;
+        if let Ok(pool) = crate::supabase::get_supabase_pool(&state).await {
+            cloud_rows = crate::supabase::pull_table_all(&pool, "consoles").await.ok();
+        }
+        match cloud_rows {
+            Some(rows) if !rows.is_empty() => rows,
+            _ => db.query_all_all("consoles")?,
+        }
     } else {
         db.query_all("consoles")?
     };
@@ -125,7 +135,6 @@ pub fn consoles_create(
         "etat".into(),
         json!(etat.unwrap_or_else(|| "disponible".into())),
     );
-    // Image de couverture de la console (URL) — visuel principal des cartes.
     row.insert(
         "image_url".into(),
         json!(image_url
@@ -178,7 +187,6 @@ pub fn consoles_update(
     if let Some(etat) = etat {
         updates.insert("etat".into(), json!(validators::sanitize_input(&etat, 50)));
     }
-    // Image : chaîne vide = retirer le visuel.
     if let Some(u) = image_url {
         updates.insert(
             "image_url".into(),
@@ -208,10 +216,9 @@ pub fn consoles_delete(
     Ok(json!({ "success": true }))
 }
 
-
 /// POST /api/consoles/:id/restore
 #[tauri::command]
-pub fn consoles_restore(
+pub async fn consoles_restore(
     state: State<'_, AppState>,
     token: Option<String>,
     id: i64,
@@ -221,12 +228,29 @@ pub fn consoles_restore(
     if !validators::is_valid_id(id) {
         return Err(ApiError::bad_request("ID invalide"));
     }
-    db(&state).restore("consoles", id)
+    let mut cloud_row: Option<Value> = None;
+    if let Ok(pool) = crate::supabase::get_supabase_pool(&state).await {
+        let sql_update = format!("UPDATE consoles SET deleted = 0 WHERE id = {};", id);
+        let _ = crate::supabase::supabase_batch_execute(&pool, &sql_update).await;
+        let sql_select = format!("SELECT COALESCE(json_agg(t)::text, '[]') FROM (SELECT * FROM consoles WHERE id = {} LIMIT 1) t;", id);
+        if let Ok(jrows) = crate::supabase::supabase_query(&pool, &sql_select, &[]).await {
+            if !jrows.is_empty() {
+                if let Ok(s) = jrows[0].try_get::<_, String>(0) {
+                    if let Ok(v) = serde_json::from_str::<Value>(&s) {
+                        if let Some(arr) = v.as_array() {
+                            cloud_row = arr.first().cloned();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    db(&state).restore_with_row("consoles", id, cloud_row.as_ref())
 }
 
 /// DELETE /api/consoles/:id/permanent
 #[tauri::command]
-pub fn consoles_permanent_delete(
+pub async fn consoles_permanent_delete(
     state: State<'_, AppState>,
     token: Option<String>,
     id: i64,
@@ -235,6 +259,10 @@ pub fn consoles_permanent_delete(
     admin_only(&user)?;
     if !validators::is_valid_id(id) {
         return Err(ApiError::bad_request("ID invalide"));
+    }
+    if let Ok(pool) = crate::supabase::get_supabase_pool(&state).await {
+        let sql = format!("DELETE FROM consoles WHERE id = {};", id);
+        let _ = crate::supabase::supabase_batch_execute(&pool, &sql).await;
     }
     db(&state).permanent_delete("consoles", id)?;
     Ok(json!({ "success": true, "permanently_deleted": true }))

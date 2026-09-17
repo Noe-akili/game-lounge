@@ -95,7 +95,7 @@ const ROUTES: RouteDef[] = [
   { m: 'DELETE', p: '/consoles/:id/permanent', f: ({ token, segs }) => ({ cmd: 'consoles_permanent_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== JEUX =====
-  { m: 'GET', p: '/jeux', f: ({ token, query }) => ({ cmd: 'jeux_list', args: { token, consoleId: num(query.console_id) } }) },
+  { m: 'GET', p: '/jeux', f: ({ token, query }) => ({ cmd: 'jeux_list', args: { token, consoleId: num(query.console_id), includeDeleted: bval(query.include_deleted) || false } }) },
   { m: 'GET', p: '/jeux/:id', f: ({ token, segs }) => ({ cmd: 'jeux_get', args: { token, id: num(segs.id) } }) },
   { m: 'POST', p: '/jeux', f: ({ token, body }) => ({ cmd: 'jeux_create', args: { token, titre: val(body, 'titre'), genre: val(body, 'genre'), consoleId: num(val(body, 'console_id')), jaquetteUrl: val(body, 'jaquette_url') } }) },
   { m: 'PUT', p: '/jeux/:id', f: ({ token, segs, body }) => ({ cmd: 'jeux_update', args: { token, id: num(segs.id), titre: val(body, 'titre'), genre: val(body, 'genre'), consoleId: val(body, 'console_id'), jaquetteUrl: val(body, 'jaquette_url') } }) },
@@ -104,7 +104,7 @@ const ROUTES: RouteDef[] = [
   { m: 'DELETE', p: '/jeux/:id/permanent', f: ({ token, segs }) => ({ cmd: 'jeux_permanent_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== JOUEURS =====
-  { m: 'GET', p: '/joueurs', f: ({ token, query }) => ({ cmd: 'joueurs_list', args: { token, search: query.search } }) },
+  { m: 'GET', p: '/joueurs', f: ({ token, query }) => ({ cmd: 'joueurs_list', args: { token, search: query.search, includeDeleted: bval(query.include_deleted) || false } }) },
   { m: 'GET', p: '/joueurs/:id/historique', f: ({ token, segs }) => ({ cmd: 'joueurs_historique', args: { token, id: num(segs.id) } }) },
   { m: 'GET', p: '/joueurs/:id', f: ({ token, segs }) => ({ cmd: 'joueurs_get', args: { token, id: num(segs.id) } }) },
   { m: 'POST', p: '/joueurs', f: ({ token, body }) => ({ cmd: 'joueurs_create', args: { token, nom: val(body, 'nom'), telephone: val(body, 'telephone'), email: val(body, 'email'), sticker: val(body, 'sticker') } }) },

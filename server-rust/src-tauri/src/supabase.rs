@@ -178,6 +178,21 @@ pub async fn reconnect_now(app: &tauri::AppHandle) -> Option<SupabasePool> {
 pub const FALLBACK_URL: &str = "postgresql://postgres.tyvqidhbgqveaftlvjrn:TkL.w78%265%26-Lr%40_@aws-1-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require";
 
 #[cfg(feature = "supabase-sync")]
+pub async fn get_supabase_pool(state: &crate::AppState) -> crate::error::ApiResult<SupabasePool> {
+    if let Ok(guard) = state.supabase_pool.lock() {
+        if let Some(ref pool) = *guard {
+            return Ok(pool.clone());
+        }
+    }
+    if let Some(pool) = init_supabase_pool().await {
+        if let Ok(mut guard) = state.supabase_pool.lock() {
+            *guard = Some(pool.clone());
+        }
+        return Ok(pool);
+    }
+    Err(crate::error::ApiError::new(503, "Connexion à Supabase impossible. Vérifiez votre connexion Internet."))
+}
+
 pub async fn init_supabase_pool() -> Option<SupabasePool> {
     // NOTE : option_env! retiré — le secret GitHub DATABASE_URL contenait encore
     // l'ancienne URL Supabase et aurait pris le dessus sur le fallback Supabase à chaque
@@ -854,6 +869,33 @@ pub async fn pull_all(pool: &SupabasePool) -> ApiResult<std::collections::HashMa
 /// Fallback résilient : pull table par table (une table absente ne bloque pas les autres).
 /// Seule une erreur sur TOUTES les tables (connexion morte) est propagée.
 #[cfg(feature = "supabase-sync")]
+pub async fn pull_table_all(pool: &SupabasePool, table: &str) -> ApiResult<Vec<Value>> {
+    let sql = format!("SELECT COALESCE(json_agg(t)::text, '[]') FROM (SELECT * FROM "{}" ORDER BY id ASC) t", table);
+    match supabase_query(pool, &sql, &[]).await {
+        Ok(jrows) => {
+            let mut vec = Vec::new();
+            if !jrows.is_empty() {
+                if let Ok(s) = jrows[0].try_get::<_, String>(0) {
+                    if let Ok(v) = serde_json::from_str::<Value>(&s) {
+                        if let Some(arr) = v.as_array() {
+                            for item in arr {
+                                let mut row = item.clone();
+                                let is_del = row.get("deleted").map(is_deleted_value).unwrap_or(false);
+                                if let Some(obj) = row.as_object_mut() {
+                                    obj.insert("deleted".into(), json!(is_del));
+                                }
+                                vec.push(row);
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(vec)
+        }
+        Err(e) => Err(ApiError::internal(format!("Supabase pull_table_all {table}: {e}"))),
+    }
+}
+
 pub async fn pull_table(pool: &SupabasePool, table: &str) -> ApiResult<Vec<Value>> {
     let sql = format!("SELECT COALESCE(json_agg(t)::text, '[]') FROM (SELECT * FROM \"{}\") t", table);
     match supabase_query(pool, &sql, &[]).await {

@@ -1216,7 +1216,7 @@ impl Db {
     /// SOFT-DELETE : rien n'est supprimé physiquement, la ligne passe deleted=1.
     /// C'est ce qui permet à la sync de propager la suppression vers Supabase (qui ne
     /// supprime jamais non plus) sans que la donnée ne réapparaisse au prochain pull.
-    pub fn restore(&self, table: &str, id: i64) -> ApiResult<Value> {
+    pub fn restore_with_row(&self, table: &str, id: i64, cloud_row: Option<&Value>) -> ApiResult<Value> {
         let conn = match self.0.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
@@ -1226,8 +1226,50 @@ impl Db {
             rusqlite::TransactionBehavior::Deferred,
         )
         .map_err(|e| ApiError::internal(format!("BEGIN restore {table}: {e}")))?;
-        tx.execute(&format!("UPDATE \"{table}\" SET deleted=0 WHERE id=?"), [id])
-            .map_err(|e| ApiError::internal(format!("Restore {table}: {e}")))?;
+
+        let mut exists = false;
+        {
+            let mut stmt = tx
+                .prepare(&format!("SELECT id FROM \"{table}\" WHERE id=?"))
+                .map_err(|e| ApiError::internal(format!("Check {table}: {e}")))?;
+            exists = stmt.exists([id]).unwrap_or(false);
+        }
+
+        if exists {
+            tx.execute(&format!("UPDATE \"{table}\" SET deleted=0 WHERE id=?"), [id])
+                .map_err(|e| ApiError::internal(format!("Restore {table}: {e}")))?;
+        } else if let Some(row_val) = cloud_row {
+            if let Some(obj) = row_val.as_object() {
+                let local_cols = self.columns_conn(&*tx, table).unwrap_or_default();
+                let mut map = Map::new();
+                for (k, v) in obj {
+                    if !local_cols.contains(k) {
+                        continue;
+                    }
+                    if k == "deleted" {
+                        map.insert(k.clone(), json!(0));
+                    } else {
+                        map.insert(k.clone(), v.clone());
+                    }
+                }
+                map.insert("id".into(), json!(id));
+                let keys: Vec<&String> = map.keys().collect();
+                let cols: Vec<&str> = keys.iter().map(|k| k.as_str()).collect();
+                let placeholders: Vec<&str> = vec!["?"; cols.len()];
+                let q = format!(
+                    "INSERT OR REPLACE INTO \"{table}\" ({}) VALUES ({})",
+                    cols.join(","),
+                    placeholders.join(",")
+                );
+                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::with_capacity(cols.len());
+                for k in keys {
+                    bind_value(&mut params, &map[k]);
+                }
+                tx.execute(&q, rusqlite::params_from_iter(params))
+                    .map_err(|e| ApiError::internal(format!("Insert restored {table}: {e}")))?;
+            }
+        }
+
         let mut stmt = tx
             .prepare(&format!("SELECT * FROM \"{table}\" WHERE id=?"))
             .map_err(|e| ApiError::internal(format!("Get {table}: {e}")))?;
@@ -1247,6 +1289,10 @@ impl Db {
         self.mark_dirty(table);
         self.notify_change(table, "UPDATE", row.clone());
         Ok(row)
+    }
+
+    pub fn restore(&self, table: &str, id: i64) -> ApiResult<Value> {
+        self.restore_with_row(table, id, None)
     }
 
     pub fn permanent_delete(&self, table: &str, id: i64) -> ApiResult<()> {
