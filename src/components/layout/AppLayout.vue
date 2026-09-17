@@ -73,10 +73,14 @@ onMounted(() => {
   // réelle de la 1ère sync). Vérification en ARRIÈRE-PLAN, après affichage de
   // l'accueil : un réseau indisponible n'envoie JAMAIS l'utilisateur sur
   // /initialisation (il reste sur l'accueil, données SQLite locales affichées).
-  import('@/stores/sync').then(({ useSyncStore }) => {
-    const sync = useSyncStore()
-    sync.fetchInitialStatus().then((completed) => {
-      if (completed === false) router.replace('/initialisation')
+  import('@/stores/auth').then(({ useAuthStore }) => {
+    const auth = useAuthStore()
+    if (!auth.isAuthenticated) return
+    import('@/stores/sync').then(({ useSyncStore }) => {
+      const sync = useSyncStore()
+      sync.fetchInitialStatus().then((completed) => {
+        if (completed === false) router.replace('/initialisation')
+      })
     })
   })
   // Android back button : fermer sidebar/modal avant de quitter

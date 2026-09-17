@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { createRouter, createWebHistory, createWebHashHistory } from 'vue-router'
+import { createRouter, createWebHashHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 const routes = [
@@ -26,21 +26,31 @@ const routes = [
       { path: 'admin/utilisateurs', component: () => import('@/views/admin/AdminUtilisateurs.vue'), meta: { adminOnly: true } },
       { path: 'admin/developpeur', component: () => import('@/views/admin/DeveloperView.vue'), meta: { adminOnly: true } },
     ]
-  }
+  },
+  // Catch-all : si l'URL démarre sur /index.html ou n'importe quel chemin inconnu au boot
+  { path: '/:pathMatch(.*)*', redirect: '/login' }
 ]
 
+// Sur Android Tauri WebView, createWebHashHistory garantit un affichage instantané et fiable
+// sans dépendre du serveur HTTP local ni du routage d'URL HTML5
 const router = createRouter({
-  history: window.location.protocol === 'file:' ? createWebHashHistory() : createWebHistory(),
+  history: createWebHashHistory(),
   routes
 })
+
+let sessionRestoredOnce = false
 
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
-  // Restauration du token : localStorage d'abord, puis sauvegarde durable
-  // SQLite cote Rust (le localStorage Android peut etre vide au redemarrage).
-  if (!auth.token) {
-    await auth.restoreSession()
+  // Restauration de session unique et protégée par timeout au premier chargement
+  if (!sessionRestoredOnce && !auth.token) {
+    sessionRestoredOnce = true
+    try {
+      await auth.restoreSession()
+    } catch {
+      // Ignorer : si la session ne peut pas être restaurée, on va sur /login
+    }
   }
 
   // Si pas de session valide persistée : accès uniquement à /login
@@ -49,13 +59,13 @@ router.beforeEach(async (to) => {
     return '/login'
   }
 
-  // Si session valide et l'utilisateur se rend sur /login : renvoi direct vers l'écran d'accueil
+  // Si session valide et l'utilisateur se rend sur /login : renvoi direct vers l'accueil
   if (to.path === '/login') {
     return auth.isAdmin ? '/admin' : '/dashboard'
   }
 
   // Contrôle des routes protégées admin
-  if (to.matched.some(record => record.meta.adminOnly) && !auth.isAdmin) {
+  if (to.matched.some(record => record.meta?.adminOnly) && !auth.isAdmin) {
     return '/dashboard'
   }
 

@@ -111,7 +111,11 @@ export const SessionStorage = {
   /** Charge la session depuis la sauvegarde durable Rust (SQLite). */
   async loadDurable(): Promise<StoredSession | null> {
     try {
-      const res = await tauriInvoke('auth_session_load', {})
+      // Timeout strict de 600ms max : si SQLite/IPC met du temps au boot (installation propre),
+      // on ne bloque JAMAIS la navigation du routeur vers /login
+      const invokePromise = tauriInvoke('auth_session_load', {})
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 600))
+      const res: any = await Promise.race([invokePromise, timeoutPromise])
       const raw = res?.session
       if (!raw) return null
       const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
