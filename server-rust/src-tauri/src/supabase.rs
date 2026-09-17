@@ -870,7 +870,7 @@ pub async fn pull_all(pool: &SupabasePool) -> ApiResult<std::collections::HashMa
 /// Seule une erreur sur TOUTES les tables (connexion morte) est propagée.
 #[cfg(feature = "supabase-sync")]
 pub async fn pull_table_all(pool: &SupabasePool, table: &str) -> ApiResult<Vec<Value>> {
-    let sql = format!("SELECT COALESCE(json_agg(t)::text, '[]') FROM (SELECT * FROM "{}" ORDER BY id ASC) t", table);
+    let sql = format!("SELECT COALESCE(json_agg(t)::text, '[]') FROM (SELECT * FROM \"{}\" ORDER BY id ASC) t", table);
     match supabase_query(pool, &sql, &[]).await {
         Ok(jrows) => {
             let mut vec = Vec::new();

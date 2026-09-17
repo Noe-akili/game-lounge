@@ -1227,13 +1227,12 @@ impl Db {
         )
         .map_err(|e| ApiError::internal(format!("BEGIN restore {table}: {e}")))?;
 
-        let mut exists = false;
-        {
+        let exists = {
             let mut stmt = tx
                 .prepare(&format!("SELECT id FROM \"{table}\" WHERE id=?"))
                 .map_err(|e| ApiError::internal(format!("Check {table}: {e}")))?;
-            exists = stmt.exists([id]).unwrap_or(false);
-        }
+            stmt.exists([id]).unwrap_or(false)
+        };
 
         if exists {
             tx.execute(&format!("UPDATE \"{table}\" SET deleted=0 WHERE id=?"), [id])
