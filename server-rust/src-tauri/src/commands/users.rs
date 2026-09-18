@@ -199,68 +199,54 @@ pub async fn users_create(
         return Err(ApiError::bad_request("Rôle invalide (admin ou employe)"));
     }
 
-    // Vérifier l'existence sur Supabase (actif ou archivé)
-    let check_sql = format!(
-        "SELECT id, COALESCE(deleted::text, '0') FROM users WHERE LOWER(email) = LOWER('{}') LIMIT 1",
-        escape_sql(email)
-    );
-    let existing = query_with_retry(&state, &check_sql).await?;
-
     // Hachage sécurisé bcrypt (coût 8)
     let hash = bcrypt::hash(&password, 8)
         .map_err(|e| ApiError::internal(format!("Bcrypt: {}", e)))?;
 
-    if !existing.is_empty() {
-        let r = &existing[0];
-        let ex_id = pg_col_id(r, 0);
-        let del_str = pg_col_str(r, 1).unwrap_or_default();
-        let is_deleted = del_str == "1" || del_str == "true";
-
-        if is_deleted {
-            // Réactivation automatique du compte précédemment archivé
-            let upd_sql = format!(
-                "UPDATE users SET nom = '{}', role = '{}', password_hash = '{}', deleted = 0 WHERE id = {}",
-                escape_sql(nom), escape_sql(&role), escape_sql(&hash), ex_id
-            );
-            execute_with_retry(&state, &upd_sql).await?;
-
-            return Ok(json!({
-                "id": ex_id,
-                "email": email,
-                "role": role,
-                "nom": nom,
-                "reactivated": true
-            }));
-        } else {
-            return Err(ApiError::new(409, "Cet email est déjà utilisé par un compte actif"));
-        }
-    }
-
     let now_str = crate::db::now_iso();
 
-    // Insertion sur Supabase
-    let insert_sql = format!(
-        "INSERT INTO users (email, password_hash, role, nom, created_at, deleted) VALUES ('{}', '{}', '{}', '{}', '{}', 0) RETURNING id",
-        escape_sql(email), escape_sql(&hash), escape_sql(&role), escape_sql(nom), now_str
+    // Insertion atomique directe en 1 seul aller-retour réseau :
+    // - Si nouveau : insère la ligne
+    // - Si archivé (deleted != 0) : réactive le compte et met à jour le mot de passe
+    // - Si déjà actif : la clause WHERE COALESCE(...) filtre et aucune ligne n'est retournée
+    let atomic_sql = format!(
+        "INSERT INTO users (email, password_hash, role, nom, created_at, deleted)          VALUES ('{email}', '{hash}', '{role}', '{nom}', '{now_str}', 0)          ON CONFLICT (email) DO UPDATE SET             nom = EXCLUDED.nom,             role = EXCLUDED.role,             password_hash = EXCLUDED.password_hash,             deleted = 0          WHERE COALESCE(users.deleted::text, '0') IN ('1', 'true')          RETURNING id, (xmax = 0) AS is_insert",
+        email = escape_sql(email),
+        hash = escape_sql(&hash),
+        role = escape_sql(&role),
+        nom = escape_sql(nom),
+        now_str = now_str
     );
 
-    let rows = query_with_retry(&state, &insert_sql).await?;
-    let new_id = if !rows.is_empty() {
-        pg_col_id(&rows[0], 0)
-    } else {
-        0
+    let rows = match query_with_retry(&state, &atomic_sql).await {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("unique") || msg.contains("users_email_key") || msg.contains("duplicate key") {
+                return Err(ApiError::new(409, "Cet email est déjà utilisé par un compte actif"));
+            }
+            return Err(e);
+        }
     };
+
+    if rows.is_empty() {
+        return Err(ApiError::new(409, "Cet email est déjà utilisé par un compte actif"));
+    }
+
+    let r = &rows[0];
+    let new_id = pg_col_id(r, 0);
+    let is_insert = r.try_get::<_, bool>(1).unwrap_or(true);
 
     Ok(json!({
         "id": new_id,
         "email": email,
         "role": role,
         "nom": nom,
+        "reactivated": !is_insert,
     }))
 }
 
 /// PUT /api/users/:id - Mise à jour d'un utilisateur DIRECTEMENT sur Supabase
-#[tauri::command]
 pub async fn users_update(
     state: State<'_, AppState>,
     token: Option<String>,
@@ -282,15 +268,6 @@ pub async fn users_update(
         let em = em.trim();
         if !validators::is_valid_email(em) {
             return Err(ApiError::bad_request("Email invalide"));
-        }
-        // Vérifier conflit avec un autre utilisateur
-        let check_sql = format!(
-            "SELECT id FROM users WHERE LOWER(email) = LOWER('{}') AND id <> {} AND COALESCE(deleted::text, '0') NOT IN ('1', 'true') LIMIT 1",
-            escape_sql(em), id
-        );
-        let clash = query_with_retry(&state, &check_sql).await?;
-        if !clash.is_empty() {
-            return Err(ApiError::new(409, "Email déjà utilisé par un autre utilisateur sur Supabase"));
         }
         sets.push(format!("email = '{}'", escape_sql(em)));
     }
@@ -332,7 +309,16 @@ pub async fn users_update(
         sets.join(", "), id
     );
 
-    execute_with_retry(&state, &update_sql).await?;
+    match execute_with_retry(&state, &update_sql).await {
+        Ok(_) => {},
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("unique") || msg.contains("users_email_key") || msg.contains("duplicate key") {
+                return Err(ApiError::new(409, "Email déjà utilisé par un autre compte sur Supabase"));
+            }
+            return Err(e);
+        }
+    }
 
     Ok(json!({
         "id": id,
