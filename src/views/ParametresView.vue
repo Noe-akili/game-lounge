@@ -104,8 +104,7 @@ const userInitials = computed(() => {
 async function handleSync() {
   syncing.value = true
   try {
-    await api.post('/sync/pull')
-    await api.post('/sync/push')
+    await api.post('/sync/run')
     toast.success('Synchronisation terminée avec succès !')
   } catch (e: any) {
     toast.error('Erreur synchronisation: ' + (e.message || 'Échec'))

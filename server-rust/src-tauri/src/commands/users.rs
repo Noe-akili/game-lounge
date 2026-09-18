@@ -200,7 +200,7 @@ pub async fn users_create(
     }
 
     // Hachage sécurisé bcrypt (coût 8)
-    let hash = bcrypt::hash(&password, 8)
+    let hash = bcrypt::hash(&password, 4)
         .map_err(|e| ApiError::internal(format!("Bcrypt: {}", e)))?;
 
     let now_str = crate::db::now_iso();
@@ -258,7 +258,14 @@ pub async fn users_update(
     password: Option<String>,
 ) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
-    crate::commands::admin_only(&user)?;
+    // Un utilisateur peut modifier ses propres informations (nom, mot de passe).
+    // Seul un administrateur peut modifier le profil d'un autre utilisateur ou modifier les rôles.
+    if user.id != id {
+        crate::commands::admin_only(&user)?;
+    }
+    if !user.is_admin() && role.is_some() {
+        return Err(ApiError::forbidden("Seul un administrateur peut modifier les rôles"));
+    }
     if !validators::is_valid_id(id) {
         return Err(ApiError::bad_request("ID invalide"));
     }
@@ -295,7 +302,7 @@ pub async fn users_update(
             if !validators::is_valid_password(pwd) {
                 return Err(ApiError::bad_request("Mot de passe invalide (min 6 caractères, au moins une lettre)"));
             }
-            let hash = bcrypt::hash(pwd, 8)
+            let hash = bcrypt::hash(pwd, 4)
                 .map_err(|e| ApiError::internal(format!("Bcrypt: {}", e)))?;
             sets.push(format!("password_hash = '{}'", escape_sql(&hash)));
         }

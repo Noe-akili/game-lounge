@@ -31,10 +31,6 @@
           <Joystick class="w-4 h-4" />
           <span>Jeux</span>
         </router-link>
-        <router-link to="/admin/jeux" class="sidebar-link" active-class="sidebar-link-active">
-        <Joystick class="w-4 h-4" />
-        <span>Jeux</span>
-      </router-link>
       <router-link to="/joueurs" class="sidebar-link" active-class="sidebar-link-active">
           <Users class="w-4 h-4" />
           <span>Joueurs</span>
@@ -88,6 +84,10 @@
         <router-link to="/sessions" class="sidebar-link" active-class="sidebar-link-active">
           <PlayCircle class="w-4 h-4" />
           <span>Sessions</span>
+        </router-link>
+        <router-link to="/jeux" class="sidebar-link" active-class="sidebar-link-active">
+          <Joystick class="w-4 h-4" />
+          <span>Jeux</span>
         </router-link>
         <router-link to="/joueurs" class="sidebar-link" active-class="sidebar-link-active">
           <Users class="w-4 h-4" />

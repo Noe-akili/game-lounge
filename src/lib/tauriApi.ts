@@ -183,6 +183,8 @@ const ROUTES: RouteDef[] = [
   { m: 'GET', p: '/sync/status', f: ({ token }) => ({ cmd: 'sync_status', args: { token } }) },
   { m: 'POST', p: '/sync/toggle', f: ({ token, body }) => ({ cmd: 'sync_toggle', args: { token, enabled: !!val(body, 'enabled') } }) },
   { m: 'POST', p: '/sync/run', f: ({ token }) => ({ cmd: 'sync_run', args: { token } }) },
+  { m: 'POST', p: '/sync/pull', f: ({ token }) => ({ cmd: 'sync_run', args: { token } }) },
+  { m: 'POST', p: '/sync/push', f: ({ token }) => ({ cmd: 'sync_run', args: { token } }) },
   { m: 'GET', p: '/sync/poll', f: ({ token }) => ({ cmd: 'sync_poll', args: { token } }) },
   // État de l'initial (première sync faite ? quelles tables ?) — mission §5
   { m: 'GET', p: '/sync/initial-status', f: ({ token }) => ({ cmd: 'sync_initial_status', args: { token } }) },
