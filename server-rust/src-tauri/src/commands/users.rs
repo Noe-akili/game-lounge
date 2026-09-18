@@ -210,7 +210,7 @@ pub async fn users_create(
     // - Si archivé (deleted != 0) : réactive le compte et met à jour le mot de passe
     // - Si déjà actif : la clause WHERE COALESCE(...) filtre et aucune ligne n'est retournée
     let atomic_sql = format!(
-        "INSERT INTO users (email, password_hash, role, nom, created_at, deleted)          VALUES ('{email}', '{hash}', '{role}', '{nom}', '{now_str}', 0)          ON CONFLICT (email) DO UPDATE SET             nom = EXCLUDED.nom,             role = EXCLUDED.role,             password_hash = EXCLUDED.password_hash,             deleted = 0          WHERE COALESCE(users.deleted::text, '0') IN ('1', 'true')          RETURNING id, (xmax = 0) AS is_insert",
+        "INSERT INTO users (email, password_hash, role, nom, created_at, deleted)          VALUES ('{email}', '{hash}', '{role}', '{nom}', '{now_str}', 0)          ON CONFLICT (email) DO UPDATE SET             nom = EXCLUDED.nom,             role = EXCLUDED.role,             password_hash = EXCLUDED.password_hash,             deleted = 0          WHERE COALESCE(users.deleted::text, '0') IN ('1', 'true')          RETURNING id, (xmax::text = '0') AS is_insert",
         email = escape_sql(email),
         hash = escape_sql(&hash),
         role = escape_sql(&role),

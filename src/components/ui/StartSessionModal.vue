@@ -11,10 +11,10 @@
       <div class="flex gap-1 sm:gap-2 mb-4 sm:mb-6 overflow-x-auto pb-2">
         <div v-for="(s, i) in steps" :key="i"
           class="flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition-all shrink-0"
-          :class="step > i ? 'bg-neon-green/15 text-neon-green' : step === i ? 'bg-neon-violet/15 text-neon-violet border border-neon-violet/30' : 'bg-bg-surface text-txt-dim'">
+          :class="currentStepIndex > i ? 'bg-neon-green/15 text-neon-green' : currentStepIndex === i ? 'bg-neon-violet/15 text-neon-violet border border-neon-violet/30' : 'bg-bg-surface text-txt-dim'">
           <span class="w-5 h-5 sm:w-6 sm:h-6 rounded-full flex items-center justify-center text-[10px] sm:text-xs font-bold shrink-0"
-            :class="step > i ? 'bg-neon-green text-white' : step === i ? 'bg-neon-violet text-white' : 'bg-bg-hover text-txt-dim'">
-            <Check v-if="step > i" class="w-3 h-3" /><span v-else>{{ i + 1 }}</span>
+            :class="currentStepIndex > i ? 'bg-neon-green text-white' : currentStepIndex === i ? 'bg-neon-violet text-white' : 'bg-bg-hover text-txt-dim'">
+            <Check v-if="currentStepIndex > i" class="w-3 h-3" /><span v-else>{{ i + 1 }}</span>
           </span>
           <span class="hidden sm:inline">{{ s }}</span>
         </div>
@@ -157,7 +157,19 @@ import { isValidNom, isValidPhone, isValidEmail, sanitizeInput, isValidId } from
 const props = defineProps({ open: Boolean, console: Object })
 const emit = defineEmits(['close', 'started'])
 
-const steps = ['Joueur', 'Console', 'Jeu', 'Tarif']
+const steps = computed(() => {
+  if (props.console) return ['Joueur', 'Jeu', 'Tarif']
+  return ['Joueur', 'Console', 'Jeu', 'Tarif']
+})
+const currentStepIndex = computed(() => {
+  if (props.console) {
+    if (step.value === 0) return 0
+    if (step.value === 2) return 1
+    if (step.value === 3) return 2
+    return 0
+  }
+  return step.value
+})
 const step = ref(0)
 const loading = ref(false)
 const searchQuery = ref('')
@@ -210,7 +222,6 @@ watch(() => props.open, (v) => {
     searchQuery.value = ''
     loadData()
     if (props.console) {
-      step.value = 2
       loadJeux(props.console.id)
     }
   }
@@ -242,6 +253,16 @@ async function onSearch() {
 }
 
 function nextStep() {
+  if (step.value === 0 && props.console) {
+    // Si la console est pré-sélectionnée, on saute le choix de console et on va direct au Jeu
+    if (selectedConsole.value) {
+      loadJeux(selectedConsole.value.id)
+    }
+    selectedJeu.value = null
+    selectedTarif.value = null
+    step.value = 2
+    return
+  }
   if (step.value === 1 && selectedConsole.value) {
     loadJeux(selectedConsole.value.id)
     selectedJeu.value = null
@@ -254,6 +275,11 @@ function nextStep() {
 }
 
 function prevStep() {
+  if (step.value === 2 && props.console) {
+    // Revenir à l'étape Joueur
+    step.value = 0
+    return
+  }
   step.value--
 }
 
