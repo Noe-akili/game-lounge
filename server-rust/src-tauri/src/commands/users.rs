@@ -247,6 +247,7 @@ pub async fn users_create(
 }
 
 /// PUT /api/users/:id - Mise à jour d'un utilisateur DIRECTEMENT sur Supabase
+#[tauri::command]
 pub async fn users_update(
     state: State<'_, AppState>,
     token: Option<String>,
