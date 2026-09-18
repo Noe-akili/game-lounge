@@ -11,7 +11,7 @@
     "build:frontend": "npm --prefix .. run build:mobile",
     "android:init": "tauri android init",
     "android:dev": "tauri android dev",
-    "android:build": "tauri android build --apk"
+    "android:build": "tauri android build --apk --split-per-abi"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
