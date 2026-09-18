@@ -60,5 +60,5 @@ dotenvy = { version = "0.15", optional = true }
 [profile.release]
 codegen-units = 1
 lto = true
-opt-level = "s"
+opt-level = "z"
 strip = true
