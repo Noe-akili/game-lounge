@@ -284,7 +284,14 @@ impl Db {
         let _ = conn.execute_batch(
             "ALTER TABLE sync_state ADD COLUMN device_name TEXT DEFAULT '';              ALTER TABLE sync_state ADD COLUMN installation_id TEXT DEFAULT '';              ALTER TABLE sync_state ADD COLUMN created_at TEXT DEFAULT '';              ALTER TABLE sync_state ADD COLUMN activated INTEGER DEFAULT 0;"
         );
-        let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
+        for stmt in SOFT_DELETE_MIGRATION.split(';') {
+            let s = stmt.trim();
+            if !s.is_empty() {
+                let _ = conn.execute(s, []);
+            }
+        }
+        let _ = conn.execute("ALTER TABLE jetons_transactions ADD COLUMN facture_id INTEGER;", []);
+        let _ = conn.execute("ALTER TABLE jetons_transactions ADD COLUMN deleted INTEGER DEFAULT 0;", []);
         // Colonnes visuels (sticker joueur, image console/jeu) + index unique
         // partiel sur users (fix utilisateurs fantômes). Idempotent.
         let _ = conn.execute_batch(IMAGE_COLUMNS_MIGRATION);
@@ -328,7 +335,14 @@ impl Db {
              ALTER TABLE sessions_jeu ADD COLUMN tarif_id INTEGER;",            );            let _ = conn.execute_batch(
             "ALTER TABLE sync_state ADD COLUMN device_name TEXT DEFAULT '';              ALTER TABLE sync_state ADD COLUMN installation_id TEXT DEFAULT '';              ALTER TABLE sync_state ADD COLUMN created_at TEXT DEFAULT '';              ALTER TABLE sync_state ADD COLUMN activated INTEGER DEFAULT 0;"
         );
-        let _ = conn.execute_batch(SOFT_DELETE_MIGRATION);
+        for stmt in SOFT_DELETE_MIGRATION.split(';') {
+            let s = stmt.trim();
+            if !s.is_empty() {
+                let _ = conn.execute(s, []);
+            }
+        }
+        let _ = conn.execute("ALTER TABLE jetons_transactions ADD COLUMN facture_id INTEGER;", []);
+        let _ = conn.execute("ALTER TABLE jetons_transactions ADD COLUMN deleted INTEGER DEFAULT 0;", []);
         let _ = conn.execute_batch(IMAGE_COLUMNS_MIGRATION);
         let _ = conn.execute_batch(TOKEN_VALUE_MIGRATION);
         let _ = conn.execute_batch("ALTER TABLE sessions_jeu ADD COLUMN duree_allouee INTEGER DEFAULT 60;");
