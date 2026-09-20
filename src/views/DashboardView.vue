@@ -82,6 +82,10 @@ function openEndModal(c) {
 }
 
 async function handlePause(c) {
+  if (!c?.session_id) {
+    toast.error('Aucune session active sur cette console')
+    return
+  }
   try {
     await api.put(`/sessions/${c.session_id}/pause`)
     toast.success('Session mise en pause')
@@ -92,6 +96,10 @@ async function handlePause(c) {
 }
 
 async function handleResume(c) {
+  if (!c?.session_id) {
+    toast.error('Aucune session active sur cette console')
+    return
+  }
   try {
     await api.put(`/sessions/${c.session_id}/reprendre`)
     toast.success('Session reprise')
