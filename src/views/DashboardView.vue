@@ -21,7 +21,7 @@
 
     <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
       <motion.div v-for="(c, i) in consoles" :key="c.id" :initial="{ opacity: 0, y: 12 }" :animate="{ opacity: 1, y: 0 }" :transition="{ duration: 0.25, delay: i * 0.04, ease: 'easeOut' }">
-        <ConsoleCard :console="c" @start="openStartModal" @pause="handlePause" @resume="handleResume" @end="openEndModal" />
+        <ConsoleCard :console="c" :readonly="auth.user?.role === 'employe'" @start="openStartModal" @pause="handlePause" @resume="handleResume" @end="openEndModal" />
       </motion.div>
     </div>
 
