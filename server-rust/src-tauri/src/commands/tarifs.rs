@@ -21,7 +21,13 @@ pub fn tarifs_list(
     include_deleted: Option<bool>,
 ) -> ApiResult<Value> {
     claims(&state, &token)?;
-    let mut rows = db(&state).query_all("tarifs")?;
+    // include_deleted=true doit REELLEMENT remonter les archives : query_all()
+    // applique deja "WHERE deleted = 0" en SQL, il faut donc query_all_all().
+    let mut rows = if include_deleted.unwrap_or(false) {
+        db(&state).query_all_all("tarifs")?
+    } else {
+        db(&state).query_all("tarifs")?
+    };
     if !include_deleted.unwrap_or(false) {
         rows.retain(|r| !is_deleted(r.get("deleted")));
     }

@@ -43,8 +43,10 @@ const DEFAULT_ADMIN_ROLE: &str = "admin";
 /// login). Hash Argon2id calculé une seule fois si le compte n'existe pas —
 /// ~100-300ms, acceptable au boot (hors chemin UI).
 fn seed_impl(db: &crate::db::Db) {
+    // find_one_all : un compte par défaut ARCHIVÉ existe toujours en base et la
+    // colonne email est UNIQUE — le réinsérer échouerait à chaque boot.
     let exists = db
-        .find_one("users", |r| {
+        .find_one_all("users", |r| {
             r.get("email").and_then(Value::as_str).is_some_and(|e| e.eq_ignore_ascii_case(DEFAULT_ADMIN_EMAIL))
         })
         .ok()
@@ -439,49 +441,11 @@ pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -
     let database = db(&state);
     ensure_default_admin(&database);
 
-    // 1) Vérification immédiate pour le compte administrateur local
-    let is_admin = (email == DEFAULT_ADMIN_EMAIL || email == ALT_ADMIN_EMAIL)
-        && (password == DEFAULT_ADMIN_PASSWORD || password == "admin" || password == "mdp1234");
-
-    if is_admin {
-        let mut user = database.find_one("users", |r| {
-            r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(&email))
-        })?.unwrap_or_default();
-
-        if user.is_null() || user.get("id").is_none() {
-            let hash = auth_core::hash_password(DEFAULT_ADMIN_PASSWORD).unwrap_or_default();
-            let mut u = jmap();
-            u.insert("email".into(), json!(email));
-            u.insert("password_hash".into(), json!(hash));
-            u.insert("nom".into(), json!(DEFAULT_ADMIN_NOM));
-            u.insert("role".into(), json!("admin"));
-            u.insert("created_at".into(), json!(crate::db::now_iso()));
-            u.insert("deleted".into(), json!(0));
-            let _ = database.insert("users", &u);
-            if let Ok(Some(created)) = database.find_one("users", |r| {
-                r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(&email))
-            }) {
-                user = created;
-            }
-        }
-
-        let c = auth_core::Claims {
-            id: user.get("id").and_then(Value::as_i64).unwrap_or(1),
-            email: email.clone(),
-            role: "admin".to_string(),
-            nom: DEFAULT_ADMIN_NOM.to_string(),
-            iat: 0,
-            exp: 0,
-        };
-        let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
-        state.session_authenticated.store(true, std::sync::atomic::Ordering::Relaxed);
-        return Ok(json!({
-            "token": access,
-            "refresh_token": refresh,
-            "user": user_public(&user),
-            "source": "local-admin",
-        }));
-    }
+    // 1) Le compte par defaut n'a PLUS de mot de passe code en dur.
+    //    Avant, les emails admin acceptaient toujours "mdp1234"/"admin" : tout
+    //    changement de mot de passe restait donc sans effet (l'ancien mot de
+    //    passe continuait d'ouvrir la session). La verification passe desormais
+    //    uniquement par le hash stocke en base (etape 2).
 
     // 2) Recherche dans SQLite locale
     let local_user = database.find_one("users", |r| {
@@ -490,9 +454,13 @@ pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -
     })?;
 
     let mut local_user_exists = false;
+    // Hash local absent (ligne répliquée sans hash) : le cloud reste autorisé à
+    // fournir le mot de passe de référence, sinon le compte serait inutilisable.
+    let mut local_hash_missing = false;
     if let Some(user) = &local_user {
         local_user_exists = true;
         let stored_hash = user.get("password_hash").and_then(Value::as_str).unwrap_or_default();
+        local_hash_missing = stored_hash.trim().is_empty();
         if !stored_hash.is_empty() && compare_direct(&password, stored_hash) {
             let role = user.get("role").and_then(Value::as_str).unwrap_or("employe").to_string();
             let nom = user.get("nom").and_then(Value::as_str).unwrap_or("Utilisateur").to_string();
@@ -516,8 +484,15 @@ pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -
     }
 
     // 3) Vérification discrète Supabase (bornée à 3s max, non-bloquante)
+    //    UNIQUEMENT si le compte est INCONNU de cet appareil. Si le compte
+    //    existe en local, le hash local est LA référence (même règle que la
+    //    sync, qui n'écrase jamais password_hash) : sinon un hash cloud encore
+    //    périmé réautoriserait l'ANCIEN mot de passe et réécrirait le hash
+    //    local — le changement de mot de passe semblait alors sans effet.
     #[cfg(feature = "supabase-sync")]
-    {
+    if !local_user_exists || local_hash_missing {
+        // Compte inconnu de cet appareil (ou sans hash local) : premier login
+        // autorisé via le cloud, qui renseignera ensuite la copie locale.
         let pool_opt = state.supabase_pool.lock().ok().and_then(|g| g.clone());
         if let Some(pool) = pool_opt {
             let res = tauri::async_runtime::block_on(async {
@@ -604,13 +579,12 @@ pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -
         }
     }
 
-    #[cfg(not(feature = "supabase-sync"))]
-    {
-        if local_user_exists {
-            return Err(ApiError::unauthorized("Mot de passe incorrect"));
-        } else {
-            return Err(ApiError::unauthorized("Aucun compte correspondant trouvé"));
-        }
+    // Compte connu localement + hash local qui ne correspond pas : refus net.
+    // (Aucun repli cloud : le hash local est la référence, cf. étape 3.)
+    if local_user_exists {
+        Err(ApiError::unauthorized("Mot de passe incorrect"))
+    } else {
+        Err(ApiError::unauthorized("Aucun compte correspondant trouvé"))
     }
 }
 

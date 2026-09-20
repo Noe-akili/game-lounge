@@ -40,7 +40,14 @@ pub fn factures_list(
 ) -> ApiResult<Value> {
     claims(&state, &token)?;
     let db = db(&state);
-    let mut factures: Vec<Value> = db.query_all("factures")?;
+    let include_del = include_deleted.unwrap_or(false);
+    // query_all() filtre deja "deleted = 0" en SQL : sans query_all_all() la case
+    // "Afficher archivees" ne peut rien remonter.
+    let mut factures: Vec<Value> = if include_del {
+        db.query_all_all("factures")?
+    } else {
+        db.query_all("factures")?
+    };
     if let Some(s) = statut {
         factures.retain(|f| f.get("statut").and_then(Value::as_str) == Some(s.as_str()));
     }
@@ -64,12 +71,14 @@ pub fn factures_list(
                 .unwrap_or(false)
         });
     }
-    if !include_deleted.unwrap_or(false) {
+    if !include_del {
         factures.retain(|f| !is_deleted(f.get("deleted")));
     }
     sort_desc_by_created_at(&mut factures);
 
-    let joueurs = db.query_all("joueurs")?;
+    // Une facture archivee pointe souvent un joueur lui-meme archive : on lit
+    // toutes les lignes pour ne pas perdre le nom du client.
+    let joueurs = db.query_all_all("joueurs")?;
     Ok(Value::Array(
         factures
             .iter()

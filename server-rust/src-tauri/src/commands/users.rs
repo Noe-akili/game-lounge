@@ -21,7 +21,13 @@ pub async fn users_list(state: State<'_, AppState>, token: Option<String>, inclu
     crate::commands::admin_only(&user)?;
 
     // Lecture locale immédiate : aucune attente PostgreSQL sur le chemin IPC Android.
-    let mut list = db(&state).query_all("users")?;
+    // query_all() applique déjà "WHERE deleted = 0" : pour voir les archives il
+    // faut query_all_all(), sinon la case "Afficher archivés" ne remonte rien.
+    let mut list = if include_deleted.unwrap_or(false) {
+        db(&state).query_all_all("users")?
+    } else {
+        db(&state).query_all("users")?
+    };
     if !include_deleted.unwrap_or(false) {
         list.retain(|r| !is_deleted(r.get("deleted")));
     }
@@ -65,8 +71,12 @@ pub async fn users_create(
     if !validators::is_valid_password(&password) { return Err(ApiError::bad_request("Mot de passe invalide (min 6 caractères, au moins une lettre)")); }
     if !validators::is_valid_role(&role) { return Err(ApiError::bad_request("Rôle invalide (admin ou employe)")); }
 
+    // IMPORTANT : query_all_all() — la colonne email est UNIQUE en SQLite. Un
+    // compte ARCHIVÉ portant le même email est invisible pour query_all(), donc
+    // l'INSERT partait quand même et échouait sur la contrainte UNIQUE
+    // ("erreur de base de données"). On le retrouve ici pour le réactiver.
     let email_lc = email.to_lowercase();
-    let existing = db(&state).query_all("users")?.into_iter().find(|r| {
+    let existing = db(&state).query_all_all("users")?.into_iter().find(|r| {
         r.get("email").and_then(Value::as_str).map(|e| e.trim().eq_ignore_ascii_case(&email_lc)).unwrap_or(false)
     });
     let existing_id = existing.as_ref().and_then(|r| r.get("id").and_then(Value::as_i64));
@@ -101,7 +111,13 @@ pub async fn users_create(
         let updated = db(&state).update("users", existing_id, &row)?;
         (updated.get("id").and_then(Value::as_i64).unwrap_or(existing_id), true)
     } else {
-        let created = db(&state).insert("users", &row)?;
+        // Filet de sécurité : la contrainte UNIQUE(email) doit produire un 409
+        // explicite, jamais un message technique "erreur de base de données".
+        let created = db(&state).insert("users", &row).map_err(|e| {
+            if e.message.to_lowercase().contains("unique") {
+                ApiError::new(409, "Cet email est déjà pris par un autre compte (peut-être archivé) : activez « Afficher archivés » pour le restaurer")
+            } else { e }
+        })?;
         (created.get("id").and_then(Value::as_i64).unwrap_or(0), false)
     };
     eprintln!("[users_create][PERF] SQLite + outbox = {:?}", db_start.elapsed());
@@ -125,10 +141,16 @@ pub async fn users_update(
         let em=em.trim();
         if !validators::is_valid_email(em) { return Err(ApiError::bad_request("Email invalide")); }
         let em_lc=em.to_lowercase();
-        if db(&state).query_all("users")?.iter().any(|r| r.get("id").and_then(Value::as_i64)!=Some(id)
-            && r.get("email").and_then(Value::as_str).map(|e| e.eq_ignore_ascii_case(&em_lc)).unwrap_or(false)
-            && r.get("deleted").and_then(Value::as_i64).unwrap_or(0)==0) {
-            return Err(ApiError::new(409,"Email déjà utilisé par un autre compte local actif"));
+        // La contrainte UNIQUE(email) en SQLite vise AUSSI les comptes archivés :
+        // on les inclut pour renvoyer un 409 lisible plutôt qu'une erreur SQL.
+        let clash = db(&state).query_all_all("users")?.into_iter().find(|r| r.get("id").and_then(Value::as_i64)!=Some(id)
+            && r.get("email").and_then(Value::as_str).map(|e| e.trim().eq_ignore_ascii_case(&em_lc)).unwrap_or(false));
+        if let Some(other) = clash {
+            return Err(if is_deleted(other.get("deleted")) {
+                ApiError::new(409, "Email déjà utilisé par un compte archivé : restaurez-le ou supprimez-le définitivement")
+            } else {
+                ApiError::new(409, "Email déjà utilisé par un autre compte local actif")
+            });
         }
         updates.insert("email".into(),json!(em));
     }

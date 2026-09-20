@@ -118,19 +118,28 @@ pub fn sessions_list(
 ) -> ApiResult<Value> {
     claims(&state, &token)?;
     let db = db(&state);
-    let mut sessions: Vec<Value> = db.query_all("sessions_jeu")?;
+    let include_del = include_deleted.unwrap_or(false);
+    // query_all() filtre deja "deleted = 0" en SQL : sans query_all_all() la case
+    // "Afficher archivees" ne peut rien remonter.
+    let mut sessions: Vec<Value> = if include_del {
+        db.query_all_all("sessions_jeu")?
+    } else {
+        db.query_all("sessions_jeu")?
+    };
     if let Some(s) = statut {
         sessions.retain(|x| x.get("statut").and_then(Value::as_str) == Some(s.as_str()));
     }
-    if !include_deleted.unwrap_or(false) {
+    if !include_del {
         sessions.retain(|x| !is_deleted(x.get("deleted")));
     }
     sort_desc_by_created_at(&mut sessions);
 
-    let consoles = db.query_all("consoles")?;
-    let joueurs = db.query_all("joueurs")?;
-    let jeux = db.query_all("jeux")?;
-    let users = db.query_all("users")?;
+    // Libelles : une session archivee reference souvent une console/un jeu/un
+    // joueur lui-meme archive -> on lit TOUTES les lignes pour l'enrichissement.
+    let consoles = db.query_all_all("consoles")?;
+    let joueurs = db.query_all_all("joueurs")?;
+    let jeux = db.query_all_all("jeux")?;
+    let users = db.query_all_all("users")?;
 
     Ok(Value::Array(
         sessions
