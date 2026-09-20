@@ -115,6 +115,41 @@
           <p v-else class="text-txt-dim text-sm text-center py-3 bg-bg-surface rounded-xl">Aucune ligne</p>
         </div>
 
+        <!-- HISTORIQUE DES JETONS (DÉBITS & REMBOURSEMENTS LIÉS AU PAIEMENT) -->
+        <div class="mb-6">
+          <div class="flex items-center justify-between mb-2">
+            <h4 class="font-gaming font-bold text-sm text-txt-muted flex items-center gap-2">
+              <Coins class="w-4 h-4 text-neon-yellow" />
+              MOUVEMENTS DE JETONS (DÉBITS / REMBOURSEMENTS)
+            </h4>
+          </div>
+          <div v-if="selected.jetons_transactions?.length" class="space-y-2 w-full max-w-full min-w-0 overflow-hidden">
+            <div v-for="tx in selected.jetons_transactions" :key="tx.id" class="p-3 bg-bg-surface border border-white/5 rounded-xl text-sm flex items-center justify-between gap-3">
+              <div class="flex items-center gap-3 min-w-0">
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                  :class="tx.type === 'gain' ? 'bg-neon-green/20 text-neon-green' : 'bg-neon-red/20 text-neon-red'">
+                  <Coins class="w-4 h-4" />
+                </div>
+                <div class="min-w-0">
+                  <p class="font-medium truncate">{{ tx.raison || (tx.type === 'gain' ? 'Remboursement de jetons' : 'Débit de jetons') }}</p>
+                  <p class="text-xs text-txt-dim">{{ formatDate(tx.created_at) }}</p>
+                </div>
+              </div>
+              <div class="text-right shrink-0">
+                <span class="font-gaming font-bold text-base" :class="tx.type === 'gain' ? 'text-neon-green' : 'text-neon-red'">
+                  {{ tx.type === 'gain' ? '+' : '-' }}{{ tx.quantite }} jeton{{ tx.quantite > 1 ? 's' : '' }}
+                </span>
+                <span class="block text-xs uppercase tracking-wider font-semibold" :class="tx.type === 'gain' ? 'text-neon-green' : 'text-neon-red'">
+                  {{ tx.type === 'gain' ? 'Remboursement' : 'Débit' }}
+                </span>
+              </div>
+            </div>
+          </div>
+          <p v-else class="text-txt-dim text-xs text-center py-3 bg-bg-surface/50 rounded-xl border border-white/5">
+            Aucun débit ou remboursement de jetons enregistré sur cette facture.
+          </p>
+        </div>
+
         </div><!-- /contenu scrollable -->
 
         <!-- BARRE D'ACTIONS SÉPARÉE du contenu (item 5) : document d'abord,

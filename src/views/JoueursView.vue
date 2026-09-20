@@ -93,6 +93,39 @@
           </div>
           <p v-if="!detailData.sessions?.length" class="text-txt-dim text-sm text-center py-2">Aucune session</p>
         </div>
+
+        <!-- HISTORIQUE DÉTAILLÉ DES JETONS (DÉBITS & REMBOURSEMENTS) -->
+        <div class="mb-4">
+          <h4 class="font-gaming font-bold text-sm text-txt-muted mb-2 flex items-center gap-2">
+            <Coins class="w-4 h-4 text-neon-yellow" />
+            HISTORIQUE JETONS (DÉBITS & REMBOURSEMENTS)
+          </h4>
+          <div class="space-y-2 max-h-48 overflow-y-auto pr-1">
+            <div v-for="t in detailData.transactions" :key="t.id" class="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-bg-surface border border-white/5 text-sm">
+              <div class="flex items-center gap-2.5 min-w-0">
+                <div class="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+                  :class="t.type === 'gain' ? 'bg-neon-green/20 text-neon-green' : t.type === 'bonus' ? 'bg-neon-violet/20 text-neon-violet' : 'bg-neon-red/20 text-neon-red'">
+                  <Coins class="w-3.5 h-3.5" />
+                </div>
+                <div class="min-w-0">
+                  <p class="font-medium truncate text-xs sm:text-sm">{{ t.raison || (t.type === 'gain' ? 'Crédit jetons' : 'Débit jetons') }}</p>
+                  <p class="text-[11px] text-txt-dim">{{ formatDate(t.created_at) }}</p>
+                </div>
+              </div>
+              <div class="text-right shrink-0">
+                <p class="font-gaming font-bold text-sm" :class="t.type === 'depense' ? 'text-neon-red' : 'text-neon-yellow'">
+                  {{ t.type === 'depense' ? '-' : '+' }}{{ t.quantite }}
+                </p>
+                <span class="text-[10px] uppercase font-bold tracking-wider" :class="t.type === 'gain' ? 'text-neon-green' : t.type === 'depense' ? 'text-neon-red' : 'text-neon-violet'">
+                  {{ t.type === 'gain' ? 'Remboursement / Gain' : t.type === 'depense' ? 'Débit' : 'Bonus' }}
+                </span>
+              </div>
+            </div>
+            <p v-if="!detailData.transactions?.length" class="text-txt-dim text-xs text-center py-3 bg-bg-surface/50 rounded-xl border border-white/5">
+              Aucun mouvement de jetons enregistré pour ce joueur
+            </p>
+          </div>
+        </div>
         <div class="flex gap-3">
           <button @click="showDetail = false" class="btn-neon-outline flex-1">Fermer</button>
           <button @click="editJoueur(detailJoueur); showDetail = false" class="btn-neon-violet flex-1 flex items-center justify-center gap-2"><Pencil class="w-4 h-4" /> Modifier</button>

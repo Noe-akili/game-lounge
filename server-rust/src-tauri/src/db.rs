@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS sessions_jeu (id INTEGER PRIMARY KEY, console_id INTE
 CREATE TABLE IF NOT EXISTS tarifs (id INTEGER PRIMARY KEY, nom TEXT, type TEXT, prix INTEGER, duree_minutes INTEGER, description TEXT, actif INTEGER DEFAULT 1, console_type TEXT, jeu TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS jeux (id INTEGER PRIMARY KEY, titre TEXT, genre TEXT, console_id INTEGER, actif INTEGER DEFAULT 1, jaquette_url TEXT, image_url TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS factures (id INTEGER PRIMARY KEY, numero_facture TEXT UNIQUE, session_id INTEGER, joueur_id INTEGER, montant_ht REAL, taux_tva REAL DEFAULT 20, montant_tva REAL, montant_ttc REAL, mode_paiement TEXT, statut TEXT, date_paiement TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
-CREATE TABLE IF NOT EXISTS jetons_transactions (id INTEGER PRIMARY KEY, joueur_id INTEGER, quantite INTEGER, type TEXT, raison TEXT, session_id INTEGER, created_at TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS jetons_transactions (id INTEGER PRIMARY KEY, joueur_id INTEGER, quantite INTEGER, type TEXT, raison TEXT, session_id INTEGER, facture_id INTEGER, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, titre TEXT, contenu TEXT, auteur TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS parametres_fidelite (id INTEGER PRIMARY KEY, regle_type TEXT, seuil INTEGER, jetons_attribues INTEGER, valeur_jeton INTEGER DEFAULT 100, actif INTEGER DEFAULT 1, deleted INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS lignes_facture (id INTEGER PRIMARY KEY, facture_id INTEGER, description TEXT, quantite INTEGER, prix_unitaire INTEGER, total_ligne INTEGER, created_at TEXT, deleted INTEGER DEFAULT 0);
@@ -73,7 +73,7 @@ ALTER TABLE joueurs ADD COLUMN deleted INTEGER DEFAULT 0; \
 ALTER TABLE sessions_jeu ADD COLUMN deleted INTEGER DEFAULT 0; \
 ALTER TABLE tarifs ADD COLUMN deleted INTEGER DEFAULT 0; \
 ALTER TABLE factures ADD COLUMN deleted INTEGER DEFAULT 0; \
-ALTER TABLE jetons_transactions ADD COLUMN deleted INTEGER DEFAULT 0; \
+ALTER TABLE jetons_transactions ADD COLUMN deleted INTEGER DEFAULT 0; \nALTER TABLE jetons_transactions ADD COLUMN facture_id INTEGER; \
 ALTER TABLE messages ADD COLUMN deleted INTEGER DEFAULT 0; \
 ALTER TABLE parametres_fidelite ADD COLUMN deleted INTEGER DEFAULT 0; \
 ALTER TABLE lignes_facture ADD COLUMN deleted INTEGER DEFAULT 0; \
