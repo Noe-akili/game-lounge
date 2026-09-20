@@ -6,7 +6,7 @@
         <select v-model="filtreStatut" @change="fetchData" class="input-field w-40 text-sm py-2">
           <option value="">Tous</option><option value="payee">Payées</option><option value="en_attente">En attente</option><option value="annulee">Annulées</option>
         </select>
-        <button @click="openAdd" class="btn-neon-violet flex items-center gap-2">
+        <button v-if="!isEmployee" @click="openAdd" class="btn-neon-violet flex items-center gap-2">
           <Plus class="w-4 h-4" /> Créer
         </button>
       </div>
@@ -46,15 +46,17 @@
           <button @click="printPdf(f)" class="p-2 rounded-lg hover:bg-neon-violet/10 text-neon-violet" title="Imprimer">
             <Printer class="w-4 h-4" />
           </button>
-          <button @click="editFacture(f)" class="p-2 rounded-lg hover:bg-bg-hover text-txt-dim" title="Modifier">
+          <button @click="editFacture(f)" class="p-2 rounded-lg hover:bg-bg-hover text-txt-dim" title="Modifier le paiement">
             <Pencil class="w-4 h-4" />
           </button>
-          <button v-if="f.statut !== 'annulee'" @click="cancelFacture(f)" class="p-2 rounded-lg hover:bg-neon-yellow/10 text-neon-yellow" title="Annuler">
-            <XCircle class="w-4 h-4" />
-          </button>
-          <button @click="deleteFacture(f.id)" class="p-2 rounded-lg hover:bg-neon-red/10 text-neon-red" title="Supprimer">
-            <Trash2 class="w-4 h-4" />
-          </button>
+          <template v-if="!isEmployee">
+            <button v-if="f.statut !== 'annulee'" @click="cancelFacture(f)" class="p-2 rounded-lg hover:bg-neon-yellow/10 text-neon-yellow" title="Annuler">
+              <XCircle class="w-4 h-4" />
+            </button>
+            <button @click="deleteFacture(f.id)" class="p-2 rounded-lg hover:bg-neon-red/10 text-neon-red" title="Supprimer">
+              <Trash2 class="w-4 h-4" />
+            </button>
+          </template>
         </div>
       </div>
     </div>
@@ -97,7 +99,7 @@
         <div class="mb-6">
           <div class="flex items-center justify-between mb-2">
             <h4 class="font-gaming font-bold text-sm text-txt-muted">LIGNES</h4>
-            <button @click="openAddLigne" class="btn-neon-violet text-xs py-1 px-3 flex items-center gap-1"><Plus class="w-3 h-3" /> Ajouter ligne</button>
+            <button v-if="!isEmployee" @click="openAddLigne" class="btn-neon-violet text-xs py-1 px-3 flex items-center gap-1"><Plus class="w-3 h-3" /> Ajouter ligne</button>
           </div>
           <div v-if="selected.lignes?.length" class="space-y-1 w-full max-w-full min-w-0 overflow-hidden">
             <div v-for="l in selected.lignes" :key="l.id" class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 p-2 bg-bg-surface rounded-lg text-sm group w-full max-w-full min-w-0 overflow-hidden">
@@ -106,7 +108,7 @@
                 <p class="text-xs text-txt-dim truncate">{{ l.quantite }} x {{ formatCurrency(l.prix_unitaire) }}</p>
               </div>
               <span class="font-gaming shrink-0 mx-3 truncate">{{ formatCurrency(l.total_ligne) }}</span>
-              <div class="flex gap-1 shrink-0 flex-wrap opacity-0 group-hover:opacity-100 transition-opacity">
+              <div v-if="!isEmployee" class="flex gap-1 shrink-0 flex-wrap opacity-0 group-hover:opacity-100 transition-opacity">
                 <button @click="editLigne(l)" class="p-1.5 rounded-lg hover:bg-bg-hover text-txt-dim"><Pencil class="w-3 h-3" /></button>
                 <button @click="deleteLigne(l.id)" class="p-1.5 rounded-lg hover:bg-neon-red/10 text-neon-red"><Trash2 class="w-3 h-3" /></button>
               </div>
@@ -186,8 +188,9 @@
 
     <Modal :open="showForm" @close="closeForm">
       <div class="p-6">
-        <h3 class="font-gaming text-xl font-bold mb-4">{{ editingId ? 'Modifier' : 'Créer' }} une facture</h3>
+        <h3 class="font-gaming text-xl font-bold mb-4">{{ isEmployee ? 'Modifier le paiement' : (editingId ? 'Modifier' : 'Créer') + ' une facture' }}</h3>
         <div class="space-y-4">
+          <template v-if="!isEmployee || !editingId">
           <div>
             <label class="text-sm text-txt-muted">Joueur</label>
             <select v-model.number="form.joueur_id" class="input-field">
@@ -222,20 +225,21 @@
               <input v-model.number="form.montant_ttc" type="number" class="input-field w-full max-w-full min-w-0" />
             </div>
           </div>
+          </template>
           <select v-model="form.mode_paiement" class="input-field">
             <option value="especes">Espèces</option>
             <option value="carte">Carte</option>
             <option value="mobile">Mobile Money</option>
             <option value="jetons">Jetons</option>
           </select>
-          <select v-model="form.statut" class="input-field">
+          <select v-if="!isEmployee" v-model="form.statut" class="input-field">
             <option value="payee">Payée</option>
             <option value="en_attente">En attente</option>
             <option value="annulee">Annulée</option>
           </select>
           <div class="flex gap-3">
             <button @click="closeForm" class="btn-neon-outline flex-1">Annuler</button>
-            <button @click="saveFacture" :disabled="!form.joueur_id || !form.session_id || !form.montant_ttc" class="btn-neon-violet flex-1">{{ editingId ? 'Modifier' : 'Créer' }}</button>
+            <button @click="saveFacture" :disabled="isEmployee ? !form.mode_paiement : (!form.joueur_id || !form.session_id || !form.montant_ttc)" class="btn-neon-violet flex-1">{{ isEmployee ? 'Enregistrer' : (editingId ? 'Modifier' : 'Créer') }}</button>
           </div>
         </div>
       </div>
@@ -246,8 +250,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { api } from '@/utils/api'
+import { useAuthStore } from '@/stores/auth'
 import { getFacturePdfBlob, saveFacturePdf } from '@/lib/clientPdf'
 import { formatCurrency, formatDate } from '@/utils/helpers'
 import { toast } from 'vue-sonner'
@@ -255,6 +260,9 @@ import Modal from '@/components/ui/Modal.vue'
 import { Receipt, Eye, Download, Printer, XCircle, Plus, Pencil, Trash2, X } from 'lucide-vue-next'
 import Loader from '@/components/ui/Loader.vue'
 import { isValidId, isValidPrix, isValidFactureStatut, isValidModePaiement, isValidQuantite, sanitizeInput } from '@/utils/validators'
+
+const auth = useAuthStore()
+const isEmployee = computed(() => auth.user?.role === 'employe')
 
 const factures = ref([])
 const joueursList = ref([])
@@ -293,7 +301,7 @@ function openAdd() {
   editingId.value = null
   Object.assign(form, { joueur_id: null, session_id: null, montant_ht: 0, taux_tva: 20, montant_tva: 0, montant_ttc: 0, mode_paiement: 'especes', statut: 'payee' })
   showForm.value = true
-  fetchJoueursSessions()
+  if (!isEmployee.value) fetchJoueursSessions()
 }
 
 function editFacture(f) {
@@ -306,12 +314,20 @@ function editFacture(f) {
 function closeForm() { showForm.value = false; editingId.value = null }
 
 async function saveFacture() {
+  if (form.mode_paiement && !isValidModePaiement(form.mode_paiement)) return toast.error('Mode de paiement invalide')
+  if (isEmployee.value) {
+    if (!editingId.value) return toast.error('Un employé ne peut pas créer une facture ici')
+    try {
+      await api.put(`/factures/${editingId.value}`, { mode_paiement: form.mode_paiement })
+      toast.success('Mode de paiement modifié')
+      closeForm(); fetchData()
+    } catch (e) { toast.error(e.message) }
+    return
+  }
   if (!isValidId(form.joueur_id)) return toast.error('Joueur invalide')
   if (!isValidId(form.session_id)) return toast.error('Session invalide')
   if (!isValidPrix(form.montant_ttc)) return toast.error('Montant TTC invalide (1-1000000)')
   if (form.statut && !isValidFactureStatut(form.statut)) return toast.error('Statut invalide')
-  if (form.mode_paiement && !isValidModePaiement(form.mode_paiement)) return toast.error('Mode de paiement invalide')
-  // auto calc if needed
   if (!form.montant_tva && form.montant_ht && form.taux_tva) form.montant_tva = Math.round(form.montant_ht * form.taux_tva / 100)
   if (!form.montant_ht && form.montant_ttc && form.taux_tva) form.montant_ht = Math.round(form.montant_ttc / (1 + form.taux_tva / 100))
   try {
@@ -394,5 +410,5 @@ async function deleteLigne(id) {
   catch (e) { toast.error(e.message) }
 }
 
-onMounted(() => { fetchData(); fetchJoueursSessions() })
+onMounted(() => { fetchData(); if (!isEmployee.value) fetchJoueursSessions() })
 </script>

@@ -25,7 +25,7 @@ function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<any> {
   // auth_login est LOCAL-FIRST : le compte présent dans SQLite doit répondre
   // rapidement. Le cloud n'est utilisé que pour un compte absent/localement
   // non valide. Le timeout IPC ne doit donc plus masquer un blocage de 75s.
-  const timeoutMs = cmd.startsWith('users_') ? 45000 : ((cmd === 'auth_login' || cmd === 'auth_refresh') ? 35000 : 15000)
+  const timeoutMs = cmd.startsWith('users_') ? 8000 : ((cmd === 'auth_login' || cmd === 'auth_refresh') ? 35000 : 15000)
   return Promise.race([
     Promise.resolve(fn.call(w.__TAURI__?.core || w.__TAURI_INTERNALS__, cmd, args)).then((r:any)=>{ console.log('[TAURI_INVOKE_SUCCESS]', cmd); return r; }).catch((e:any)=>{ console.warn('[TAURI_INVOKE_ERROR]', cmd, e); throw e; }),
     new Promise((_, reject) => setTimeout(() => { console.warn('[TAURI_INVOKE_ERROR] timeout', cmd); reject({ message: 'Timeout IPC (Android WebView)', status: 504 }) }, timeoutMs))
@@ -141,11 +141,13 @@ const ROUTES: RouteDef[] = [
   { m: 'DELETE', p: '/lignes_facture/:id', f: ({ token, segs }) => ({ cmd: 'lignes_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== TARIFS =====
-  { m: 'GET', p: '/tarifs', f: ({ token }) => ({ cmd: 'tarifs_list', args: { token } }) },
+  { m: 'GET', p: '/tarifs', f: ({ token, query }) => ({ cmd: 'tarifs_list', args: { token, includeDeleted: bval(query.include_deleted) || false } }) },
   { m: 'GET', p: '/tarifs/:id', f: ({ token, segs }) => ({ cmd: 'tarifs_get', args: { token, id: num(segs.id) } }) },
   { m: 'POST', p: '/tarifs', f: ({ token, body }) => ({ cmd: 'tarifs_create', args: { token, type: val(body, 'type'), dureeMinutes: num(val(body, 'duree_minutes')), prix: num(val(body, 'prix')), description: val(body, 'description'), consoleType: val(body, 'console_type'), jeu: val(body, 'jeu') } }) },
   { m: 'PUT', p: '/tarifs/:id', f: ({ token, segs, body }) => ({ cmd: 'tarifs_update', args: { token, id: num(segs.id), type: val(body, 'type'), dureeMinutes: num(val(body, 'duree_minutes')), prix: num(val(body, 'prix')), description: val(body, 'description'), actif: bval(val(body, 'actif')), consoleType: val(body, 'console_type'), jeu: val(body, 'jeu') } }) },
   { m: 'DELETE', p: '/tarifs/:id', f: ({ token, segs }) => ({ cmd: 'tarifs_delete', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/tarifs/:id/restore', f: ({ token, segs }) => ({ cmd: 'tarifs_restore', args: { token, id: num(segs.id) } }) },
+  { m: 'DELETE', p: '/tarifs/:id/permanent', f: ({ token, segs }) => ({ cmd: 'tarifs_permanent_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== JETONS =====
   { m: 'GET', p: '/jetons', f: ({ token, query }) => ({ cmd: 'jetons_list', args: { token, joueurId: num(query.joueur_id) } }) },

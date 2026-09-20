@@ -13,6 +13,7 @@
 
     <div v-else class="space-y-4 w-full max-w-full min-w-0 overflow-hidden">
       <div class="flex items-center gap-2">
+        <label class="flex items-center gap-2 text-sm text-txt-dim select-none"><input v-model="includeArchived" @change="fetchData" type="checkbox" /> Afficher les tarifs archivés</label>
         <select v-model="filterConsole" class="input-field w-32 text-sm py-2">
           <option value="">Tous consoles</option>
           <option value="PS4">PS4</option>
@@ -33,9 +34,16 @@
             <span class="font-gaming font-bold text-neon-green shrink-0">{{ formatCurrency(t.prix) }}</span>
           </div>
           <div class="flex items-center gap-2 justify-end">
-            <span class="badge shrink-0" :class="t.actif ? 'badge-green' : 'badge-red'">{{ t.actif ? 'Actif' : 'Inactif' }}</span>
-            <button @click="editTarif(t)" class="p-1.5 rounded-lg hover:bg-bg-hover text-txt-dim shrink-0"><Pencil class="w-3.5 h-3.5" /></button>
-            <button @click="deleteTarif(t.id)" class="p-1.5 rounded-lg hover:bg-neon-red/10 text-neon-red shrink-0"><Trash2 class="w-3.5 h-3.5" /></button>
+            <span v-if="t.deleted" class="badge badge-red shrink-0">Archivé</span>
+            <span v-else class="badge shrink-0" :class="t.actif ? 'badge-green' : 'badge-red'">{{ t.actif ? 'Actif' : 'Inactif' }}</span>
+            <template v-if="t.deleted">
+              <button @click="restoreTarif(t.id)" class="p-1.5 rounded-lg hover:bg-neon-green/10 text-neon-green shrink-0" title="Restaurer"><RotateCcw class="w-3.5 h-3.5" /></button>
+              <button @click="permanentDeleteTarif(t.id)" class="p-1.5 rounded-lg hover:bg-neon-red/10 text-neon-red shrink-0" title="Supprimer définitivement"><Trash2 class="w-3.5 h-3.5" /></button>
+            </template>
+            <template v-else>
+              <button @click="editTarif(t)" class="p-1.5 rounded-lg hover:bg-bg-hover text-txt-dim shrink-0"><Pencil class="w-3.5 h-3.5" /></button>
+              <button @click="deleteTarif(t.id)" class="p-1.5 rounded-lg hover:bg-neon-red/10 text-neon-red shrink-0"><Trash2 class="w-3.5 h-3.5" /></button>
+            </template>
           </div>
         </div>
       </div>
@@ -75,7 +83,7 @@ import { api } from '@/utils/api'
 import { formatCurrency } from '@/utils/helpers'
 import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
-import { Plus, Pencil, Trash2 } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2, RotateCcw } from 'lucide-vue-next'
 import Loader from '@/components/ui/Loader.vue'
 import { isValidTarifType, isValidDuree, isValidPrix, sanitizeInput } from '@/utils/validators'
 
@@ -86,6 +94,7 @@ const showAdd = ref(false)
 const editing = ref(null)
 const filterConsole = ref('')
 const filterJeu = ref('')
+const includeArchived = ref(false)
 const form = reactive({ type: 'session', duree_minutes: 60, prix: 2000, description: '', console_type: 'PS5', jeu: '' })
 
 const filteredJeux = computed(() => {
@@ -110,7 +119,7 @@ async function fetchData() {
   loading.value = true
   try {
     const [tarifsData, jeuxData] = await Promise.all([
-      api.get('/tarifs'),
+      api.get(`/tarifs?include_deleted=${includeArchived.value}`),
       api.get('/jeux')
     ])
     tarifs.value = tarifsData
@@ -136,6 +145,17 @@ async function saveTarif() {
 async function deleteTarif(id) {
   if (!confirm('Supprimer ce tarif ?')) return
   try { await api.delete(`/tarifs/${id}`); toast.success('Supprimé'); fetchData() }
+  catch (e) { toast.error(e.message) }
+}
+
+async function restoreTarif(id) {
+  try { await api.post(`/tarifs/${id}/restore`); toast.success('Tarif restauré'); fetchData() }
+  catch (e) { toast.error(e.message) }
+}
+
+async function permanentDeleteTarif(id) {
+  if (!confirm('Supprimer définitivement ce tarif ? Cette action est irréversible.')) return
+  try { await api.delete(`/tarifs/${id}/permanent`); toast.success('Tarif supprimé définitivement'); fetchData() }
   catch (e) { toast.error(e.message) }
 }
 

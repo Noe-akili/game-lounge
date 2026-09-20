@@ -319,6 +319,8 @@ pub fn run() {
             commands::tarifs_create,
             commands::tarifs_update,
             commands::tarifs_delete,
+            commands::tarifs_restore,
+            commands::tarifs_permanent_delete,
             // ==== PARAMÈTRES FIDÉLITÉ ====
             commands::parametres::fidelite_get,
             commands::parametres::fidelite_put,

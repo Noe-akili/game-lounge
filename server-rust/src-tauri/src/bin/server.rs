@@ -1373,17 +1373,27 @@ async fn factures_update(
     let token = token_from_headers(&headers);
     let result = (|| -> ApiResult<Value> {
         let user = claims(&state, &token)?;
-        admin_only(&user)?;
+        let is_admin = user.is_admin();
+        if !is_admin {
+            if user.role != "employe" {
+                return Err(ApiError::forbidden("Accès réservé aux administrateurs et employés"));
+            }
+            if body.get("statut").is_some() || body.get("montant_ttc").is_some() || body.get("mode_paiement").and_then(Value::as_str).is_none() {
+                return Err(ApiError::forbidden("Un employé peut uniquement modifier le mode de paiement"));
+            }
+        }
         if !validators::is_valid_id(id) {
             return Err(ApiError::bad_request("ID invalide"));
         }
         get_by_id(&state, "factures", id, "Facture non trouvée")?;
         let mut updates = jmap();
-        if let Some(s) = body.get("statut").and_then(Value::as_str) {
-            if !validators::is_valid_facture_statut(s) {
-                return Err(ApiError::bad_request("Statut invalide"));
+        if is_admin {
+            if let Some(s) = body.get("statut").and_then(Value::as_str) {
+                if !validators::is_valid_facture_statut(s) {
+                    return Err(ApiError::bad_request("Statut invalide"));
+                }
+                updates.insert("statut".into(), json!(s));
             }
-            updates.insert("statut".into(), json!(s));
         }
         if let Some(m) = body.get("mode_paiement").and_then(Value::as_str) {
             if !validators::is_valid_mode_paiement(m) {
@@ -1391,11 +1401,13 @@ async fn factures_update(
             }
             updates.insert("mode_paiement".into(), json!(m));
         }
-        if let Some(m) = body.get("montant_ttc").and_then(Value::as_f64) {
-            if !validators::is_valid_prix(m) {
-                return Err(ApiError::bad_request("Montant invalide (1-1000000)"));
+        if is_admin {
+            if let Some(m) = body.get("montant_ttc").and_then(Value::as_f64) {
+                if !validators::is_valid_prix(m) {
+                    return Err(ApiError::bad_request("Montant invalide (1-1000000)"));
+                }
+                updates.insert("montant_ttc".into(), json!(m));
             }
-            updates.insert("montant_ttc".into(), json!(m));
         }
         db(&state).update("factures", id, &updates)
     })();

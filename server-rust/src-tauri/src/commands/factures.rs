@@ -335,17 +335,27 @@ pub fn factures_update(
     montant_ttc: Option<f64>,
 ) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
-    admin_only(&user)?;
+    let is_admin = user.is_admin();
+    if !is_admin {
+        if user.role != "employe" {
+            return Err(ApiError::forbidden("Accès réservé aux administrateurs et employés"));
+        }
+        if statut.is_some() || montant_ttc.is_some() || mode_paiement.is_none() {
+            return Err(ApiError::forbidden("Un employé peut uniquement modifier le mode de paiement"));
+        }
+    };
     if !validators::is_valid_id(id) {
         return Err(ApiError::bad_request("ID invalide"));
     }
     get_by_id(db(&state), "factures", id, "Facture non trouvée")?;
     let mut updates = jmap();
-    if let Some(s) = statut {
-        if !validators::is_valid_facture_statut(&s) {
-            return Err(ApiError::bad_request("Statut invalide"));
+    if is_admin {
+        if let Some(s) = statut {
+            if !validators::is_valid_facture_statut(&s) {
+                return Err(ApiError::bad_request("Statut invalide"));
+            }
+            updates.insert("statut".into(), json!(s));
         }
-        updates.insert("statut".into(), json!(s));
     }
     let facture = get_by_id(db(&state), "factures", id, "Facture non trouvée")?;
     let old_mode = facture.get("mode_paiement").and_then(Value::as_str).unwrap_or("especes");
@@ -444,11 +454,13 @@ pub fn factures_update(
             }
         }
     }
-    if let Some(m) = montant_ttc {
-        if !validators::is_valid_prix(m) {
-            return Err(ApiError::bad_request("Montant invalide (1-1000000)"));
+    if is_admin {
+        if let Some(m) = montant_ttc {
+            if !validators::is_valid_prix(m) {
+                return Err(ApiError::bad_request("Montant invalide (1-1000000)"));
+            }
+            updates.insert("montant_ttc".into(), json!(m));
         }
-        updates.insert("montant_ttc".into(), json!(m));
     }
     db(&state).update("factures", id, &updates)
 }

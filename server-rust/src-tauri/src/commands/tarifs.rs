@@ -11,9 +11,17 @@ use crate::AppState;
 
 /// GET /api/tarifs
 #[tauri::command]
-pub fn tarifs_list(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+pub fn tarifs_list(
+    state: State<'_, AppState>,
+    token: Option<String>,
+    include_deleted: Option<bool>,
+) -> ApiResult<Value> {
     claims(&state, &token)?;
-    Ok(Value::Array(db(&state).query_all("tarifs")?))
+    let mut rows = db(&state).query_all("tarifs")?;
+    if !include_deleted.unwrap_or(false) {
+        rows.retain(|r| r.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 0);
+    }
+    Ok(Value::Array(rows))
 }
 
 /// GET /api/tarifs/:id
@@ -143,5 +151,29 @@ pub fn tarifs_delete(
         return Err(ApiError::bad_request("ID invalide"));
     }
     db(&state).remove("tarifs", id)?;
-    Ok(json!({ "success": true }))
+    Ok(json!({ "success": true, "deleted": true }))
+}
+
+/// POST /api/tarifs/:id/restore
+#[tauri::command]
+pub fn tarifs_restore(
+    state: State<'_, AppState>, token: Option<String>, id: i64,
+) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    if !validators::is_valid_id(id) { return Err(ApiError::bad_request("ID invalide")); }
+    let row = db(&state).restore("tarifs", id)?;
+    Ok(json!({ "id": id, "restored": true, "tarif": row }))
+}
+
+/// DELETE /api/tarifs/:id/permanent
+#[tauri::command]
+pub fn tarifs_permanent_delete(
+    state: State<'_, AppState>, token: Option<String>, id: i64,
+) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    if !validators::is_valid_id(id) { return Err(ApiError::bad_request("ID invalide")); }
+    db(&state).permanent_delete("tarifs", id)?;
+    Ok(json!({ "id": id, "permanently_deleted": true }))
 }
