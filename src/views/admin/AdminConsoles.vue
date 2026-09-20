@@ -68,6 +68,13 @@
             <option value="Nintendo Switch">Nintendo Switch</option>
           </select>
           <input v-model.number="form.poste_numero" type="number" placeholder="Numéro de poste" class="input-field" min="1" max="100" />
+          <select v-model="form.etat" class="input-field">
+            <option value="disponible">Disponible (Libre)</option>
+            <option value="occupee">Occupé</option>
+            <option value="pause">En pause</option>
+            <option value="maintenance">Maintenance</option>
+            <option value="hors_service">Hors service</option>
+          </select>
           <input v-model="form.image_url" placeholder="URL image (ex: https://...)" class="input-field" />
           <div class="flex gap-3">
             <button @click="showForm = false" class="btn-neon-outline flex-1">Annuler</button>
