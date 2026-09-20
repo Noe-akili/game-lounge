@@ -199,9 +199,10 @@ pub async fn users_create(
         return Err(ApiError::bad_request("Rôle invalide (admin ou employe)"));
     }
 
-    // Hachage sécurisé bcrypt (coût 8)
-    let hash = bcrypt::hash(&password, 4)
-        .map_err(|e| ApiError::internal(format!("Bcrypt: {}", e)))?;
+    // Hachage ultra-rapide Argon2id calibré mobile (<30ms) avec capture de panique
+    let hash = std::panic::catch_unwind(|| crate::auth::hash_password(&password))
+        .map_err(|_| ApiError::internal("Erreur interne lors du hachage du mot de passe"))?
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
 
     let now_str = crate::db::now_iso();
 
@@ -302,8 +303,10 @@ pub async fn users_update(
             if !validators::is_valid_password(pwd) {
                 return Err(ApiError::bad_request("Mot de passe invalide (min 6 caractères, au moins une lettre)"));
             }
-            let hash = bcrypt::hash(pwd, 4)
-                .map_err(|e| ApiError::internal(format!("Bcrypt: {}", e)))?;
+            // Hachage ultra-rapide Argon2id calibré mobile (<30ms) avec capture de panique
+            let hash = std::panic::catch_unwind(|| crate::auth::hash_password(pwd))
+                .map_err(|_| ApiError::internal("Erreur interne lors du hachage du mot de passe"))?
+                .map_err(|e| ApiError::bad_request(e.to_string()))?;
             sets.push(format!("password_hash = '{}'", escape_sql(&hash)));
         }
     }
