@@ -199,15 +199,21 @@ pub async fn users_create(
         return Err(ApiError::bad_request("Rôle invalide (admin ou employe)"));
     }
 
-    // Hachage ultra-rapide sur thread dédié pour ne jamais bloquer l'exécuteur Tokio
+    // Diagnostic temporaire : mesure séparément l'attente du thread blocking et le hash Argon2id.
+    let hash_total_start = std::time::Instant::now();
     let pwd_clone = password.clone();
+    let hash_start = std::time::Instant::now();
     let hash = tokio::task::spawn_blocking(move || {
-        std::panic::catch_unwind(|| crate::auth::hash_password(&pwd_clone))
-            .map_err(|_| ApiError::internal("Erreur interne lors du hachage du mot de passe"))
+        let argon2_start = std::time::Instant::now();
+        let result = std::panic::catch_unwind(|| crate::auth::hash_password(&pwd_clone))
+            .map_err(|_| ApiError::internal("Erreur interne lors du hachage du mot de passe"));
+        eprintln!("[users_create][PERF] Argon2/hash_password = {:?}", argon2_start.elapsed());
+        result
     })
     .await
     .map_err(|e| ApiError::internal(format!("spawn_blocking: {}", e)))??
     .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    eprintln!("[users_create][PERF] attente spawn_blocking + hash = {:?}", hash_start.elapsed());
 
     let now_str = crate::db::now_iso();
 
@@ -224,9 +230,14 @@ pub async fn users_create(
         now_str = now_str
     );
 
+    let db_start = std::time::Instant::now();
     let rows = match query_with_retry(&state, &atomic_sql).await {
-        Ok(r) => r,
+        Ok(r) => {
+            eprintln!("[users_create][PERF] requête Supabase = {:?}", db_start.elapsed());
+            r
+        },
         Err(e) => {
+            eprintln!("[users_create][PERF] requête Supabase échouée après {:?}: {}", db_start.elapsed(), e);
             let msg = e.to_string();
             if msg.contains("unique") || msg.contains("users_email_key") || msg.contains("duplicate key") {
                 return Err(ApiError::new(409, "Cet email est déjà utilisé par un compte actif"));
@@ -308,15 +319,20 @@ pub async fn users_update(
             if !validators::is_valid_password(pwd) {
                 return Err(ApiError::bad_request("Mot de passe invalide (min 6 caractères, au moins une lettre)"));
             }
-            // Hachage ultra-rapide sur thread dédié pour ne jamais bloquer l'exécuteur Tokio
+            // Diagnostic temporaire : mesure séparément l'attente du thread blocking et le hash Argon2id.
+            let hash_start = std::time::Instant::now();
             let pwd_clone = pwd.to_string();
             let hash = tokio::task::spawn_blocking(move || {
-                std::panic::catch_unwind(|| crate::auth::hash_password(&pwd_clone))
-                    .map_err(|_| ApiError::internal("Erreur interne lors du hachage du mot de passe"))
+                let argon2_start = std::time::Instant::now();
+                let result = std::panic::catch_unwind(|| crate::auth::hash_password(&pwd_clone))
+                    .map_err(|_| ApiError::internal("Erreur interne lors du hachage du mot de passe"));
+                eprintln!("[users_update][PERF] Argon2/hash_password = {:?}", argon2_start.elapsed());
+                result
             })
             .await
             .map_err(|e| ApiError::internal(format!("spawn_blocking: {}", e)))??
             .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            eprintln!("[users_update][PERF] attente spawn_blocking + hash = {:?}", hash_start.elapsed());
             sets.push(format!("password_hash = '{}'", escape_sql(&hash)));
         }
     }
@@ -330,9 +346,13 @@ pub async fn users_update(
         sets.join(", "), id
     );
 
+    let db_start = std::time::Instant::now();
     match execute_with_retry(&state, &update_sql).await {
-        Ok(_) => {},
+        Ok(_) => {
+            eprintln!("[users_update][PERF] requête Supabase = {:?}", db_start.elapsed());
+        },
         Err(e) => {
+            eprintln!("[users_update][PERF] requête Supabase échouée après {:?}: {}", db_start.elapsed(), e);
             let msg = e.to_string();
             if msg.contains("unique") || msg.contains("users_email_key") || msg.contains("duplicate key") {
                 return Err(ApiError::new(409, "Email déjà utilisé par un autre compte sur Supabase"));
