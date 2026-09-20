@@ -131,10 +131,11 @@ const restantAffiche = computed(() =>
   hasAllocation.value ? formatDuration(Math.max(0, restant.value)) : ''
 )
 
-const isActive = computed(() => props.console.session_statut === 'en_cours' || props.console.session_statut === 'pause' || props.console.etat === 'occupee' || props.console.etat === 'pause')
-const isOccupied = computed(() => props.console.session_statut === 'en_cours' || props.console.etat === 'occupee')
-const isPaused = computed(() => props.console.session_statut === 'pause' || props.console.etat === 'pause')
-const isFree = computed(() => props.console.etat === 'disponible' && !props.console.session_id)
+const hasActiveSession = computed(() => !!props.console.session_id && (props.console.session_statut === 'en_cours' || props.console.session_statut === 'pause'))
+const isActive = computed(() => hasActiveSession.value)
+const isOccupied = computed(() => hasActiveSession.value && props.console.session_statut === 'en_cours')
+const isPaused = computed(() => hasActiveSession.value && props.console.session_statut === 'pause')
+const isFree = computed(() => !hasActiveSession.value && props.console.etat !== 'maintenance' && props.console.etat !== 'hors_service')
 
 const montantActuel = computed(() => {
   // MÊME règle que le backend (compute_montant) : forfait choisi + dépassement
