@@ -313,6 +313,9 @@ pub struct SupabaseUser {
     pub role: String,
     pub nom: String,
     pub created_at: Option<String>,
+    /// Compte archivé côté cloud : le login doit être refusé, sinon un compte
+    /// supprimé sur un autre appareil ressuscitait ici au premier login.
+    pub deleted: bool,
 }
 
 /// Compte utilisateur Supabase pour le LOGIN (email + mot de passe).
@@ -323,7 +326,7 @@ pub struct SupabaseUser {
 pub async fn fetch_supabase_user(pool: &SupabasePool, email: &str) -> ApiResult<Option<SupabaseUser>> {
     // Email en dur (échappé) : les requêtes avec paramètres ($1) passent par le protocole
     // étendu (prepared statements) que le pooler Supabase ne supporte pas -> login cassé
-    let sql = format!("SELECT id, email, password_hash, role, nom, created_at FROM users WHERE email = '{}' LIMIT 1", escape_sql(email));
+    let sql = format!("SELECT id, email, password_hash, role, nom, created_at, COALESCE(deleted::int, 0) AS deleted FROM users WHERE email = '{}' LIMIT 1", escape_sql(email));
     let rows = supabase_query(pool, &sql, &[])
         .await
         .map_err(|e| ApiError::internal(format!("Supabase query user: {}", e)))?;
@@ -340,6 +343,7 @@ pub async fn fetch_supabase_user(pool: &SupabasePool, email: &str) -> ApiResult<
             role: pg_col_to_string_pub(row, 3).unwrap_or_else(|| "employe".to_string()),
             nom: pg_col_to_string_pub(row, 4).unwrap_or_default(),
             created_at: pg_col_to_string_pub(row, 5),
+            deleted: row.try_get::<_, i32>(6).unwrap_or(0) == 1,
         }
     }));
     match decode {
@@ -374,7 +378,9 @@ fn pg_col_to_string(row: &tokio_postgres::Row, idx: usize) -> Option<String> {
 
 #[cfg(feature = "supabase-sync")]
 pub async fn pull_users(pool: &SupabasePool) -> ApiResult<Vec<Value>> {
-    let rows = supabase_query(pool, "SELECT id, email, password_hash, role, nom, created_at FROM users ORDER BY id", &[])
+    // `deleted` fait partie du SELECT : sans elle, toute ligne pullée paraît
+    // active et un compte archivé ailleurs était ressuscité sur cet appareil.
+    let rows = supabase_query(pool, "SELECT id, email, password_hash, role, nom, created_at, COALESCE(deleted::int, 0) AS deleted FROM users ORDER BY id", &[])
         .await
         .map_err(|e| ApiError::internal(format!("Supabase pull users: {}", e)))?;
     // Décodage défensif : try_get + String partout (pas de chrono), catch_unwind par ligne.
@@ -390,6 +396,7 @@ pub async fn pull_users(pool: &SupabasePool) -> ApiResult<Vec<Value>> {
                 "role": pg_col_to_string(row, 3).unwrap_or_else(|| "employe".to_string()),
                 "nom": pg_col_to_string(row, 4).unwrap_or_default(),
                 "created_at": pg_col_to_string(row, 5),
+                "deleted": row.try_get::<_, i32>(6).unwrap_or(0),
             })
         }));
         match decoded {
@@ -826,6 +833,23 @@ fn is_deleted_value(v: &Value) -> bool {
     v.as_bool().unwrap_or(false) || v.as_i64().unwrap_or(0) == 1
 }
 
+/// Normalise une ligne pullée : `deleted` est ramené à l'entier 0/1 attendu par
+/// SQLite, quel que soit son type côté Postgres (boolean ou integer).
+///
+/// IMPORTANT : les lignes archivées ne sont PLUS jetées ici. Avant, tout pull
+/// faisait `if deleted { continue; }`, donc une archive faite sur un autre
+/// appareil n'arrivait jamais : la ligne restait ACTIVE en local et réapparaissait
+/// même après suppression. `apply_remote_change` sait traiter ces tombstones.
+#[cfg(feature = "supabase-sync")]
+fn normalize_pulled_row(item: &Value) -> Value {
+    let mut row = item.clone();
+    let is_del = row.get("deleted").map(is_deleted_value).unwrap_or(false);
+    if let Some(obj) = row.as_object_mut() {
+        obj.insert("deleted".into(), json!(if is_del { 1 } else { 0 }));
+    }
+    row
+}
+
 #[cfg(feature = "supabase-sync")]
 pub async fn pull_all(pool: &SupabasePool) -> ApiResult<std::collections::HashMap<String, Vec<Value>>> {
     let tables = ["users", "consoles", "jeux", "joueurs", "sessions_jeu", "tarifs", "factures", "jetons_transactions", "messages", "parametres_fidelite", "lignes_facture"];
@@ -845,12 +869,9 @@ pub async fn pull_all(pool: &SupabasePool) -> ApiResult<std::collections::HashMa
                 if let Ok(v) = serde_json::from_str::<Value>(&json_str) {
                     if let Some(arr) = v.as_array() {
                         for item in arr {
-                            // Soft-delete : on ne repull JAMAIS une ligne supprimée.
-                            // PAS de filtre SQL sur `deleted` : son type (boolean OU
-                            // integer) casse COALESCE -> on filtre EN RUST.
-                            let deleted = item.get("deleted").map(is_deleted_value).unwrap_or(false);
-                            if deleted { continue; }
-                            vec.push(item.clone());
+                            // Les archives sont CONSERVÉES : c'est ce qui propage
+                            // les suppressions (tombstones) entre appareils.
+                            vec.push(normalize_pulled_row(item));
                         }
                     }
                 }
@@ -906,9 +927,10 @@ pub async fn pull_table(pool: &SupabasePool, table: &str) -> ApiResult<Vec<Value
                     if let Ok(v) = serde_json::from_str::<Value>(&s) {
                         if let Some(arr) = v.as_array() {
                             for item in arr {
-                                let deleted = item.get("deleted").map(is_deleted_value).unwrap_or(false);
-                                if deleted { continue; }
-                                vec.push(item.clone());
+                                // Archives conservées : la sync initiale doit aussi
+                                // rapatrier les lignes supprimées, sinon une
+                                // suppression faite ailleurs ne s'applique jamais ici.
+                                vec.push(normalize_pulled_row(item));
                             }
                         }
                     }
@@ -940,9 +962,7 @@ async fn pull_all_fallback(pool: &SupabasePool, tables: &[&str]) -> ApiResult<st
                         if let Ok(v) = serde_json::from_str::<Value>(&s) {
                             if let Some(arr) = v.as_array() {
                                 for item in arr {
-                                    let deleted = item.get("deleted").map(is_deleted_value).unwrap_or(false);
-                                    if deleted { continue; }
-                                    vec.push(item.clone());
+                                    vec.push(normalize_pulled_row(item));
                                 }
                             }
                         }

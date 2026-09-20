@@ -45,15 +45,31 @@ const DEFAULT_ADMIN_ROLE: &str = "admin";
 fn seed_impl(db: &crate::db::Db) {
     // find_one_all : un compte par défaut ARCHIVÉ existe toujours en base et la
     // colonne email est UNIQUE — le réinsérer échouerait à chaque boot.
-    let exists = db
+    let existing = db
         .find_one_all("users", |r| {
             r.get("email").and_then(Value::as_str).is_some_and(|e| e.eq_ignore_ascii_case(DEFAULT_ADMIN_EMAIL))
         })
         .ok()
-        .flatten()
-        .is_some();
-    if exists {
-        crate::logger::log_auth("seed: compte par défaut déjà présent");
+        .flatten();
+    if let Some(existing) = existing {
+        // Le rôle du compte propriétaire est GARANTI admin. Auparavant, le
+        // raccourci de login en dur forgeait un jeton role="admin" quel que
+        // soit le rôle stocké ; sans cette garantie, un compte par défaut
+        // enregistré "employe" perdrait l'accès aux écrans d'administration.
+        let role = existing.get("role").and_then(Value::as_str).unwrap_or("");
+        let archived = existing.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1;
+        if role != DEFAULT_ADMIN_ROLE && !archived {
+            if let Some(id) = existing.get("id").and_then(Value::as_i64) {
+                let mut upd = jmap();
+                upd.insert("role".into(), json!(DEFAULT_ADMIN_ROLE));
+                match db.update("users", id, &upd) {
+                    Ok(_) => crate::logger::log_auth("seed: rôle admin restauré sur le compte par défaut"),
+                    Err(e) => crate::logger::log_auth(&format!("seed: rôle admin non restauré: {e}")),
+                }
+            }
+        } else {
+            crate::logger::log_auth("seed: compte par défaut déjà présent");
+        }
         return;
     }
     match auth_core::hash_password(DEFAULT_ADMIN_PASSWORD) {
@@ -304,6 +320,13 @@ async fn finish_supabase_login(
         emit_step(app, "error", "Compte inconnu du serveur — essai de la copie locale…");
         return Ok(None);
     };
+    // Compte archivé dans le cloud : refus net. Sans ce contrôle, un compte
+    // supprimé sur un autre appareil était recréé ici au premier login.
+    if supabase_user.deleted {
+        crate::logger::log_auth("supabase: compte archivé côté cloud, login refusé");
+        emit_step(app, "error", "Ce compte a été archivé");
+        return Err(ApiError::unauthorized("Ce compte a été archivé : demandez sa restauration à un administrateur"));
+    }
     crate::logger::log_auth(&format!("supabase: user trouvé, algo hash Supabase = {}", hash_algo(&supabase_user.password_hash)));
     emit_step(app, "cloud", "Compte trouvé — vérification du mot de passe…");
     let valid = compare_direct(password, &supabase_user.password_hash);
@@ -504,8 +527,18 @@ pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -
 
             match res {
                 Ok(Ok(Some(cloud_user))) => {
+                    // Compte archivé dans le cloud : on ne le recrée pas ici.
+                    if cloud_user.deleted {
+                        return Err(ApiError::unauthorized(
+                            "Ce compte a été archivé : demandez sa restauration à un administrateur",
+                        ));
+                    }
                     if compare_direct(&password, &cloud_user.password_hash) {
                         let mut u = jmap();
+                        // L'id du cloud est REPRIS tel quel : la copie locale doit
+                        // porter le même id, sinon la sync crée un doublon (et la
+                        // contrainte UNIQUE sur l'email fait échouer le pull).
+                        u.insert("id".into(), json!(cloud_user.id));
                         u.insert("email".into(), json!(cloud_user.email));
                         u.insert("password_hash".into(), json!(cloud_user.password_hash));
                         u.insert("nom".into(), json!(cloud_user.nom));
@@ -517,7 +550,11 @@ pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -
                             r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(&email))
                         }) {
                             if let Some(id) = existing.get("id").and_then(Value::as_i64) {
-                                let _ = database.update("users", id, &u);
+                                // On ne touche PAS à l'id d'une ligne existante
+                                // (il sert de clé à l'outbox et aux jointures).
+                                let mut upd = u.clone();
+                                upd.remove("id");
+                                let _ = database.update("users", id, &upd);
                             }
                         } else {
                             let _ = database.insert("users", &u);

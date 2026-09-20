@@ -11,6 +11,77 @@ use rand::RngCore;
 
 use crate::error::{ApiError, ApiResult};
 
+// ===== IDENTIFIANTS DISTRIBUÉS (anti-collision multi-appareils) =====
+//
+// AVANT : `id INTEGER PRIMARY KEY` laissait SQLite choisir max(id)+1. Deux
+// appareils hors ligne créaient donc tous les deux l'id 5 pour DEUX lignes
+// différentes. Au push, l'un écrasait l'autre côté Supabase ; au pull suivant,
+// `apply_remote` faisait un INSERT OR REPLACE sur l'id 5 et le compte créé
+// localement disparaissait silencieusement.
+//
+// MAINTENANT : id façon Snowflake généré localement, sans réseau :
+//   32 bits de secondes | 11 bits de shard appareil | 10 bits de séquence
+// Deux appareils distincts ne peuvent pas produire le même id (shard différent),
+// et un même appareil supporte 1024 insertions par seconde.
+//
+// CONTRAINTE CLÉ : 53 bits au maximum. Les ids traversent JSON jusqu'à Vue, où
+// Number.MAX_SAFE_INTEGER = 2^53-1 ; un id plus grand serait ARRONDI côté
+// JavaScript et l'app appellerait les API avec un mauvais id. Ici la valeur
+// actuelle vaut ~1,8e14, soit 50x sous la limite, et le format tient jusqu'en 2160.
+//
+// Les ids restent croissants dans le temps (ORDER BY id = ordre de création) et
+// les anciennes lignes à petits ids restent parfaitement valides.
+
+/// Epoch applicative : 2024-01-01T00:00:00Z (garde les ids courts).
+const ID_EPOCH_SECS: i64 = 1_704_067_200;
+
+/// Séquence intra-seconde, partagée par tout le processus.
+static ID_SEQUENCE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// 11 bits stables dérivés du device_id (FNV-1a) : l'empreinte de l'appareil.
+fn device_shard(device_id: &str) -> i64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in device_id.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    (h % 2048) as i64
+}
+
+/// Vrai si la table possède une colonne `id` (donc synchronisée). `app_settings`
+/// et les tables techniques n'en ont pas et gardent leur comportement d'origine.
+/// Résultat mis en cache : un seul PRAGMA par table et par processus.
+fn table_has_id_column(conn: &Connection, table: &str) -> bool {
+    static CACHE: std::sync::OnceLock<Mutex<std::collections::HashMap<String, bool>>> =
+        std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    if let Ok(g) = cache.lock() {
+        if let Some(v) = g.get(table) {
+            return *v;
+        }
+    }
+    let found = conn
+        .prepare(&format!("PRAGMA table_info(\"{table}\")"))
+        .and_then(|mut stmt| {
+            let names = stmt
+                .query_map([], |r| r.get::<_, String>(1))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(names.iter().any(|n| n == "id"))
+        })
+        .unwrap_or(false);
+    if let Ok(mut g) = cache.lock() {
+        g.insert(table.to_string(), found);
+    }
+    found
+}
+
+/// Identifiant unique au monde, sans coordination réseau.
+fn generate_distributed_id(device_id: &str) -> i64 {
+    let secs = (chrono::Utc::now().timestamp() - ID_EPOCH_SECS).max(0) & 0xFFFF_FFFF;
+    let seq = ID_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) & 0x3FF;
+    (secs << 21) | (device_shard(device_id) << 10) | seq
+}
+
 #[allow(dead_code)]
 pub const TABLES: [&str; 11] = [
     "users",
@@ -888,8 +959,46 @@ impl Db {
         }
         // 2) TOMBSTONE : suppression distante (spec §8)
         if payload.get("deleted").map(is_deleted_value).unwrap_or(false) {
-            conn.execute(&format!("UPDATE \"{entity}\" SET deleted=1 WHERE id=?"), [record_id])
+            let touched = conn
+                .execute(&format!("UPDATE \"{entity}\" SET deleted=1 WHERE id=?"), [record_id])
                 .map_err(|e| ApiError::internal(format!("tombstone {entity}: {e}")))?;
+            if touched == 0 {
+                // La ligne n'existe pas encore ici (appareil neuf, ou archivage
+                // effectué avant la première sync) : on la crée DIRECTEMENT
+                // archivée. Sinon l'archive resterait invisible sur cet appareil
+                // et ne pourrait jamais être restaurée.
+                let local_cols = self.columns_conn(&*conn, entity).unwrap_or_default();
+                let mut map = serde_json::Map::new();
+                for (k, v) in payload {
+                    if *k == "id" || !local_cols.contains(k) {
+                        continue;
+                    }
+                    if entity == "users" && *k == "password_hash" {
+                        continue;
+                    }
+                    map.insert(k.clone(), v.clone());
+                }
+                if !map.is_empty() {
+                    map.insert("id".into(), json!(record_id));
+                    map.insert("deleted".into(), json!(1));
+                    let keys: Vec<&String> = map.keys().collect();
+                    let cols: Vec<&str> = keys.iter().map(|k| k.as_str()).collect();
+                    let placeholders: Vec<&str> = vec!["?"; cols.len()];
+                    let q = format!(
+                        "INSERT OR IGNORE INTO \"{entity}\" ({}) VALUES ({})",
+                        cols.join(","),
+                        placeholders.join(",")
+                    );
+                    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+                        Vec::with_capacity(cols.len());
+                    for k in keys {
+                        bind_value(&mut params, &map[k]);
+                    }
+                    // INSERT OR IGNORE : une contrainte UNIQUE (email déjà pris
+                    // par un autre compte) ne doit pas faire échouer toute la sync.
+                    let _ = conn.execute(&q, rusqlite::params_from_iter(params));
+                }
+            }
             return Ok("tombstone");
         }
         // 3) INSERT/UPDATE avec skip-si-identique (zéro fsync inutile)
@@ -1142,6 +1251,39 @@ impl Db {
             Err(p) => p.into_inner(),
         };
         let has_id = data.contains_key("id");
+        // Id attribué ICI (pas par l'autoincrement SQLite) : voir
+        // generate_distributed_id — indispensable pour que deux appareils hors
+        // ligne ne créent jamais deux lignes différentes avec le même id.
+        let mut data = data.clone();
+        let mut generated_id: Option<i64> = None;
+        if !has_id && table_has_id_column(&conn, table) {
+            let device = self
+                .4
+                .lock()
+                .ok()
+                .and_then(|g| g.clone())
+                .or_else(|| self.device_id_conn(&conn).ok())
+                .unwrap_or_else(|| "device-inconnu".to_string());
+            let mut candidate = generate_distributed_id(&device);
+            // Garde-fou : un id déjà pris (base héritée, horloge reculée) est
+            // simplement décalé plutôt que de faire échouer l'insertion.
+            for _ in 0..64 {
+                let taken: i64 = conn
+                    .query_row(
+                        &format!("SELECT COUNT(1) FROM \"{table}\" WHERE id = ?1"),
+                        rusqlite::params![candidate],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                if taken == 0 {
+                    break;
+                }
+                candidate += 1;
+            }
+            data.insert("id".into(), json!(candidate));
+            generated_id = Some(candidate);
+        }
+        let data = &data;
         let keys: Vec<&String> = data.keys().collect();
         let cols: Vec<&str> = keys.iter().map(|k| k.as_str()).collect();
         let placeholders: Vec<&str> = vec!["?"; cols.len()];
@@ -1169,7 +1311,9 @@ impl Db {
         .map_err(|e| ApiError::internal(format!("BEGIN insert {table}: {e}")))?;
         tx.execute(&q, rusqlite::params_from_iter(params))
             .map_err(|e| ApiError::internal(format!("Insert {table}: {e}")))?;
-        let row_id = tx.last_insert_rowid();
+        // L'id explicite prévaut : last_insert_rowid() reste juste, mais on ne
+        // dépend plus de lui pour les lignes synchronisées.
+        let row_id = generated_id.unwrap_or_else(|| tx.last_insert_rowid());
         let mut out = data.clone();
         out.insert("id".into(), json!(row_id));
         self.enqueue_outbox(&*tx, "INSERT", table, row_id, &Value::Object(out.clone()))?;
