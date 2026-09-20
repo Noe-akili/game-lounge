@@ -47,7 +47,9 @@
           </div>
         </div>
       </div>
-      <p v-if="filteredTarifs.length === 0" class="text-center text-txt-dim py-6">Aucun tarif</p>
+      <p v-if="filteredTarifs.length === 0" class="text-center text-txt-dim py-6">
+        {{ includeArchived ? 'Aucun tarif actif ou archivé dans la base locale' : 'Aucun tarif actif' }}
+      </p>
     </div>
 
     <Modal :open="showAdd || editing" @close="showAdd = false; editing = null">
@@ -138,24 +140,24 @@ async function saveTarif() {
     if (editing.value) { await api.put(`/tarifs/${editing.value}`, { ...form }); toast.success('Tarif modifié') }
     else { await api.post('/tarifs', { ...form }); toast.success('Tarif créé') }
     showAdd.value = false; editing.value = null; Object.assign(form, { type: 'session', duree_minutes: 60, prix: 2000, description: '', console_type: 'PS5', jeu: '' })
-    fetchData()
+    await fetchData()
   } catch (e: any) { toast.error(e.message) }
 }
 
 async function deleteTarif(id) {
   if (!confirm('Supprimer ce tarif ?')) return
-  try { await api.delete(`/tarifs/${id}`); toast.success('Supprimé'); fetchData() }
+  try { await api.delete(`/tarifs/${id}`); toast.success('Tarif archivé'); await fetchData() }
   catch (e) { toast.error(e.message) }
 }
 
 async function restoreTarif(id) {
-  try { await api.post(`/tarifs/${id}/restore`); toast.success('Tarif restauré'); fetchData() }
+  try { await api.post(`/tarifs/${id}/restore`); toast.success('Tarif restauré'); await fetchData() }
   catch (e) { toast.error(e.message) }
 }
 
 async function permanentDeleteTarif(id) {
   if (!confirm('Supprimer définitivement ce tarif ? Cette action est irréversible.')) return
-  try { await api.delete(`/tarifs/${id}/permanent`); toast.success('Tarif supprimé définitivement'); fetchData() }
+  try { await api.delete(`/tarifs/${id}/permanent`); toast.success('Tarif supprimé définitivement'); await fetchData() }
   catch (e) { toast.error(e.message) }
 }
 

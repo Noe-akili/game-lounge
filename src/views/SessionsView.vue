@@ -3,6 +3,10 @@
     <div class="flex flex-wrap items-center justify-between gap-3">
       <h3 class="font-gaming text-lg font-bold">Sessions en cours</h3>
       <div class="flex items-center gap-2 sm:gap-3 flex-wrap">
+        <label class="flex items-center gap-2 cursor-pointer text-xs text-txt-dim">
+          <input type="checkbox" v-model="showArchived" @change="fetchData" class="rounded accent-neon-violet cursor-pointer" />
+          <span>Afficher archivées</span>
+        </label>
         <span class="badge-violet shrink-0">{{ activeSessions.length }} active(s)</span>
         <button @click="openCreate" class="btn-neon-violet flex items-center gap-2 text-sm shrink-0">
           <Plus class="w-4 h-4" /> Nouvelle
@@ -84,19 +88,25 @@
         <p class="text-txt-dim text-sm">Aucune session terminée</p>
       </div>
       <div v-else class="space-y-2 w-full max-w-full min-w-0">
-        <div v-for="s in (showAll ? allSessionsFiltered : recentSessions)" :key="s.id" class="card flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 text-sm w-full max-w-full min-w-0 overflow-hidden hover:border-neon-violet/20 transition-colors cursor-pointer" @click="viewDetail(s)">
+        <div v-for="s in (showAll ? allSessionsFiltered : recentSessions)" :key="s.id" class="card flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 text-sm w-full max-w-full min-w-0 overflow-hidden hover:border-neon-violet/20 transition-colors cursor-pointer" :class="s.deleted ? 'opacity-60 border-dashed border-neon-red/40' : ''" @click="viewDetail(s)">
           <div class="flex items-center gap-2 sm:gap-3 flex-1 min-w-0 w-full">
             <CheckCircle2 class="w-5 h-5 text-neon-green shrink-0" />
             <div class="flex-1 min-w-0">
-              <p class="truncate">{{ s.console_nom }} — {{ s.joueur_nom }} · {{ s.jeu_nom }}</p>
+              <p class="truncate">{{ s.console_nom }} — {{ s.joueur_nom }} · {{ s.jeu_nom }} <span v-if="s.deleted" class="text-neon-red text-[10px] uppercase font-bold">· Archivée</span></p>
               <p class="text-xs text-txt-dim truncate">{{ formatDate(s.created_at) }} · {{ s.statut }}</p>
             </div>
           </div>
           <div class="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto shrink-0">
             <span class="font-gaming font-bold text-neon-green shrink-0">{{ formatCurrency(s.montant) }}</span>
             <div class="flex gap-1 shrink-0" @click.stop>
-              <button @click="editSession(s)" class="p-1.5 rounded-lg hover:bg-bg-hover text-txt-dim"><Pencil class="w-3.5 h-3.5" /></button>
-              <button @click="deleteSession(s.id)" class="p-1.5 rounded-lg hover:bg-neon-red/10 text-neon-red"><Trash2 class="w-3.5 h-3.5" /></button>
+              <template v-if="s.deleted">
+                <button @click="restoreSession(s.id)" class="p-1.5 rounded-lg hover:bg-neon-green/10 text-neon-green" title="Restaurer"><RotateCcw class="w-3.5 h-3.5" /></button>
+                <button @click="permanentDeleteSession(s.id)" class="p-1.5 rounded-lg hover:bg-neon-red/10 text-neon-red" title="Supprimer définitivement"><Trash2 class="w-3.5 h-3.5" /></button>
+              </template>
+              <template v-else>
+                <button @click="editSession(s)" class="p-1.5 rounded-lg hover:bg-bg-hover text-txt-dim"><Pencil class="w-3.5 h-3.5" /></button>
+                <button @click="deleteSession(s.id)" class="p-1.5 rounded-lg hover:bg-neon-red/10 text-neon-red"><Trash2 class="w-3.5 h-3.5" /></button>
+              </template>
             </div>
           </div>
         </div>
@@ -182,7 +192,7 @@ import { ref, reactive, onMounted, computed, onUnmounted } from 'vue'
 import { api } from '@/utils/api'
 import { formatDuration, formatCurrency, formatDate } from '@/utils/helpers'
 import { toast } from 'vue-sonner'
-import { PlayCircle, PauseCircle, Square, CheckCircle2, RefreshCw, Plus, Pencil, Trash2 } from 'lucide-vue-next'
+import { PlayCircle, PauseCircle, Square, CheckCircle2, RefreshCw, Plus, Pencil, Trash2, RotateCcw } from 'lucide-vue-next'
 import Loader from '@/components/ui/Loader.vue'
 import Modal from '@/components/ui/Modal.vue'
 import LiveSessionTimer from '@/components/ui/LiveSessionTimer.vue'
@@ -193,6 +203,7 @@ const activeSessions = ref([])
 const recentSessions = ref([])
 const allSessions = ref([])
 const showAll = ref(false)
+const showArchived = ref(false)
 const consoles = ref([])
 const joueurs = ref([])
 const jeux = ref([])
@@ -208,10 +219,10 @@ const allSessionsFiltered = computed(() => allSessions.value.filter(s => s.statu
 async function fetchData() {
   loading.value = true
   try {
-    const all = await api.get('/sessions')
+    const all = await api.get(`/sessions?include_deleted=${showArchived.value ? '1' : '0'}`)
     allSessions.value = all
     activeSessions.value = all.filter(s => s.statut === 'en_cours' || s.statut === 'pause')
-    recentSessions.value = all.filter(s => s.statut === 'terminee').slice(0, 10)
+    recentSessions.value = all.filter(s => s.statut === 'terminee' && (showArchived.value || !s.deleted)).slice(0, 10)
   } catch (e) {
     console.error(e)
   } finally {
@@ -282,8 +293,17 @@ async function viewDetail(s) {
 }
 
 async function deleteSession(id) {
-  if (!confirm('Supprimer cette session ?')) return
-  try { await api.delete(`/sessions/${id}`); toast.success('Session supprimée'); fetchData() }
+  if (!confirm('Archiver cette session ?')) return
+  try { await api.delete(`/sessions/${id}`); toast.success('Session archivée'); await fetchData() }
+  catch (e) { toast.error(e.message) }
+}
+async function restoreSession(id) {
+  try { await api.post(`/sessions/${id}/restore`, {}); toast.success('Session restaurée'); await fetchData() }
+  catch (e) { toast.error(e.message) }
+}
+async function permanentDeleteSession(id) {
+  if (!confirm('Supprimer définitivement cette session ? Cette action est irréversible.')) return
+  try { await api.delete(`/sessions/${id}/permanent`); toast.success('Session supprimée définitivement'); await fetchData() }
   catch (e) { toast.error(e.message) }
 }
 

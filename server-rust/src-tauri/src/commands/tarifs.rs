@@ -9,6 +9,10 @@ use crate::error::{ApiError, ApiResult};
 use crate::validators;
 use crate::AppState;
 
+fn is_deleted(v: Option<&Value>) -> bool {
+    v.map(|x| x.as_bool().unwrap_or(false) || x.as_i64().unwrap_or(0) == 1).unwrap_or(false)
+}
+
 /// GET /api/tarifs
 #[tauri::command]
 pub fn tarifs_list(
@@ -19,7 +23,7 @@ pub fn tarifs_list(
     claims(&state, &token)?;
     let mut rows = db(&state).query_all("tarifs")?;
     if !include_deleted.unwrap_or(false) {
-        rows.retain(|r| r.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 0);
+        rows.retain(|r| !is_deleted(r.get("deleted")));
     }
     Ok(Value::Array(rows))
 }

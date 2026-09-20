@@ -10,6 +10,10 @@ use crate::error::{ApiError, ApiResult};
 use crate::validators;
 use crate::AppState;
 
+fn is_deleted(v: Option<&Value>) -> bool {
+    v.map(|x| x.as_bool().unwrap_or(false) || x.as_i64().unwrap_or(0) == 1).unwrap_or(false)
+}
+
 /// GET /api/users - Liste locale immédiate (sync Supabase en arrière-plan)
 #[tauri::command]
 pub async fn users_list(state: State<'_, AppState>, token: Option<String>, include_deleted: Option<bool>) -> ApiResult<Value> {
@@ -19,7 +23,7 @@ pub async fn users_list(state: State<'_, AppState>, token: Option<String>, inclu
     // Lecture locale immédiate : aucune attente PostgreSQL sur le chemin IPC Android.
     let mut list = db(&state).query_all("users")?;
     if !include_deleted.unwrap_or(false) {
-        list.retain(|r| r.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 0);
+        list.retain(|r| !is_deleted(r.get("deleted")));
     }
     list.sort_by_key(|r| r.get("id").and_then(Value::as_i64).unwrap_or(0));
     for row in &mut list {
@@ -66,7 +70,7 @@ pub async fn users_create(
         r.get("email").and_then(Value::as_str).map(|e| e.trim().eq_ignore_ascii_case(&email_lc)).unwrap_or(false)
     });
     let existing_id = existing.as_ref().and_then(|r| r.get("id").and_then(Value::as_i64));
-    let existing_deleted = existing.as_ref().map(|r| r.get("deleted").and_then(Value::as_i64).unwrap_or(0) != 0).unwrap_or(false);
+    let existing_deleted = existing.as_ref().map(|r| is_deleted(r.get("deleted"))).unwrap_or(false);
     if existing_id.is_some() && !existing_deleted {
         return Err(ApiError::new(409, "Cet email est déjà utilisé par un compte local actif"));
     }

@@ -336,6 +336,8 @@ pub fn run() {
             commands::sessions_terminer,
             commands::sessions_update,
             commands::sessions_delete,
+            commands::sessions_restore,
+            commands::sessions_permanent_delete,
             // ==== FACTURES + LIGNES ====
             commands::factures_list,
             commands::factures_get,
@@ -345,6 +347,8 @@ pub fn run() {
             commands::factures_update,
             commands::factures_create,
             commands::factures_delete,
+            commands::factures_restore,
+            commands::factures_permanent_delete,
             commands::lignes_list,
             commands::lignes_get,
             commands::lignes_create,

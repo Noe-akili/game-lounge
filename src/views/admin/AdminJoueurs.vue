@@ -256,12 +256,18 @@ function editJoueur(j: any) {
 }
 
 async function viewJoueur(j: any) {
+  // Toujours ouvrir le détail immédiatement : une requête lente ne doit jamais
+  // empêcher l'utilisateur de voir le joueur sur Android.
+  showAdd.value = false
+  editingJoueur.value = null
   detailJoueur.value = j
+  detailData.value = { sessions: [], factures: [], transactions: [] }
   showDetail.value = true
   try {
     detailData.value = await api.get(`/joueurs/${j.id}/historique`)
-  } catch {
-    detailData.value = {}
+  } catch (e: any) {
+    // Le détail reste affiché même si l'historique n'est pas encore disponible.
+    toast.error('Historique indisponible pour le moment')
   }
 }
 

@@ -114,7 +114,7 @@ const ROUTES: RouteDef[] = [
   { m: 'DELETE', p: '/joueurs/:id/permanent', f: ({ token, segs }) => ({ cmd: 'joueurs_permanent_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== SESSIONS =====
-  { m: 'GET', p: '/sessions', f: ({ token, query }) => ({ cmd: 'sessions_list', args: { token, statut: query.statut } }) },
+  { m: 'GET', p: '/sessions', f: ({ token, query }) => ({ cmd: 'sessions_list', args: { token, statut: query.statut, includeDeleted: bval(query.include_deleted) || false } }) },
   { m: 'GET', p: '/sessions/:id', f: ({ token, segs }) => ({ cmd: 'sessions_get', args: { token, id: num(segs.id) } }) },
   { m: 'POST', p: '/sessions', f: ({ token, body }) => ({ cmd: 'sessions_create', args: { token, consoleId: num(val(body, 'console_id')), joueurId: num(val(body, 'joueur_id')), jeuId: num(val(body, 'jeu_id')), tarifId: num(val(body, 'tarif_id')) } }) },
   { m: 'PUT', p: '/sessions/:id/pause', f: ({ token, segs }) => ({ cmd: 'sessions_pause', args: { token, id: num(segs.id) } }) },
@@ -122,9 +122,11 @@ const ROUTES: RouteDef[] = [
   { m: 'PUT', p: '/sessions/:id/terminer', f: ({ token, segs, body }) => ({ cmd: 'sessions_terminer', args: { token, id: num(segs.id), modePaiement: val(body, 'mode_paiement') } }) },
   { m: 'PUT', p: '/sessions/:id', f: ({ token, segs, body }) => ({ cmd: 'sessions_update', args: { token, id: num(segs.id), consoleId: num(val(body, 'console_id')), joueurId: num(val(body, 'joueur_id')), jeuId: num(val(body, 'jeu_id')), statut: val(body, 'statut'), dureeMinutes: num(val(body, 'duree_minutes')), montant: num(val(body, 'montant')) } }) },
   { m: 'DELETE', p: '/sessions/:id', f: ({ token, segs }) => ({ cmd: 'sessions_delete', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/sessions/:id/restore', f: ({ token, segs }) => ({ cmd: 'sessions_restore', args: { token, id: num(segs.id) } }) },
+  { m: 'DELETE', p: '/sessions/:id/permanent', f: ({ token, segs }) => ({ cmd: 'sessions_permanent_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== FACTURES =====
-  { m: 'GET', p: '/factures', f: ({ token, query }) => ({ cmd: 'factures_list', args: { token, statut: query.statut, joueurId: num(query.joueur_id), dateStart: query.date_start, dateEnd: query.date_end } }) },
+  { m: 'GET', p: '/factures', f: ({ token, query }) => ({ cmd: 'factures_list', args: { token, statut: query.statut, joueurId: num(query.joueur_id), dateStart: query.date_start, dateEnd: query.date_end, includeDeleted: bval(query.include_deleted) || false } }) },
   { m: 'GET', p: '/factures/:id/pdf', f: ({ token, segs }) => ({ cmd: 'factures_pdf', args: { token, id: num(segs.id) } }) },
   { m: 'POST', p: '/factures/:id/save-pdf', f: ({ token, segs, body }) => ({ cmd: 'factures_save_pdf', args: { token, id: num(segs.id), folder: val(body, 'folder'), filename: val(body, 'filename') } }) },
   { m: 'GET', p: '/factures/:id', f: ({ token, segs }) => ({ cmd: 'factures_get', args: { token, id: num(segs.id) } }) },
@@ -132,6 +134,8 @@ const ROUTES: RouteDef[] = [
   { m: 'PUT', p: '/factures/:id/annuler', f: ({ token, segs }) => ({ cmd: 'factures_annuler', args: { token, id: num(segs.id) } }) },
   { m: 'PUT', p: '/factures/:id', f: ({ token, segs, body }) => ({ cmd: 'factures_update', args: { token, id: num(segs.id), statut: val(body, 'statut'), modePaiement: val(body, 'mode_paiement'), montantTtc: num(val(body, 'montant_ttc')) } }) },
   { m: 'DELETE', p: '/factures/:id', f: ({ token, segs }) => ({ cmd: 'factures_delete', args: { token, id: num(segs.id) } }) },
+  { m: 'POST', p: '/factures/:id/restore', f: ({ token, segs }) => ({ cmd: 'factures_restore', args: { token, id: num(segs.id) } }) },
+  { m: 'DELETE', p: '/factures/:id/permanent', f: ({ token, segs }) => ({ cmd: 'factures_permanent_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== LIGNES FACTURE =====
   { m: 'GET', p: '/lignes_facture', f: ({ token, query }) => ({ cmd: 'lignes_list', args: { token, factureId: num(query.facture_id) } }) },

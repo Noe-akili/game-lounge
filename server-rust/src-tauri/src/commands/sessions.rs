@@ -13,6 +13,10 @@ fn parse_iso_ms(s: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.timestamp_millis())
 }
 
+fn is_deleted(v: Option<&Value>) -> bool {
+    v.map(|x| x.as_bool().unwrap_or(false) || x.as_i64().unwrap_or(0) == 1).unwrap_or(false)
+}
+
 /// Montant d'une session (règle UNIQUE partagée par l'affichage et la facture) :
 /// le joueur paie le forfait choisi (duree_allouee minutes pour tarif_prix FC).
 /// Dépassement : prorata à la SECONDE sur le taux du forfait (tarif_prix / duree_allouee),
@@ -110,12 +114,16 @@ pub fn sessions_list(
     state: State<'_, AppState>,
     token: Option<String>,
     statut: Option<String>,
+    include_deleted: Option<bool>,
 ) -> ApiResult<Value> {
     claims(&state, &token)?;
     let db = db(&state);
     let mut sessions: Vec<Value> = db.query_all("sessions_jeu")?;
     if let Some(s) = statut {
         sessions.retain(|x| x.get("statut").and_then(Value::as_str) == Some(s.as_str()));
+    }
+    if !include_deleted.unwrap_or(false) {
+        sessions.retain(|x| !is_deleted(x.get("deleted")));
     }
     sort_desc_by_created_at(&mut sessions);
 
@@ -727,4 +735,36 @@ pub fn sessions_delete(
     get_by_id(db(&state), "sessions_jeu", id, "Session non trouvée")?;
     db(&state).remove("sessions_jeu", id)?;
     Ok(json!({ "success": true }))
+}
+
+/// POST /api/sessions/:id/restore - Restauration d'une session archivée
+#[tauri::command]
+pub fn sessions_restore(
+    state: State<'_, AppState>,
+    token: Option<String>,
+    id: i64,
+) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    if !validators::is_valid_id(id) {
+        return Err(ApiError::bad_request("ID invalide"));
+    }
+    let row = db(&state).restore("sessions_jeu", id)?;
+    Ok(json!({ "id": id, "restored": true, "session": row }))
+}
+
+/// DELETE /api/sessions/:id/permanent - Suppression définitive d'une session
+#[tauri::command]
+pub fn sessions_permanent_delete(
+    state: State<'_, AppState>,
+    token: Option<String>,
+    id: i64,
+) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    if !validators::is_valid_id(id) {
+        return Err(ApiError::bad_request("ID invalide"));
+    }
+    db(&state).permanent_delete("sessions_jeu", id)?;
+    Ok(json!({ "id": id, "permanently_deleted": true }))
 }

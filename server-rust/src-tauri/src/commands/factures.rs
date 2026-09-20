@@ -23,6 +23,10 @@ fn enrich_facture(f: &Value, joueur: Option<&Value>) -> Value {
     o
 }
 
+fn is_deleted(v: Option<&Value>) -> bool {
+    v.map(|x| x.as_bool().unwrap_or(false) || x.as_i64().unwrap_or(0) == 1).unwrap_or(false)
+}
+
 /// GET /api/factures (?statut=&joueur_id=&date_start=&date_end=)
 #[tauri::command]
 pub fn factures_list(
@@ -32,6 +36,7 @@ pub fn factures_list(
     joueur_id: Option<i64>,
     date_start: Option<String>,
     date_end: Option<String>,
+    include_deleted: Option<bool>,
 ) -> ApiResult<Value> {
     claims(&state, &token)?;
     let db = db(&state);
@@ -58,6 +63,9 @@ pub fn factures_list(
                 .map(|c| c <= end.as_str())
                 .unwrap_or(false)
         });
+    }
+    if !include_deleted.unwrap_or(false) {
+        factures.retain(|f| !is_deleted(f.get("deleted")));
     }
     sort_desc_by_created_at(&mut factures);
 
@@ -480,4 +488,36 @@ pub fn factures_delete(
     get_by_id(db(&state), "factures", id, "Facture non trouvée")?;
     db(&state).remove("factures", id)?;
     Ok(json!({ "success": true }))
+}
+
+/// POST /api/factures/:id/restore - Restauration d'une facture archivée
+#[tauri::command]
+pub fn factures_restore(
+    state: State<'_, AppState>,
+    token: Option<String>,
+    id: i64,
+) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    if !validators::is_valid_id(id) {
+        return Err(ApiError::bad_request("ID invalide"));
+    }
+    let row = db(&state).restore("factures", id)?;
+    Ok(json!({ "id": id, "restored": true, "facture": row }))
+}
+
+/// DELETE /api/factures/:id/permanent - Suppression définitive d'une facture
+#[tauri::command]
+pub fn factures_permanent_delete(
+    state: State<'_, AppState>,
+    token: Option<String>,
+    id: i64,
+) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    if !validators::is_valid_id(id) {
+        return Err(ApiError::bad_request("ID invalide"));
+    }
+    db(&state).permanent_delete("factures", id)?;
+    Ok(json!({ "id": id, "permanently_deleted": true }))
 }

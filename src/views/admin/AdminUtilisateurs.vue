@@ -180,12 +180,14 @@ function closeForm() {
 }
 
 async function viewUser(u: any) {
+  // Ouvrir immédiatement avec la ligne locale. Aucun appel réseau/IPC ne doit
+  // bloquer l'ouverture du détail.
+  selected.value = u
+  showDetail.value = true
   try {
     selected.value = await api.get(`/users/${u.id}`)
-    showDetail.value = true
   } catch {
-    selected.value = u
-    showDetail.value = true
+    // La donnée locale reste affichée.
   }
 }
 
@@ -222,7 +224,7 @@ async function deleteUser(id: number) {
   if (!confirm('Archiver cet utilisateur ?')) return
   try {
     await api.delete(`/users/${id}`)
-    toast.success('Utilisateur archivé')
+    toast.success('Utilisateur archivé localement')
     await fetchUsers()
   } catch (e: any) {
     toast.error('Erreur: ' + (e.message || 'Échec'))
@@ -232,7 +234,7 @@ async function deleteUser(id: number) {
 async function restoreUser(id: number) {
   try {
     await api.post(`/users/${id}/restore`, {})
-    toast.success('Utilisateur restauré avec succès !')
+    toast.success('Utilisateur restauré localement !')
     await fetchUsers()
   } catch (e: any) {
     toast.error('Erreur: ' + (e.message || 'Impossible de restaurer'))

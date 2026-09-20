@@ -3,6 +3,10 @@
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 w-full max-w-full min-w-0">
       <h3 class="font-gaming text-lg font-bold truncate">Factures</h3>
       <div class="flex gap-2 items-center shrink-0 flex-wrap">
+        <label class="flex items-center gap-2 cursor-pointer text-xs text-txt-dim">
+          <input type="checkbox" v-model="showArchived" @change="fetchData" class="rounded accent-neon-violet cursor-pointer" />
+          <span>Afficher archivées</span>
+        </label>
         <select v-model="filtreStatut" @change="fetchData" class="input-field w-40 text-sm py-2">
           <option value="">Tous</option><option value="payee">Payées</option><option value="en_attente">En attente</option><option value="annulee">Annulées</option>
         </select>
@@ -22,7 +26,7 @@
     </div>
 
     <div v-else class="space-y-2 w-full max-w-full min-w-0 overflow-hidden">
-      <div v-for="f in factures" :key="f.id" class="card flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden flex-wrap hover:border-neon-violet/20 transition-colors cursor-pointer" @click="viewDetail(f)">
+      <div v-for="f in factures" :key="f.id" class="card flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden flex-wrap hover:border-neon-violet/20 transition-colors cursor-pointer" :class="f.deleted ? 'opacity-60 border-dashed border-neon-red/40' : ''" @click="viewDetail(f)">
         <div class="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
           :class="f.statut === 'payee' ? 'bg-neon-green/20' : f.statut === 'annulee' ? 'bg-neon-red/20' : 'bg-neon-yellow/20'">
           <Receipt class="w-5 h-5"
@@ -34,7 +38,8 @@
         </div>
         <div class="text-right shrink-0 min-w-0">
           <p class="font-gaming font-bold text-neon-green truncate">{{ formatCurrency(f.montant_ttc) }}</p>
-          <span class="badge shrink-0 max-w-full truncate" :class="statusBadge(f.statut)">{{ statusLabel(f.statut) }}</span>
+          <span v-if="f.deleted" class="badge badge-red shrink-0">Archivée</span>
+          <span v-else class="badge shrink-0 max-w-full truncate" :class="statusBadge(f.statut)">{{ statusLabel(f.statut) }}</span>
         </div>
         <div class="flex gap-1 shrink-0 flex-wrap" @click.stop>
           <button @click="viewDetail(f)" class="p-2 rounded-lg hover:bg-bg-hover text-txt-dim" title="Voir">
@@ -53,7 +58,15 @@
             <button v-if="f.statut !== 'annulee'" @click="cancelFacture(f)" class="p-2 rounded-lg hover:bg-neon-yellow/10 text-neon-yellow" title="Annuler">
               <XCircle class="w-4 h-4" />
             </button>
-            <button @click="deleteFacture(f.id)" class="p-2 rounded-lg hover:bg-neon-red/10 text-neon-red" title="Supprimer">
+            <template v-if="f.deleted">
+              <button @click="restoreFacture(f.id)" class="p-2 rounded-lg hover:bg-neon-green/10 text-neon-green" title="Restaurer">
+                <RotateCcw class="w-4 h-4" />
+              </button>
+              <button @click="permanentDeleteFacture(f.id)" class="p-2 rounded-lg hover:bg-neon-red/10 text-neon-red" title="Supprimer définitivement">
+                <Trash2 class="w-4 h-4" />
+              </button>
+            </template>
+            <button v-else @click="deleteFacture(f.id)" class="p-2 rounded-lg hover:bg-neon-red/10 text-neon-red" title="Archiver">
               <Trash2 class="w-4 h-4" />
             </button>
           </template>
@@ -257,7 +270,7 @@ import { getFacturePdfBlob, saveFacturePdf } from '@/lib/clientPdf'
 import { formatCurrency, formatDate } from '@/utils/helpers'
 import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
-import { Receipt, Eye, Download, Printer, XCircle, Plus, Pencil, Trash2, X } from 'lucide-vue-next'
+import { Receipt, Eye, Download, Printer, XCircle, Plus, Pencil, Trash2, X, RotateCcw } from 'lucide-vue-next'
 import Loader from '@/components/ui/Loader.vue'
 import { isValidId, isValidPrix, isValidFactureStatut, isValidModePaiement, isValidQuantite, sanitizeInput } from '@/utils/validators'
 
@@ -269,6 +282,7 @@ const joueursList = ref([])
 const sessionsList = ref([])
 const loading = ref(false)
 const filtreStatut = ref('')
+const showArchived = ref(false)
 const showDetail = ref(false)
 const selected = ref(null)
 const showForm = ref(false)
@@ -284,8 +298,10 @@ function statusLabel(s) { return { payee: 'Payée', en_attente: 'En attente', an
 async function fetchData() {
   loading.value = true
   try {
-    const params = filtreStatut.value ? `?statut=${filtreStatut.value}` : ''
-    factures.value = await api.get(`/factures${params}`)
+    const params = new URLSearchParams()
+    if (filtreStatut.value) params.set('statut', filtreStatut.value)
+    params.set('include_deleted', showArchived.value ? '1' : '0')
+    factures.value = await api.get(`/factures?${params.toString()}`)
   } catch (e: any) { toast.error('Factures: ' + (e.message || 'erreur')) }
   finally { loading.value = false }
 }
@@ -338,8 +354,17 @@ async function saveFacture() {
 }
 
 async function deleteFacture(id) {
-  if (!confirm('Supprimer cette facture ? Cette action est irréversible.')) return
-  try { await api.delete(`/factures/${id}`); toast.success('Facture supprimée'); fetchData() }
+  if (!confirm('Archiver cette facture ?')) return
+  try { await api.delete(`/factures/${id}`); toast.success('Facture archivée'); await fetchData() }
+  catch (e) { toast.error(e.message) }
+}
+async function restoreFacture(id) {
+  try { await api.post(`/factures/${id}/restore`, {}); toast.success('Facture restaurée'); await fetchData() }
+  catch (e) { toast.error(e.message) }
+}
+async function permanentDeleteFacture(id) {
+  if (!confirm('Supprimer définitivement cette facture ? Cette action est irréversible.')) return
+  try { await api.delete(`/factures/${id}/permanent`); toast.success('Facture supprimée définitivement'); await fetchData() }
   catch (e) { toast.error(e.message) }
 }
 
