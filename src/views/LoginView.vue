@@ -30,7 +30,6 @@
           Vérification en cours… réponse dans <span class="font-mono font-bold text-neon-violet">{{ countdownDisplay }}</span>
         </div>
 
-
         <!-- Test diagnostic discret de Supabase -->
         <button type="button" @click="testSupabase" :disabled="testingSupabase || loginPending"
                 class="w-full text-center text-xs text-txt-dim hover:text-cyan-400 underline underline-offset-4 py-1 transition-colors">
@@ -268,28 +267,6 @@ function homePath() {
   return auth.user?.role === 'admin' ? '/admin' : '/dashboard'
 }
 
-/// BYPASS : session admin locale (auth_bootstrap_admin), sans mot de passe.
-/// Utilise le même transport (503 = backend pas prêt) et le même verdict.
-async function bypassLogin() {
-  if (loginPending.value) return
-  loginPending.value = true
-  error.value = ''
-  success.value = false
-  pushStep('Contournement : session admin locale…')
-  try {
-    const data = await api.post('/auth/bootstrap')
-    await auth.setSessionFromBootstrap(data)
-    pushStep('Session de secours créée ✓', 'ok')
-    await router.replace(homePath())
-  } catch (e: any) {
-    const msg = friendlyError(e)
-    failStep(msg)
-    error.value = msg
-  } finally {
-    loginPending.value = false
-  }
-}
-
 const testingSupabase = ref(false)
 
 async function testSupabase() {
@@ -309,7 +286,6 @@ async function testSupabase() {
     testingSupabase.value = false
   }
 }
-
 
 function proceedToApp() {
   const role = auth.user?.role || "employe"
@@ -347,6 +323,5 @@ async function handleLogin() {
     loginPending.value = false
   }
 }
-
 
 </script>

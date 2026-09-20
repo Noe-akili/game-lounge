@@ -10,17 +10,11 @@ rust-version = "1.77"
 name = "game_lounge_rust_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
-[[bin]]
-name = "gl-server"
-path = "src/bin/server.rs"
-required-features = ["http-server"]
-
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [features]
 default = ["supabase-sync"]
-http-server = ["dep:axum"]
 supabase-sync = ["dep:tokio-postgres", "dep:postgres-types", "dep:tokio-postgres-rustls", "dep:rustls", "dep:webpki-roots", "dep:dotenvy"]
 
 [dependencies]
@@ -44,7 +38,6 @@ regex = "1"
 base64 = "0.22"
 # "clock" : requis pour chrono::Local (heure locale dans les logs 1.log)
 chrono = { version = "0.4", features = ["serde", "clock"] }
-axum = { version = "0.7", features = ["json"], optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "rt", "sync", "time", "fs", "io-util"] }
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"], optional = true }
 postgres-types = { version = "0.2", optional = true }

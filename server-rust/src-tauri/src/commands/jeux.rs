@@ -3,7 +3,7 @@
 use serde_json::{Value, json};
 use tauri::State;
 
-use crate::commands::{admin_only, claims, db, get_by_id, jmap};
+use crate::commands::{claims, db, get_by_id, jmap};
 use crate::db::now_iso;
 use crate::error::{ApiError, ApiResult};
 use crate::validators;

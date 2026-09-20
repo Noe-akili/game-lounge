@@ -73,15 +73,6 @@ impl From<serde_json::Error> for ApiError {
 /// Alias pratique pour les retours de commandes Tauri.
 pub type ApiResult<T = serde_json::Value> = Result<T, ApiError>;
 
-/// Convertit une valeur JS en i64 (les JSON numbers arrivent comme i64/f64/u64).
-pub fn to_i64(v: &serde_json::Value) -> Option<i64> {
-    match v {
-        serde_json::Value::Number(n) => n.as_i64().or_else(|| n.as_u64().map(|u| u as i64)),
-        serde_json::Value::String(s) => s.trim().parse::<i64>().ok(),
-        _ => None,
-    }
-}
-
 /// Convertit une valeur JS en String.
 pub fn to_string(v: &serde_json::Value) -> Option<String> {
     match v {
@@ -89,15 +80,5 @@ pub fn to_string(v: &serde_json::Value) -> Option<String> {
         serde_json::Value::Number(n) => Some(n.to_string()),
         serde_json::Value::Bool(b) => Some(b.to_string()),
         _ => None,
-    }
-}
-
-/// Convertit une valeur JS en booléen (0/1/true/false).
-pub fn to_bool(v: &serde_json::Value) -> bool {
-    match v {
-        serde_json::Value::Bool(b) => *b,
-        serde_json::Value::Number(n) => n.as_i64().map(|i| i != 0).or_else(|| n.as_u64().map(|u| u != 0)).unwrap_or(false),
-        serde_json::Value::String(s) => s == "true" || s == "1",
-        _ => false,
     }
 }

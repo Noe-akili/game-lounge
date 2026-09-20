@@ -47,7 +47,6 @@ pub fn hash_password_scrypt(password: &str) -> ApiResult<String> {
 pub fn is_scrypt_hash(h: &str) -> bool { h.starts_with(SCRYPT_PREFIX) }
 pub fn is_argon2_hash(h: &str) -> bool { h.starts_with("$argon2") }
 pub fn is_bcrypt_hash(h: &str) -> bool { h.starts_with("$2") }
-pub fn needs_rehash(h: &str) -> bool { is_scrypt_hash(h) || is_bcrypt_hash(h) }
 
 // Compare multi-algo, jamais de panic (Android low-mem)
 pub fn compare_password(password: &str, stored: &str) -> bool {

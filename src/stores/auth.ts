@@ -16,7 +16,8 @@ import { SessionStorage } from '@/lib/sessionStorage'
 export type AuthState = 'unauthenticated' | 'authenticated' | 'error'
 
 function log(tag: string, msg: string) {
-  console.log()
+  // Trace lisible dans l'écran Développeur (capture de console.log).
+  console.log(`[${tag}] ${msg}`)
 }
 
 export const useAuthStore = defineStore('auth', () => {
@@ -56,13 +57,8 @@ export const useAuthStore = defineStore('auth', () => {
     lastError.value = null
     const data = await api.post('/auth/login', { email, password })
     await setSession(data)
-    log('AUTH', )
+    log('AUTH', 'connexion réussie, session enregistrée sur l\'appareil')
     return data.user
-  }
-
-  async function setSessionFromBootstrap(data: any) {
-    await setSession(data)
-    log('AUTH', )
   }
 
   async function logout() {
@@ -147,7 +143,7 @@ export const useAuthStore = defineStore('auth', () => {
   return {
     user, token, state, lastError,
     isAuthenticated, isAdmin,
-    login, logout, fetchMe, restoreSession, refreshSession, clearSession, setSessionFromBootstrap,
+    login, logout, fetchMe, restoreSession, refreshSession, clearSession,
     businessReady, businessSuspend,
   }
 })

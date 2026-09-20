@@ -135,7 +135,7 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle();
             // GARANTIE : AppState est TOUJOURS enregistré, même si la DB échoue.
-            // Sinon le premier `invoke("auth_bootstrap_admin")` panic car State<AppState> manquant -> abort -> APK se ferme.
+            // Sinon le premier invoke panic car State<AppState> est manquant -> abort -> APK qui se ferme.
             // On protège le setup avec catch_unwind car WebView Android est fragile au boot.
             let db = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| open_db(handle))) {
                 Ok(Ok(db)) => {
@@ -270,7 +270,6 @@ pub fn run() {
             // ==== SANTÉ ====
             commands::device_info,
             // ==== AUTH ====
-            commands::auth_bootstrap_admin,
             commands::auth_login,
             commands::auth_logout,
             commands::auth_business_ready,

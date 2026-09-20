@@ -153,14 +153,13 @@ const chartOptions = {
 }
 
 onMounted(async () => {
-  console.log('[DASHBOARD_START] AdminDashboard mounted')
   loading.value = true
-  try { console.log('[DASHBOARD_START] fetch rapports/ca'); stats.value = await api.get('/rapports/ca'); console.log('[DASHBOARD_START] rapports ok') }
-  catch (e: any) { console.error('[DASHBOARD_START] rapports fail', e); toast.error('Stats: ' + (e.message || 'erreur')) }
-  try { console.log('[DASHBOARD_START] fetch sessions'); activeSessions.value = (await api.get('/sessions?statut=en_cours')).slice(0, 5); console.log('[DASHBOARD_START] sessions ok', activeSessions.value.length) }
-  catch (e: any) { console.error('[DASHBOARD_START] sessions fail', e); toast.error('Sessions: ' + (e.message || 'erreur')) }
-  try { console.log('[DASHBOARD_START] fetch joueurs'); joueurs.value = (await api.get('/joueurs')).slice(0, 5); console.log('[DASHBOARD_START] joueurs ok', joueurs.value.length) }
-  catch (e: any) { console.error('[DASHBOARD_START] joueurs fail', e); toast.error('Joueurs: ' + (e.message || 'erreur')) }
-  finally { loading.value = false; console.log('[DASHBOARD_START] loading done') }
+  try { stats.value = await api.get('/rapports/ca') }
+  catch (e: any) { toast.error('Stats: ' + (e.message || 'erreur')) }
+  try { activeSessions.value = (await api.get('/sessions?statut=en_cours')).slice(0, 5) }
+  catch (e: any) { toast.error('Sessions: ' + (e.message || 'erreur')) }
+  try { joueurs.value = (await api.get('/joueurs')).slice(0, 5) }
+  catch (e: any) { toast.error('Joueurs: ' + (e.message || 'erreur')) }
+  finally { loading.value = false }
 })
 </script>

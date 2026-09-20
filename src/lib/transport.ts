@@ -31,8 +31,6 @@ export async function handleRequest(
   body?: any,
   authToken?: string
 ): Promise<{ status: number; body: any }> {
-  console.log('[TRANSPORT_START]', method, path)
-  console.log('[TAURI_DETECTED] isTauri=', isTauri(), 'api path', path)
   // Tauri-only : pas de fallback HTTP/clientApi - si Tauri non détecté, on attend puis on invoque quand même
   if (isTauri()) {
     try {

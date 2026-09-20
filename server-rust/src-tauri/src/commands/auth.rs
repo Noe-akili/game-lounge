@@ -1,28 +1,19 @@
-// Auth : authentification email/mot de passe (auth_login) + session admin
-// d'appoint pour le premier démarrage (auth_bootstrap_admin).
+// Auth : authentification email/mot de passe (auth_login).
 //
 // Le flux OBLIGATOIRE de l'app : aucune session locale -> écran LOGIN ->
 // auth_login (SQLite locale d'abord, Supabase en secours) -> token + user
-// sauvegardés -> dashboard. Le bootstrap admin n'est PAS une connexion
-// automatique : il ne sert qu'au tout premier lancement (installation vierge)
-// et n'est JAMAIS déclenché après un 401.
+// sauvegardés -> dashboard. Il n'existe AUCUNE connexion sans mot de passe :
+// l'ancien mode secours (bootstrap admin) a été retiré, la récupération passe
+// par l'effacement des données de l'app, qui ré-installe le compte par défaut.
 use serde_json::{Value, json};
 use tauri::State;
 
 use crate::auth as auth_core;
 use crate::commands::{admin_only, claims, db, jmap, user_public};
 use crate::error::{ApiError, ApiResult};
-use crate::validators;
 use crate::AppState;
 
 const LOGIN_WINDOW_MS: i64 = 15 * 60 * 1000;
-const LOGIN_MAX_FAILURES: usize = 20;
-const CLOUD_LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-/// Au-delà de ce délai, la comparaison de mot de passe est abandonnée
-/// (scrypt N=16384 peut prendre 2-3s+ sur téléphone low-end ; on borne pour
-/// ne jamais dépasser le timeout IPC du frontend).
-const COMPARE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
-
 fn now_ms() -> i64 { chrono::Utc::now().timestamp_millis() }
 
 /// Compte par DÉFAUT garanti : seedé localement (Argon2id) à chaque ouverture
@@ -110,24 +101,6 @@ fn record_failure(state: &State<'_, AppState>, key: &str) {
         let entries = map.entry(key.to_string()).or_default();
         entries.retain(|t| now - *t < LOGIN_WINDOW_MS);
         entries.push(now);
-    }
-}
-
-fn clear_failures(state: &State<'_, AppState>, key: &str) {
-    if let Ok(mut map) = state.login_attempts.lock() {
-        map.remove(key);
-    }
-}
-
-fn too_many_failures(state: &State<'_, AppState>, key: &str) -> bool {
-    let now = now_ms();
-    match state.login_attempts.lock() {
-        Ok(mut map) => {
-            let entries = map.entry(key.to_string()).or_default();
-            entries.retain(|t| now - *t < LOGIN_WINDOW_MS);
-            entries.len() >= LOGIN_MAX_FAILURES
-        }
-        Err(_) => false, // mutex poisonné : on ne bloque personne
     }
 }
 
@@ -377,68 +350,6 @@ async fn finish_supabase_login(
 #[cfg(not(feature = "supabase-sync"))]
 async fn try_supabase_login(app: &tauri::AppHandle, state: &State<'_, AppState>, email: &str, password: &str) -> ApiResult<Option<Value>> {
     try_offline_login(app, state, email, password, false).await
-}
-
-/// Session admin d'appoint (bypass login) : garantit un admin RÉEL en base —
-///  1. le compte par défaut seedé au boot (noeakili@gmail.com) est assuré (idempotent) ;
-///  2. on prend le premier admin existant ; sinon le compte par défaut devient
-///     cet admin ; sinon (base vide malgré le seed) on crée un admin de secours.
-/// JAMAIS d'identité fantôme id=0 : le token porte une vraie ligne users, sinon
-/// auth_me répond 404 et la session est réputée invalide.
-#[tauri::command]
-pub fn auth_bootstrap_admin(_state: State<'_, AppState>) -> ApiResult<Value> {
-    Err(ApiError::forbidden("Le mode secours sans mot de passe a été désactivé. Veuillez vous connecter avec vos identifiants."))
-}
-
-#[allow(dead_code)]
-fn auth_bootstrap_admin_disabled(state: State<'_, AppState>) -> ApiResult<Value> {
-    let database = db(&state);
-    // 1) Seed garanti (idempotent, ~0ms s'il existe déjà).
-    ensure_default_admin(&database);
-    // 2) Premier admin existant (pas soft-deleted).
-    let mut user = database.query_all("users")?.into_iter().find(|u| {
-        u.get("role").and_then(Value::as_str) == Some("admin")
-            && u.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 0
-    });
-    // 3) Pas d'admin ? Le compte par défaut seedé ci-dessus LE DEVIENT.
-    if user.is_none() {
-        if let Some(default_user) = database.find_one("users", |r| {
-            r.get("email").and_then(Value::as_str).is_some_and(|e| e.eq_ignore_ascii_case(DEFAULT_ADMIN_EMAIL))
-        }).ok().flatten() {
-            let mut upd = jmap();
-            upd.insert("role".into(), json!("admin"));
-            if let Some(id) = default_user.get("id").and_then(Value::as_i64) {
-                let _ = database.update("users", id, &upd);
-                user = database.find_one("users", |r| r.get("id").and_then(Value::as_i64) == Some(id)).ok().flatten();
-                crate::logger::log_auth("bootstrap: compte par défaut promu admin");
-            }
-        }
-    }
-    // 4) Toujours rien (base corrompue) : admin de secours RÉEL, inséré en base.
-    let user = match user {
-        Some(u) => u,
-        None => {
-            crate::logger::log_auth("bootstrap: aucun user en base, création admin de secours");
-            let hash = auth_core::hash_password(DEFAULT_ADMIN_PASSWORD).unwrap_or_default();
-            let mut u = jmap();
-            u.insert("email".into(), json!(DEFAULT_ADMIN_EMAIL));
-            u.insert("password_hash".into(), json!(hash));
-            u.insert("nom".into(), json!(DEFAULT_ADMIN_NOM));
-            u.insert("role".into(), json!("admin"));
-            database.insert("users", &u)?;
-            database.find_one("users", |r| r.get("email").and_then(Value::as_str).is_some_and(|e| e.eq_ignore_ascii_case(DEFAULT_ADMIN_EMAIL)))?
-                .ok_or_else(|| ApiError::internal("bootstrap: admin de secours introuvable après insertion"))?
-        }
-    };
-    let claims = auth_core::Claims {
-        id: user.get("id").and_then(Value::as_i64).unwrap_or(0),
-        email: user.get("email").and_then(Value::as_str).unwrap_or(DEFAULT_ADMIN_EMAIL).to_string(),
-        role: "admin".to_string(),
-        nom: user.get("nom").and_then(Value::as_str).unwrap_or("Administrateur").to_string(),
-        iat: 0, exp: 0,
-    };
-    let (token, refresh_token) = auth_core::generate_token_pair(&claims, &state.jwt_secret)?;
-    Ok(json!({"token": token, "refresh_token": refresh_token, "user": user_public(&user), "source": "kiosk-admin"}))
 }
 
 /// Connexion email + mot de passe : LOCAL-FIRST.

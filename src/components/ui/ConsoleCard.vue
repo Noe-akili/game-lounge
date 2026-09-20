@@ -10,20 +10,20 @@
 
     <!-- Image de couverture (item 6) : visuel principal en arrière-plan, texte
          lisible par-dessus via un dégradé ; fallback icône si absente/invalide. -->
-    <div v-if="console.image_url && !imgFailed" class="absolute inset-0 z-0">
-      <img :src="console.image_url" alt="" class="w-full h-full object-cover" @error="imgFailed = true" v-show="!imgFailed" />
+    <div v-if="poste.image_url && !imgFailed" class="absolute inset-0 z-0">
+      <img :src="poste.image_url" alt="" class="w-full h-full object-cover" @error="imgFailed = true" v-show="!imgFailed" />
       <div class="absolute inset-0 bg-gradient-to-t from-bg/55 via-bg/15 to-transparent"></div>
     </div>
 
     <div class="relative z-10 flex items-center justify-between gap-2 mb-3 min-w-0">
       <div class="flex items-center gap-2 min-w-0 flex-1">
-        <Monitor v-if="imgFailed || !console.image_url" class="w-5 h-5 shrink-0" :class="statusIconColor" />
-        <h3 class="font-gaming font-bold text-txt truncate min-w-0">{{ console.nom }}</h3>
+        <Monitor v-if="imgFailed || !poste.image_url" class="w-5 h-5 shrink-0" :class="statusIconColor" />
+        <h3 class="font-gaming font-bold text-txt truncate min-w-0">{{ poste.nom }}</h3>
       </div>
       <span class="badge shrink-0" :class="statusBadgeClass">{{ statusLabel }}</span>
     </div>
 
-    <p class="relative z-10 text-xs text-txt-dim mb-3 truncate">Poste {{ console.poste_numero }} — {{ console.type }}</p>
+    <p class="relative z-10 text-xs text-txt-dim mb-3 truncate">Poste {{ poste.poste_numero }} — {{ poste.type }}</p>
 
     <div v-if="isActive" class="mb-4 space-y-2 min-w-0">
       <div class="flex items-center gap-2 min-w-0">
@@ -31,8 +31,8 @@
           <User class="w-4 h-4 text-neon-violet" />
         </div>
         <div class="min-w-0 flex-1">
-          <p class="text-sm font-medium truncate">{{ console.joueur_nom || 'Joueur' }}</p>
-          <p class="text-xs text-txt-dim truncate">{{ console.jeu_nom || 'Jeu' }}</p>
+          <p class="text-sm font-medium truncate">{{ poste.joueur_nom || 'Joueur' }}</p>
+          <p class="text-xs text-txt-dim truncate">{{ poste.jeu_nom || 'Jeu' }}</p>
         </div>
       </div>
 
@@ -45,11 +45,11 @@
           <Timer class="w-5 h-5 shrink-0" :class="depasse ? 'text-neon-red' : 'text-neon-blue'" />
           <LiveSessionTimer
             ref="liveTimer"
-            :session-debut="console.session_debut"
-            :duree-allouee="console.duree_allouee || 0"
-            :accum-sec="console.duree_secondes ?? -1"
-            :accumulee-min="console.duree_minutes || 0"
-            :statut="console.session_statut || 'en_cours'"
+            :session-debut="poste.session_debut"
+            :duree-allouee="poste.duree_allouee || 0"
+            :accum-sec="poste.duree_secondes ?? -1"
+            :accumulee-min="poste.duree_minutes || 0"
+            :statut="poste.session_statut || 'en_cours'"
             class="text-lg sm:text-xl tabular-nums"
           />
           <span v-if="restantAffiche" class="ml-auto text-xs shrink-0 text-right" :class="depasse ? 'text-neon-red' : 'text-txt-dim'">
@@ -67,7 +67,7 @@
 
       <div v-if="isOccupied" class="flex items-center gap-2 text-sm text-txt-dim min-w-0">
         <TrendingUp class="w-4 h-4 shrink-0" />
-        <span class="truncate">Tarif : {{ formatCurrency(console.tarif_prix || 2000) }}/h</span>
+        <span class="truncate">Tarif : {{ formatCurrency(poste.tarif_prix || 2000) }}/h</span>
         <span class="ml-auto font-semibold text-neon-green shrink-0">{{ formatCurrency(montantActuel) }}</span>
       </div>
     </div>
@@ -109,11 +109,16 @@ import { formatCurrency, formatDuration } from '@/utils/helpers'
 import LiveSessionTimer from './LiveSessionTimer.vue'
 
 const props = defineProps({
-  readonly: { type: Boolean, default: false },
   console: { type: Object, required: true },
 })
 
 defineEmits(['start', 'pause', 'resume', 'end'])
+
+// IMPORTANT : dans un template Vue, `console` est résolu comme l'objet GLOBAL
+// console (liste des globaux du compilateur), jamais comme la prop -> le nom, le
+// numéro de poste, le joueur et le jeu s'affichaient vides. On expose donc un
+// alias `poste` utilisé par tout le template.
+const poste = computed(() => props.console || {})
 
 // Chrono temps réel partagé (LiveSessionTimer expose elapsedSeconds/restant).
 const liveTimer = ref(null)

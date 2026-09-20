@@ -1,7 +1,7 @@
 // Logger Rust - capture tout dans 1.log (demandé utilisateur)
 // Rien ne doit nous échapper, logs visibles dans l'app via get_logs
 use std::fs::{OpenOptions, File};
-use std::io::{Write, BufReader, BufRead};
+use std::io::Write;
 use std::sync::{Mutex, OnceLock};
 
 static LOG_FILE: OnceLock<Mutex<File>> = OnceLock::new();
@@ -82,7 +82,6 @@ pub fn log(target: &str, msg: &str) {
 
 pub fn log_cloud(msg: &str) { log("cloud", msg); }
 pub fn log_auth(msg: &str) { log("auth", msg); }
-pub fn log_import(msg: &str) { log("import", msg); }
 pub fn log_sync(msg: &str) { log("sync", msg); }
 
 pub fn get_logs(limit: usize) -> Vec<String> {
@@ -94,36 +93,4 @@ pub fn get_logs(limit: usize) -> Vec<String> {
         }
     }
     Vec::new()
-}
-
-pub fn read_log_file() -> String {
-    // Essaie de lire 1.log depuis tous les chemins
-    for path in log_paths() {
-        if let Ok(file) = File::open(&path) {
-            let reader = BufReader::new(file);
-            let mut content = String::new();
-            for line in reader.lines().take(1000) {
-                if let Ok(l) = line {
-                    content.push_str(&l);
-                    content.push('\n');
-                }
-            }
-            if !content.is_empty() {
-                return content;
-            }
-        }
-    }
-    // Fallback mémoire
-    get_logs(500).join("\n")
-}
-
-// Helper pour logger les erreurs cloud avec contexte
-pub fn log_cloud_error(context: &str, err: &str) {
-    log("cloud", &format!("{}: {}", context, err));
-    // Écrit aussi dans fichier dédié pour debug
-    for path in log_paths() {
-        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
-            let _ = writeln!(f, "[cloud][{}] {}: {}", chrono::Utc::now().format("%H:%M:%S"), context, err);
-        }
-    }
 }

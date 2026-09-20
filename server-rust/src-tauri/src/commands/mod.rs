@@ -28,8 +28,6 @@ pub use sessions::*;
 pub use sync::*;
 pub use tarifs::*;
 
-
-
 /// Identité de l'appareil (mission §3) : device_id stable, nom, installation_id,
 /// created_at, statut d'activation. Persisté en SQLite : stable entre
 /// redémarrages, régénéré uniquement si la base disparaît (désinstallation).
@@ -81,29 +79,6 @@ pub fn get_by_id(db: &Db, table: &str, id: i64, not_found: &str) -> ApiResult<Va
 
 pub fn row_id(row: &Value) -> Option<i64> {
     row.get("id").and_then(Value::as_i64)
-}
-
-/// Recherche la valeur d'une clé dans une liste de lignes JSON.
-pub fn lookup<'a>(rows: &'a [Value], id: Option<i64>, key: &str) -> Option<&'a Value> {
-    match id {
-        Some(id) => rows.iter().find(|r| row_id(r) == Some(id)).map(|r| &r[key]),
-        None => None,
-    }
-}
-
-pub fn str_field(row: &Value, key: &str) -> Option<String> {
-    row.get(key).and_then(Value::as_str).map(|s| s.to_string())
-}
-
-pub fn int_field(row: &Value, key: &str) -> Option<i64> {
-    row.get(key).and_then(Value::as_i64)
-}
-
-pub fn float_field(row: &Value, key: &str) -> f64 {
-    row.get(key)
-        .and_then(Value::as_f64)
-        .or_else(|| row.get(key).and_then(Value::as_i64).map(|i| i as f64))
-        .unwrap_or(0.0)
 }
 
 /// Trie des sessions/factures par `created_at` décroissant (chaînes ISO comparables).

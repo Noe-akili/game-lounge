@@ -21,17 +21,15 @@ function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<any> {
   const w: any = window as any
   const fn = w.__TAURI__?.core?.invoke || w.__TAURI_INTERNALS__?.invoke
   if (!fn) return Promise.reject({ message: 'Tauri non disponible', status: 500 })
-  console.log('[TAURI_INVOKE_START]', cmd, JSON.stringify(args).slice(0,200))
   // auth_login est LOCAL-FIRST : le compte présent dans SQLite doit répondre
   // rapidement. Le cloud n'est utilisé que pour un compte absent/localement
   // non valide. Le timeout IPC ne doit donc plus masquer un blocage de 75s.
   const timeoutMs = cmd.startsWith('users_') ? 8000 : ((cmd === 'auth_login' || cmd === 'auth_refresh') ? 35000 : 15000)
   return Promise.race([
-    Promise.resolve(fn.call(w.__TAURI__?.core || w.__TAURI_INTERNALS__, cmd, args)).then((r:any)=>{ console.log('[TAURI_INVOKE_SUCCESS]', cmd); return r; }).catch((e:any)=>{ console.warn('[TAURI_INVOKE_ERROR]', cmd, e); throw e; }),
+    Promise.resolve(fn.call(w.__TAURI__?.core || w.__TAURI_INTERNALS__, cmd, args)).catch((e:any)=>{ console.warn('[TAURI_INVOKE_ERROR]', cmd, e); throw e; }),
     new Promise((_, reject) => setTimeout(() => { console.warn('[TAURI_INVOKE_ERROR] timeout', cmd); reject({ message: 'Timeout IPC (Android WebView)', status: 504 }) }, timeoutMs))
   ])
 }
-
 
 function getPath(url: string): string {
   return url.split('?')[0]
@@ -77,7 +75,6 @@ const ROUTES: RouteDef[] = [
 
   // ===== AUTH =====
   { m: 'POST', p: '/auth/login', f: ({ body }) => ({ cmd: 'auth_login', args: { email: val(body, 'email'), password: val(body, 'password') } }) },
-  { m: 'POST', p: '/auth/bootstrap', f: () => ({ cmd: 'auth_bootstrap_admin', args: {} }) },
   { m: 'POST', p: '/auth/test-supabase', f: () => ({ cmd: 'auth_test_supabase', args: {} }) },
   { m: 'POST', p: '/auth/refresh', f: ({ body }) => ({ cmd: 'auth_refresh', args: { refresh_token: val(body, 'refresh_token') } }) },
   { m: 'POST', p: '/auth/logout', f: ({ token }) => ({ cmd: 'auth_logout', args: { token } }) },
@@ -189,8 +186,6 @@ const ROUTES: RouteDef[] = [
   { m: 'GET', p: '/sync/status', f: ({ token }) => ({ cmd: 'sync_status', args: { token } }) },
   { m: 'POST', p: '/sync/toggle', f: ({ token, body }) => ({ cmd: 'sync_toggle', args: { token, enabled: !!val(body, 'enabled') } }) },
   { m: 'POST', p: '/sync/run', f: ({ token }) => ({ cmd: 'sync_run', args: { token } }) },
-  { m: 'POST', p: '/sync/pull', f: ({ token }) => ({ cmd: 'sync_run', args: { token } }) },
-  { m: 'POST', p: '/sync/push', f: ({ token }) => ({ cmd: 'sync_run', args: { token } }) },
   { m: 'GET', p: '/sync/poll', f: ({ token }) => ({ cmd: 'sync_poll', args: { token } }) },
   // État de l'initial (première sync faite ? quelles tables ?) — mission §5
   { m: 'GET', p: '/sync/initial-status', f: ({ token }) => ({ cmd: 'sync_initial_status', args: { token } }) },

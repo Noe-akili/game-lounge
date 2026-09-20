@@ -553,22 +553,6 @@ impl Db {
         }
     }
 
-    /// Une table est-elle à re-pousser ? Absente du set = dirty (première sync complète).
-    pub fn is_dirty(&self, table: &str) -> bool {
-        let guard = match self.1.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        guard.get(table).map(|b| *b).unwrap_or(true)
-    }
-
-    /// Après push réussi d'une table, on efface son flag (prochaine écriture le remettra).
-    pub fn clear_dirty(&self, table: &str) {
-        if let Ok(mut guard) = self.1.lock() {
-            guard.insert(table.to_string(), false);
-        }
-    }
-
     /// Nombre de changements locaux en attente d'envoi (statut PENDING).
     /// Sert de badge de sync dans l'UI et de garde-fou pour le worker.
     pub fn outbox_pending_count(&self) -> ApiResult<usize> {
@@ -859,22 +843,6 @@ impl Db {
             .query_row(rusqlite::params_from_iter(params), |r| r.get::<_, i64>(0))
             .map_err(|e| ApiError::internal(format!("pending for: {e}")))?;
         Ok(n > 0)
-    }
-
-    /// Journalise un conflit pour audit (table sync_conflicts, spec §9).
-    pub fn conflict_log(
-        &self,
-        change_id: &str,
-        entity: &str,
-        record_id: i64,
-        reason: &str,
-        remote_payload: &str,
-    ) -> ApiResult<()> {
-        let conn = match self.0.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        self.conflict_log_conn(&*conn, change_id, entity, record_id, reason, remote_payload)
     }
 
     /// Variante sans re-lock : à utiliser quand la connexion est DÉJÀ verrouillée
