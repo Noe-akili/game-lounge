@@ -49,9 +49,9 @@ const showEndModal = ref(false)
 const selectedConsole = ref(null)
 let refreshInterval = null
 
-const occupiedCount = computed(() => consoles.value.filter((c: any) => c.statut === 'occupee' || c.session_statut === 'en_cours').length)
-const pausedCount = computed(() => consoles.value.filter((c: any) => c.statut === 'pause' || c.session_statut === 'pause').length)
-const freeCount = computed(() => consoles.value.filter((c: any) => c.statut === 'disponible' && !c.session_id).length)
+const occupiedCount = computed(() => consoles.value.filter((c: any) => c.etat === 'occupee' || c.session_statut === 'en_cours').length)
+const pausedCount = computed(() => consoles.value.filter((c: any) => c.etat === 'pause' || c.session_statut === 'pause').length)
+const freeCount = computed(() => consoles.value.filter((c: any) => (c.etat === 'disponible' || !c.etat) && !c.session_id).length)
 
 const stats = computed(() => [
   { label: 'Consoles totales', value: consoles.value.length, color: 'text-neon-blue', icon: Monitor },
