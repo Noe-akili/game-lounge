@@ -1,3 +1,21 @@
+
+function sanitizeErrorMessage(msg: string): string {
+  if (!msg) return "Une erreur inattendue est survenue";
+  const lower = msg.toLowerCase();
+  if (lower.includes("no column named") || lower.includes("sqlite") || lower.includes("insert") || lower.includes("table")) {
+    return "Une erreur de base de données est survenue. Veuillez réessayer.";
+  }
+  if (lower.includes("pool connect") || lower.includes("offline") || lower.includes("postgres") || lower.includes("pgbouncer") || lower.includes("supabase")) {
+    return "Connexion au serveur impossible pour le moment. Vérifiez votre connexion Internet.";
+  }
+  if (lower.includes("timeout") || lower.includes("délai dépassé")) {
+    return "Le serveur a mis trop de temps à répondre. Veuillez réessayer.";
+  }
+  if (lower.includes("spawn_blocking") || lower.includes("internal")) {
+    return "Une erreur de traitement interne est survenue.";
+  }
+  return msg;
+}
 // @ts-nocheck
 import { handleRequest } from "@/lib/transport"
 import { SessionStorage } from "@/lib/sessionStorage"
