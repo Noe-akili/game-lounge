@@ -93,7 +93,7 @@ const loading = ref(true)
 const showForm = ref(false)
 const showArchived = ref(false)
 const editingId = ref<number | null>(null)
-const form = reactive({ nom: '', type: 'PS5', poste_numero: 1, image_url: '' })
+const form = reactive({ nom: '', type: 'PS5', poste_numero: 1, etat: 'disponible', image_url: '' })
 const imgErr = reactive<Record<number, boolean>>({})
 
 function statusColor(etat: string) {
@@ -124,6 +124,7 @@ function openAdd() {
   form.type = 'PS5'
   form.poste_numero = consoles.value.length + 1
   form.image_url = ''
+  form.etat = 'disponible'
   showForm.value = true
 }
 
@@ -133,6 +134,7 @@ function editConsole(c: any) {
   form.type = c.type
   form.poste_numero = c.poste_numero
   form.image_url = c.image_url || ''
+  form.etat = c.etat || 'disponible'
   showForm.value = true
 }
 
