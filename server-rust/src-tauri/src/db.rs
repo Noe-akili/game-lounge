@@ -184,20 +184,77 @@ pub fn today_str() -> String {
     chrono::Utc::now().format("%Y%m%d").to_string()
 }
 
-/// Session actuellement EN COURS (pour le watcher d'expiration) :
-/// (id, console_id, duree_allouee_en_minutes, secondes_deja_accumulees).
-/// None si aucune session active.
-pub fn find_active_session(
+/// TOUTES les sessions actuellement EN COURS (pour le watcher d'expiration) :
+/// (id, console_id, duree_allouee_en_minutes, secondes_deja_accumulees, debut).
+///
+/// IMPORTANT : le watcher ne peut PAS se contenter de la session la plus
+/// ancienne. Une session courte (tarif 5 min) démarrée APRÈS une session longue
+/// (tarif 3 h) expire bien avant elle : en ne regardant que la plus ancienne, la
+/// session de 5 min n'était jamais terminée automatiquement et continuait à
+/// tourner en dépassement. On renvoie donc la liste complète et le watcher
+/// évalue CHAQUE session.
+pub fn find_active_sessions(
     conn: &rusqlite::Connection,
-) -> Option<(i64, Option<i64>, i64, i64)> {
-    conn.query_row(
-        "SELECT id, console_id, COALESCE(duree_allouee, duree_minutes, 60), COALESCE(duree_secondes, duree_minutes * 60, 0) \
+) -> Vec<(i64, Option<i64>, i64, i64, String)> {
+    let mut out = Vec::new();
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT id, console_id, COALESCE(duree_allouee, duree_minutes, 60), \
+         COALESCE(duree_secondes, duree_minutes * 60, 0), COALESCE(debut, '') \
          FROM sessions_jeu WHERE statut = 'en_cours' AND COALESCE(deleted, 0) = 0 \
-         ORDER BY debut ASC LIMIT 1",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+         ORDER BY debut ASC",
+    ) else {
+        return out;
+    };
+    let Ok(rows) = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, Option<i64>>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, i64>(3)?,
+            row.get::<_, String>(4)?,
+        ))
+    }) else {
+        return out;
+    };
+    for r in rows.flatten() {
+        out.push(r);
+    }
+    out
+}
+
+/// Faut-il CONSERVER le hash local d'un utilisateur au lieu d'appliquer celui du
+/// cloud ?
+///
+/// Avant, `password_hash` était TOUJOURS ignoré à l'arrivée du cloud. Effet de
+/// bord : un compte créé (ou un mot de passe changé) sur un appareil arrivait sur
+/// les AUTRES appareils **sans hash**, donc impossible à utiliser hors ligne — le
+/// mot de passe « ne marchait pas ».
+///
+/// Règle retenue :
+///   * ligne locale absente, ou hash local vide  -> on prend celui du cloud ;
+///   * un changement local est encore en attente d'envoi (sync_outbox PENDING ou
+///     FAILED) -> le local gagne, sinon un hash cloud périmé réautoriserait
+///     l'ANCIEN mot de passe ;
+///   * sinon (local déjà poussé) -> on accepte le cloud.
+fn garder_hash_local(conn: &Connection, record_id: i64) -> bool {
+    let local_hash: Option<String> = conn
+        .query_row("SELECT password_hash FROM users WHERE id = ?", [record_id], |r| {
+            r.get::<_, Option<String>>(0)
+        })
+        .ok()
+        .flatten();
+    let Some(hash) = local_hash else { return false };
+    if hash.trim().is_empty() {
+        return false;
+    }
+    conn.query_row(
+        "SELECT COUNT(*) FROM sync_outbox WHERE table_name = 'users' AND record_id = ? \
+         AND status IN ('PENDING', 'FAILED')",
+        [record_id],
+        |r| r.get::<_, i64>(0),
     )
-    .ok()
+    .unwrap_or(0)
+        > 0
 }
 
 // Alphabet Crockford base32 (ULID) : pas de I, L, O, U pour éviter les confusions.
@@ -941,7 +998,7 @@ impl Db {
                     if *k == "id" || !local_cols.contains(k) {
                         continue;
                     }
-                    if entity == "users" && *k == "password_hash" {
+                    if entity == "users" && *k == "password_hash" && garder_hash_local(&*conn, record_id) {
                         continue;
                     }
                     map.insert(k.clone(), v.clone());
@@ -977,8 +1034,10 @@ impl Db {
             if *k == "id" || !local_cols.contains(k) {
                 continue;
             }
-            // Le hash local reste LA référence pour le login (algos incompatibles)
-            if entity == "users" && *k == "password_hash" {
+            // Hash : le local ne gagne que si un changement local n'est pas
+            // encore parti (voir garder_hash_local). Sinon on applique celui du
+            // cloud — sans quoi un compte répliqué reste sans mot de passe.
+            if entity == "users" && *k == "password_hash" && garder_hash_local(&*conn, record_id) {
                 continue;
             }
             map.insert(k.clone(), v.clone());

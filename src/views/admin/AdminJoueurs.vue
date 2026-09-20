@@ -198,9 +198,13 @@ import { ref, reactive, onMounted } from 'vue'
 import { api } from '@/utils/api'
 import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
-import { UserPlus, Pencil, Search, Users, Trash2, RotateCcw } from 'lucide-vue-next'
+// Coins était utilisé dans le template SANS être importé, et formatDate non
+// importé non plus : dès qu'un joueur avait au moins un mouvement de jetons, le
+// rendu du détail échouait (« formatDate is not a function ») et la fiche restait
+// vide. C'était LA cause du bug « le joueur qui a utilisé ses jetons ne s'affiche pas ».
+import { UserPlus, Pencil, Search, Users, Trash2, RotateCcw, Coins } from 'lucide-vue-next'
 import Loader from '@/components/ui/Loader.vue'
-import { formatCurrency } from '@/utils/helpers'
+import { formatCurrency, formatDate } from '@/utils/helpers'
 import { isValidNom, isValidPhone, isValidEmail, sanitizeInput } from '@/utils/validators'
 
 const joueurs = ref<any[]>([])

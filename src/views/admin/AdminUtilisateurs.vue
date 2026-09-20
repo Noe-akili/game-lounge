@@ -204,17 +204,21 @@ async function saveUser() {
     if (editingId.value) {
       const payload: any = { nom: form.nom, email: form.email, role: form.role }
       if (form.password) payload.password = form.password
-      await api.put(`/users/${editingId.value}`, payload)
-      toast.success('Utilisateur mis à jour !')
+      // Le serveur relit le hash en base avant de répondre : password_change
+      // à true = le nouveau mot de passe est réellement utilisable.
+      const res: any = await api.put(`/users/${editingId.value}`, payload)
+      toast.success(res?.password_change ? 'Utilisateur et mot de passe mis à jour' : 'Utilisateur mis à jour')
     } else {
       await api.post('/users', form)
-      toast.success('Utilisateur créé avec succès !')
+      toast.success('Utilisateur créé — il peut se connecter immédiatement')
     }
     closeForm()
     Object.assign(form, { nom: '', email: '', password: '', role: 'employe' })
     await fetchUsers()
   } catch (e: any) {
-    toast.error('Erreur: ' + (e.message || 'Opération impossible'))
+    // Le code HTTP est affiché : 403 = droits, 409 = email déjà pris,
+    // 503 = base occupée… sans lui, tout ressemblait à « ça ne marche pas ».
+    toast.error(`Échec${e?.status ? ' (' + e.status + ')' : ''} : ${e?.message || 'opération impossible'}`)
   } finally {
     loading.value = false
   }

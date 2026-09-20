@@ -95,21 +95,49 @@
             <p class="text-xs mt-1">Créez un tarif dans Paramètres → Tarifs</p>
           </div>
           <div v-else class="space-y-2">
+            <!-- La durée du tarif EST la durée de la session : un tarif sans
+                 durée valide est refusé par le serveur, on le grise ici. -->
             <button v-for="t in filteredTarifs" :key="t.id"
               @click="selectedTarif = t"
+              :disabled="!dureeValide(t)"
               class="w-full flex items-center justify-between p-3 sm:p-4 rounded-xl border transition-all"
-              :class="selectedTarif?.id === t.id ? 'border-neon-blue bg-neon-blue/10' : 'border-white/5 hover:border-white/20'">
+              :class="[
+                selectedTarif?.id === t.id ? 'border-neon-blue bg-neon-blue/10' : 'border-white/5 hover:border-white/20',
+                !dureeValide(t) ? 'opacity-50' : ''
+              ]">
               <div class="min-w-0 text-left flex-1">
                 <p class="font-medium text-sm truncate">{{ t.description || `${t.type} ${t.jeu || ''}` }}</p>
-                <div class="flex items-center gap-2 mt-1">
-                  <span class="text-xs px-2 py-0.5 rounded-full" :class="t.duree_minutes <= 15 ? 'bg-neon-yellow/15 text-neon-yellow' : t.duree_minutes <= 30 ? 'bg-neon-blue/15 text-neon-blue' : 'bg-neon-green/15 text-neon-green'">
-                    {{ t.duree_minutes }}min
+                <div class="flex items-center gap-2 mt-1 flex-wrap">
+                  <span v-if="dureeValide(t)" class="text-xs px-2 py-0.5 rounded-full" :class="t.duree_minutes <= 15 ? 'bg-neon-yellow/15 text-neon-yellow' : t.duree_minutes <= 30 ? 'bg-neon-blue/15 text-neon-blue' : 'bg-neon-green/15 text-neon-green'">
+                    {{ dureeTexte(t.duree_minutes) }}
                   </span>
+                  <span v-else class="text-xs px-2 py-0.5 rounded-full bg-neon-red/15 text-neon-red">durée manquante</span>
                   <span v-if="t.console_type" class="text-xs text-txt-dim">{{ t.console_type }}</span>
                 </div>
               </div>
               <span class="font-gaming font-bold text-neon-green shrink-0 ml-3 text-lg">{{ formatCurrency(t.prix) }}</span>
             </button>
+          </div>
+
+          <!-- RÉCAPITULATIF : ce que le joueur paie, combien de temps il joue et
+               à quelle heure la session se coupera automatiquement. -->
+          <div v-if="selectedTarif && dureeValide(selectedTarif)" class="mt-4 rounded-xl border border-neon-blue/30 bg-neon-blue/5 p-3 space-y-1">
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-txt-dim">Durée de la session</span>
+              <span class="font-gaming font-bold text-neon-blue">{{ dureeTexte(selectedTarif.duree_minutes) }}</span>
+            </div>
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-txt-dim">Fin prévue</span>
+              <span class="font-gaming font-bold">{{ finPrevue }}</span>
+            </div>
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-txt-dim">À encaisser</span>
+              <span class="font-gaming font-bold text-neon-green">{{ formatCurrency(selectedTarif.prix) }}</span>
+            </div>
+            <p class="text-[11px] text-txt-dim pt-1">
+              Un compte à rebours s'affiche sur la carte de la console ; à zéro, la session
+              est terminée automatiquement et une notification est envoyée.
+            </p>
           </div>
         </div>
       </div>
@@ -118,7 +146,7 @@
         <button v-if="step > 0" @click="prevStep" class="btn-neon-outline flex-1">Retour</button>
         <button v-if="step < 3" @click="nextStep" :disabled="!canProceed"
           class="btn-neon-violet flex-1">Suivant</button>
-        <button v-if="step === 3" @click="startSession" :disabled="!selectedTarif || loading"
+        <button v-if="step === 3" @click="startSession" :disabled="!selectedTarif || !dureeValide(selectedTarif) || loading"
           class="btn-neon-green flex-1 flex items-center justify-center gap-2">
           <Loader2 v-if="loading" class="w-5 h-5 animate-spin" />
           <Play v-else class="w-5 h-5" />
@@ -203,6 +231,27 @@ const filteredTarifs = computed(() => {
     const matchJeu = !t.jeu || t.jeu === jeuTitre
     return matchConsole && matchJeu
   })
+})
+
+// Un tarif n'est utilisable que s'il porte une durée ET un prix exploitables :
+// c'est la durée du tarif qui devient la durée allouée de la session.
+function dureeValide(t) {
+  return Number(t?.duree_minutes) > 0 && Number(t?.prix) > 0
+}
+
+function dureeTexte(min) {
+  const m = Number(min) || 0
+  if (m < 60) return `${m} min`
+  const h = Math.floor(m / 60)
+  const r = m % 60
+  return r ? `${h} h ${r} min` : `${h} h`
+}
+
+// Heure de fin annoncée à l'employé avant de démarrer (début = maintenant).
+const finPrevue = computed(() => {
+  if (!selectedTarif.value || !dureeValide(selectedTarif.value)) return '—'
+  const fin = new Date(Date.now() + Number(selectedTarif.value.duree_minutes) * 60000)
+  return fin.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
 })
 
 const canProceed = computed(() => {
@@ -309,6 +358,7 @@ async function startSession() {
   if (!isValidId(selectedJoueur.value?.id)) return toast.error('Joueur invalide')
   if (!isValidId(selectedJeu.value?.id)) return toast.error('Jeu invalide')
   if (!selectedTarif.value) return toast.error('Veuillez choisir un tarif')
+  if (!dureeValide(selectedTarif.value)) return toast.error('Ce tarif n\'a pas de durée ou de prix valide : corrigez-le dans Tarifs')
   loading.value = true
   try {
     const session = await api.post('/sessions', {

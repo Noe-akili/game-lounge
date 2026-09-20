@@ -48,3 +48,28 @@ export function calcJetonsEarned(durationMinutes, rules, montant) {
   }
   return 0
 }
+
+/**
+ * Normalise une URL d'image (jaquette de console ou de jeu).
+ *
+ * Trois causes d'« image qui ne s'affiche pas » sont traitées ici :
+ *  - lien collé sans schéma ("images.site.com/ps5.jpg") : le navigateur le lit
+ *    comme un chemin relatif à l'application et ne trouve rien -> on ajoute https://
+ *  - guillemets / espaces collés autour du lien lors du copier-coller ;
+ *  - lien http:// simple, conservé tel quel (la CSP l'autorise désormais).
+ *
+ * Retourne '' si rien d'exploitable.
+ */
+export function normalizeImageUrl(url) {
+  if (typeof url !== 'string') return ''
+  let u = url.trim().replace(/^["'\s]+|["'\s]+$/g, '')
+  if (!u) return ''
+  if (u.startsWith('data:') || u.startsWith('blob:')) return u
+  if (/^\/\//.test(u)) return 'https:' + u
+  if (!/^https?:\/\//i.test(u)) {
+    // Un chemin local de téléphone n'est pas affichable par la WebView.
+    if (/^(file:|\/storage\/|\/data\/|[a-zA-Z]:\\)/.test(u)) return ''
+    u = 'https://' + u.replace(/^\/+/, '')
+  }
+  return u
+}

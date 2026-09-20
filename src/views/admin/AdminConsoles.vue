@@ -29,10 +29,15 @@
       <div v-for="c in consoles" :key="c.id" 
         class="card-hover relative min-h-44 text-center group w-full max-w-full min-w-0 overflow-hidden flex flex-col justify-end transition-all"
         :class="c.deleted ? 'opacity-65 border-dashed border-neon-red/40 bg-bg-surface/40' : ''">
-        <img v-if="c.image_url && !imgErr[c.id]" :src="c.image_url" :alt="c.nom" class="absolute inset-0 w-full h-full object-cover" @error="imgErr[c.id] = true" />
+        <!-- referrerpolicy="no-referrer" : beaucoup d'hébergeurs d'images
+             refusent l'affichage quand la page appelante est inconnue (WebView
+             Android) — sans lui, l'image restait vide alors que le lien est bon. -->
+        <img v-if="imageSrc(c) && !imgErr[c.id]" :src="imageSrc(c)" :alt="c.nom"
+          referrerpolicy="no-referrer" loading="lazy" decoding="async"
+          class="absolute inset-0 w-full h-full object-cover" @error="imgErr[c.id] = true" />
         <div class="absolute inset-0 bg-gradient-to-t from-bg via-bg/60 to-transparent"></div>
         <div class="relative z-10 p-2">
-          <div v-if="!c.image_url || imgErr[c.id]" class="w-12 h-12 mx-auto rounded-xl bg-bg-surface/90 flex items-center justify-center mb-3">
+          <div v-if="!imageSrc(c) || imgErr[c.id]" class="w-12 h-12 mx-auto rounded-xl bg-bg-surface/90 flex items-center justify-center mb-3">
             <Monitor class="w-7 h-7" :class="c.deleted ? 'text-neon-red/70' : statusColor(c.etat)" />
           </div>
           <p class="font-medium text-sm truncate w-full max-w-full" :class="{ 'line-through text-txt-dim': c.deleted }">{{ c.nom }}</p>
@@ -75,7 +80,18 @@
             <option value="maintenance">Maintenance</option>
             <option value="hors_service">Hors service</option>
           </select>
-          <input v-model="form.image_url" placeholder="URL image (ex: https://...)" class="input-field" />
+          <input v-model="form.image_url" placeholder="URL image (ex: https://site.com/ps5.jpg)" class="input-field" @input="formImgErr = false" />
+          <!-- APERÇU IMMÉDIAT : on voit tout de suite si le lien fonctionne au
+               lieu de découvrir une carte vide après enregistrement. -->
+          <div v-if="apercuUrl" class="rounded-xl overflow-hidden border border-border/50 bg-bg-surface">
+            <img v-if="!formImgErr" :src="apercuUrl" alt="Aperçu" referrerpolicy="no-referrer"
+              class="w-full h-32 object-cover" @error="formImgErr = true" />
+            <p v-else class="text-xs text-neon-red p-3">
+              Image inaccessible. Utilisez un lien direct vers un fichier image (.jpg, .png, .webp),
+              accessible sans connexion, et vérifiez que le téléphone a Internet.
+              Un fichier du téléphone ne peut pas être utilisé ici.
+            </p>
+          </div>
           <div class="flex gap-3">
             <button @click="showForm = false" class="btn-neon-outline flex-1">Annuler</button>
             <button @click="saveConsole" :disabled="!form.nom" class="btn-neon-violet flex-1">{{ editingId ? 'Modifier' : 'Ajouter' }}</button>
@@ -87,13 +103,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { api } from '@/utils/api'
 import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
 import { Plus, Monitor, Pencil, Trash2, RotateCcw } from 'lucide-vue-next'
 import Loader from '@/components/ui/Loader.vue'
 import { isValidNom, isValidConsoleType, isValidPosteNumero, sanitizeInput } from '@/utils/validators'
+import { normalizeImageUrl } from '@/utils/helpers'
 
 const consoles = ref<any[]>([])
 const loading = ref(true)
@@ -102,6 +119,14 @@ const showArchived = ref(false)
 const editingId = ref<number | null>(null)
 const form = reactive({ nom: '', type: 'PS5', poste_numero: 1, etat: 'disponible', image_url: '' })
 const imgErr = reactive<Record<number, boolean>>({})
+const formImgErr = ref(false)
+
+// Lien d'image réellement utilisable pour l'affichage (corrige les liens
+// enregistrés sans « https:// », qui étaient lus comme un chemin interne).
+function imageSrc(c: any) {
+  return normalizeImageUrl(c?.image_url)
+}
+const apercuUrl = computed(() => normalizeImageUrl(form.image_url))
 
 function statusColor(etat: string) {
   return etat === 'disponible' ? 'text-neon-green' : etat === 'occupee' ? 'text-neon-red' : 'text-neon-yellow'
@@ -150,7 +175,13 @@ async function saveConsole() {
   if (!isValidConsoleType(form.type)) return toast.error('Type de console invalide')
   if (!isValidPosteNumero(form.poste_numero)) return toast.error('Numéro de poste invalide (1-100)')
   form.nom = sanitizeInput(form.nom, 50)
-  if (form.image_url) form.image_url = sanitizeInput(form.image_url, 500)
+  // Le lien est normalisé AVANT l'envoi : « site.com/x.jpg » devient
+  // « https://site.com/x.jpg », sinon la WebView cherche un fichier local.
+  if (form.image_url) {
+    const propre = normalizeImageUrl(sanitizeInput(form.image_url, 500))
+    if (!propre) return toast.error("Lien d'image invalide : donnez une adresse web (https://…) et non un fichier du téléphone")
+    form.image_url = propre
+  }
   try {
     if (editingId.value) {
       await api.put(`/consoles/${editingId.value}`, form)

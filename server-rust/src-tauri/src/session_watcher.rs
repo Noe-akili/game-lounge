@@ -50,35 +50,26 @@ fn check_expired_sessions(app: &tauri::AppHandle, db: &Db) {
             Err(poisoned) => poisoned.into_inner(), // Mutex empoisonné : on récupère
         };
         let mut expired = Vec::new();
-        // Reprise après poison Mutex : la boucle tourne tant qu'il reste des
-        // sessions actives, en terminant UNE session à la fois (évite tout
-        // verrou long qui bloquerait l'UI).
-        for _ in 0..200 {
-            let Some((id, _console, allouee, accumulee)) = crate::db::find_active_session(&conn)
-            else {
-                break;
-            };
+        // TOUTES les sessions en cours sont évaluées, pas seulement la plus
+        // ancienne : une session de 5 min démarrée après une session de 3 h doit
+        // expirer la première. (Avant, la boucle s'arrêtait dès que la session la
+        // plus ancienne n'était pas expirée : les tarifs courts ne se
+        // terminaient jamais tout seuls.)
+        for (id, _console, allouee, accumulee, debut) in crate::db::find_active_sessions(&conn) {
             // `allouee` est en MINUTES alors que `accumulee` est en SECONDES.
             // Les comparer directement faisait expirer une session au premier
             // rafraîchissement (ex. 60 - 0 était lu comme 60 secondes).
             // Le chrono = début de la période active + secondes restantes.
-            let debut_ms = conn
-                .query_row(
-                    "SELECT debut FROM sessions_jeu WHERE id = ?1",
-                    [id],
-                    |r| r.get::<_, String>(0),
-                )
-                .ok()
-                .and_then(|d| chrono::DateTime::parse_from_rfc3339(&d).ok())
+            let debut_ms = chrono::DateTime::parse_from_rfc3339(&debut)
                 .map(|d| d.timestamp_millis())
                 .unwrap_or(0);
-            let reste_s = if debut_ms > 0 {
+            let reste_s = if debut_ms > 0 && allouee > 0 {
                 (debut_ms + (allouee * 60 - accumulee).max(0) * 1000 - now_ms) / 1000
             } else {
                 i64::MAX
             };
             if reste_s > 0 {
-                break; // session la plus ancienne pas encore expirée -> rien à faire
+                continue; // cette session a encore du temps -> on passe à la suivante
             }
             // Durée EXACTE à facturer, À LA SECONDE : allocation entière +
             // dépassement réel (reste_s est négatif = secondes de retard du

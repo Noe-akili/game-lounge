@@ -6,29 +6,33 @@
     :transition="{ duration: 0.25, ease: 'easeOut' }"
     class="card-hover relative isolate overflow-hidden group cursor-pointer w-full max-w-full min-w-0 box-border"
   >
-    <motion.div class="absolute top-0 left-0 w-full h-1" :class="statusBarColor" :animate="isOccupied ? { opacity: [1, 0.6, 1] } : {}" :transition="{ duration: 1.5, repeat: Infinity }" />
+    <motion.div class="absolute top-0 left-0 w-full h-1" :class="statusBarColor" :animate="depasse ? { opacity: [1, 0.5, 1] } : {}" :transition="{ duration: 1.5, repeat: Infinity }" />
 
     <!-- Image de couverture (item 6) : visuel principal en arrière-plan, texte
          lisible par-dessus via un dégradé ; fallback icône si absente/invalide. -->
-    <div v-if="poste.image_url && !imgFailed" class="absolute inset-0 z-0">
-      <img :src="poste.image_url" alt="" class="w-full h-full object-cover" @error="imgFailed = true" v-show="!imgFailed" />
-      <div class="absolute inset-0 bg-gradient-to-t from-bg/55 via-bg/15 to-transparent"></div>
+    <div v-if="imageSrc && !imgFailed" class="absolute inset-0 z-0">
+      <img :src="imageSrc" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async"
+        class="w-full h-full object-cover" @error="imgFailed = true" />
+      <div class="absolute inset-0 bg-gradient-to-t from-bg/95 via-bg/80 to-bg/50"></div>
     </div>
 
     <div class="relative z-10 flex items-center justify-between gap-2 mb-3 min-w-0">
       <div class="flex items-center gap-2 min-w-0 flex-1">
-        <Monitor v-if="imgFailed || !poste.image_url" class="w-5 h-5 shrink-0" :class="statusIconColor" />
+        <Monitor v-if="imgFailed || !imageSrc" class="w-5 h-5 shrink-0" :class="statusIconColor" />
         <h3 class="font-gaming font-bold text-txt truncate min-w-0">{{ poste.nom }}</h3>
       </div>
       <span class="badge shrink-0" :class="statusBadgeClass">{{ statusLabel }}</span>
     </div>
 
-    <p class="relative z-10 text-xs text-txt-dim mb-3 truncate">Poste {{ poste.poste_numero }} — {{ poste.type }}</p>
+    <!-- Sur une photo, le gris clair devient illisible : on remonte le contraste. -->
+    <p class="relative z-10 text-xs mb-3 truncate" :class="imageSrc && !imgFailed ? 'text-txt/90' : 'text-txt-dim'">
+      Poste {{ poste.poste_numero }} — {{ poste.type }}
+    </p>
 
-    <div v-if="isActive" class="mb-4 space-y-2 min-w-0">
+    <div v-if="isActive" class="relative z-10 mb-4 space-y-2 min-w-0">
       <div class="flex items-center gap-2 min-w-0">
-        <div class="w-8 h-8 rounded-full bg-neon-violet/20 flex items-center justify-center shrink-0">
-          <User class="w-4 h-4 text-neon-violet" />
+        <div class="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center shrink-0">
+          <User class="w-4 h-4 text-txt-dim" />
         </div>
         <div class="min-w-0 flex-1">
           <p class="text-sm font-medium truncate">{{ poste.joueur_nom || 'Joueur' }}</p>
@@ -41,59 +45,77 @@
            Temps dépassé = barre et chrono en rouge (+X pulsé) : la session sera
            terminée automatiquement par le backend (notification Android envoyée). -->
       <div class="bg-bg-surface rounded-xl p-3 min-w-0">
-        <div class="flex items-center gap-2">
-          <Timer class="w-5 h-5 shrink-0" :class="depasse ? 'text-neon-red' : 'text-neon-blue'" />
-          <LiveSessionTimer
-            ref="liveTimer"
-            :session-debut="poste.session_debut"
-            :duree-allouee="poste.duree_allouee || 0"
-            :accum-sec="poste.duree_secondes ?? -1"
-            :accumulee-min="poste.duree_minutes || 0"
-            :statut="poste.session_statut || 'en_cours'"
-            class="text-lg sm:text-xl tabular-nums"
-          />
-          <span v-if="restantAffiche" class="ml-auto text-xs shrink-0 text-right" :class="depasse ? 'text-neon-red' : 'text-txt-dim'">
-            {{ depasse ? 'Terminaison auto…' : `Reste ${restantAffiche}` }}
+        <div class="flex items-center gap-2 min-w-0">
+          <Timer class="w-5 h-5 shrink-0" :class="depasse ? 'text-neon-red' : 'text-txt-dim'" />
+          <!-- COMPTE À REBOURS : c'est le temps qu'il RESTE sur le tarif payé qui
+               est affiché en grand (mode="remaining"). Le temps déjà joué passe en
+               seconde ligne. Le chrono n'est plus caché derrière un petit
+               « Reste … » : l'employé et le joueur voient la même chose. -->
+          <div class="min-w-0 flex-1">
+            <LiveSessionTimer
+              ref="liveTimer"
+              mode="remaining"
+              :session-debut="poste.session_debut"
+              :duree-allouee="poste.duree_allouee || 0"
+              :accum-sec="poste.duree_secondes ?? -1"
+              :accumulee-min="poste.duree_minutes || 0"
+              :statut="poste.session_statut || 'en_cours'"
+              class="text-2xl sm:text-3xl tabular-nums block leading-none"
+            />
+            <p class="text-[10px] text-txt-dim mt-1 truncate">
+              <template v-if="depasse">Temps écoulé — terminaison auto…</template>
+              <template v-else-if="hasAllocation">
+                restant sur {{ poste.duree_allouee }} min — fin {{ finPrevue }}
+              </template>
+              <template v-else>aucune durée allouée</template>
+            </p>
+          </div>
+          <span class="shrink-0 text-right text-[10px] text-txt-dim leading-tight">
+            joué<br /><span class="font-gaming text-sm text-txt">{{ ecouleAffiche }}</span>
           </span>
         </div>
         <div v-if="hasAllocation" class="mt-2 h-1.5 rounded-full bg-white/5 overflow-hidden">
           <div
             class="h-full rounded-full transition-all duration-1000"
-            :class="depasse ? 'bg-neon-red' : restant < 5 * 60 ? 'bg-neon-yellow' : 'bg-neon-blue'"
+            :class="depasse ? 'bg-neon-red' : restant < 5 * 60 ? 'bg-neon-yellow' : 'bg-neon-violet/70'"
             :style="{ width: progressPct + '%' }"
           />
         </div>
       </div>
 
-      <div v-if="isOccupied" class="flex items-center gap-2 text-sm text-txt-dim min-w-0">
+      <div v-if="isOccupied" class="relative z-10 flex items-center gap-2 text-sm text-txt-dim min-w-0">
         <TrendingUp class="w-4 h-4 shrink-0" />
-        <span class="truncate">Tarif : {{ formatCurrency(poste.tarif_prix || 2000) }}/h</span>
-        <span class="ml-auto font-semibold text-neon-green shrink-0">{{ formatCurrency(montantActuel) }}</span>
+        <!-- Le tarif est un FORFAIT (prix pour la durée allouée), pas un prix
+             horaire : afficher « /h » sur un forfait de 5 min induisait en erreur. -->
+        <span class="truncate">
+          Forfait : {{ formatCurrency(poste.tarif_prix || 0) }}<template v-if="hasAllocation"> / {{ poste.duree_allouee }} min</template>
+        </span>
+        <span class="ml-auto font-semibold text-txt shrink-0">{{ formatCurrency(montantActuel) }}</span>
       </div>
     </div>
 
-    <div class="flex gap-2 flex-wrap sm:flex-nowrap min-w-0">
-      <button v-if="isFree" @click="$emit('start', console)"
-        class="btn-neon-green flex-1 flex items-center justify-center gap-2">
+    <div class="relative z-10 flex gap-2 flex-wrap sm:flex-nowrap min-w-0">
+      <button v-if="isFree" @click="$emit('start', poste)"
+        class="btn-neon-violet flex-1 flex items-center justify-center gap-2">
         <Play class="w-5 h-5" />
         <span>Démarrer</span>
       </button>
 
       <template v-if="isOccupied">
-        <button @click="$emit('pause', console)"
-          class="btn-neon flex-1 bg-neon-yellow/15 text-neon-yellow border border-neon-yellow/30 hover:bg-neon-yellow/25 flex items-center justify-center gap-2">
+        <button @click="$emit('pause', poste)"
+          class="btn-neon flex-1 bg-bg-surface text-txt-dim border border-white/10 hover:bg-bg-hover flex items-center justify-center gap-2">
           <Pause class="w-5 h-5" />
           <span>Pause</span>
         </button>
-        <button @click="$emit('end', console)"
+        <button @click="$emit('end', poste)"
           class="btn-neon-red flex-1 flex items-center justify-center gap-2">
           <Square class="w-5 h-5" />
           <span>Terminer</span>
         </button>
       </template>
 
-      <button v-if="isPaused" @click="$emit('resume', console)"
-        class="btn-neon-blue flex-1 flex items-center justify-center gap-2">
+      <button v-if="isPaused" @click="$emit('resume', poste)"
+        class="btn-neon-violet flex-1 flex items-center justify-center gap-2">
         <Play class="w-5 h-5" />
         <span>Reprendre</span>
       </button>
@@ -102,10 +124,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { motion } from 'motion-v'
 import { Monitor, User, Timer, TrendingUp, Play, Pause, Square } from 'lucide-vue-next'
-import { formatCurrency, formatDuration } from '@/utils/helpers'
+import { formatCurrency, formatDuration, normalizeImageUrl } from '@/utils/helpers'
 import LiveSessionTimer from './LiveSessionTimer.vue'
 
 const props = defineProps({
@@ -125,6 +147,10 @@ const liveTimer = ref(null)
 // Image de couverture : si l'URL échoue à charger, on retire l'img du DOM
 // (fallback propre -> carte classique avec icône).
 const imgFailed = ref(false)
+// Lien d'image corrigé à l'affichage (schéma manquant, espaces, //cdn…).
+const imageSrc = computed(() => normalizeImageUrl(props.console?.image_url))
+// Un changement de console (ou de lien) doit redonner une chance à l'image.
+watch(imageSrc, () => { imgFailed.value = false })
 const elapsed = computed(() => liveTimer.value?.elapsedSeconds ?? 0)
 const restant = computed(() => liveTimer.value?.restant ?? 0)
 const depasse = computed(() => liveTimer.value?.depasse ?? false)
@@ -133,9 +159,17 @@ const progressPct = computed(() => {
   if (!hasAllocation.value) return 0
   return Math.min(100, Math.max(0, (elapsed.value / (props.console.duree_allouee * 60)) * 100))
 })
-const restantAffiche = computed(() =>
-  hasAllocation.value ? formatDuration(Math.max(0, restant.value)) : ''
-)
+// Temps déjà joué (affiché en petit à droite du compte à rebours).
+const ecouleAffiche = computed(() => formatDuration(Math.max(0, elapsed.value)))
+// Heure de fin prévue = début + durée du tarif (affichage local 24 h).
+const finPrevue = computed(() => {
+  if (!hasAllocation.value || !props.console?.session_debut) return '—'
+  const debut = new Date(props.console.session_debut).getTime()
+  if (Number.isNaN(debut)) return '—'
+  const accum = (props.console.duree_secondes ?? 0) * 1000
+  const fin = new Date(debut + props.console.duree_allouee * 60000 - accum)
+  return fin.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+})
 
 const hasActiveSession = computed(() => !!props.console.session_id && (props.console.session_statut === 'en_cours' || props.console.session_statut === 'pause'))
 const isActive = computed(() => hasActiveSession.value)
@@ -164,21 +198,27 @@ const statusLabel = computed(() => {
   return 'Libre'
 })
 
+// PALETTE SOBRE : la couleur ne sert plus qu'à signaler ce qui demande une
+// action. Une console occupée est un état NORMAL (neutre/bleu), le jaune est
+// réservé à la pause, et le rouge au temps dépassé — avant, tout était coloré
+// (rouge pour « occupé », vert, violet, jaune) et l'écran devenait illisible.
 const statusBadgeClass = computed(() => {
-  if (isOccupied.value) return 'badge-red'
+  if (depasse.value) return 'badge-red'
   if (isPaused.value) return 'badge-yellow'
-  return 'badge-green'
+  if (isOccupied.value) return 'badge-blue'
+  return 'badge-gray'
 })
 
 const statusBarColor = computed(() => {
-  if (isOccupied.value) return 'bg-neon-red'
+  if (depasse.value) return 'bg-neon-red'
   if (isPaused.value) return 'bg-neon-yellow'
-  return 'bg-neon-green'
+  if (isOccupied.value) return 'bg-neon-blue/60'
+  return 'bg-white/10'
 })
 
 const statusIconColor = computed(() => {
-  if (isOccupied.value) return 'text-neon-red'
+  if (depasse.value) return 'text-neon-red'
   if (isPaused.value) return 'text-neon-yellow'
-  return 'text-neon-green'
+  return 'text-txt-dim'
 })
 </script>

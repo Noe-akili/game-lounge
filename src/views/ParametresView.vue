@@ -123,12 +123,15 @@ async function handleChangePassword() {
   savingPassword.value = true
   try {
     if (!auth.user?.id) throw new Error('Utilisateur non identifié')
-    await api.put(`/users/${auth.user.id}`, { password: newPassword.value })
-    toast.success('Mot de passe modifié avec succès !')
+    // Le serveur vérifie en relisant la base : si password_change n'est pas à
+    // true, on n'annonce PAS un succès.
+    const res: any = await api.put(`/users/${auth.user.id}`, { password: newPassword.value })
+    if (!res?.password_change) throw new Error("Le serveur n'a pas confirmé l'enregistrement")
+    toast.success('Mot de passe modifié — utilisez-le à la prochaine connexion')
     newPassword.value = ''
     confirmPassword.value = ''
   } catch (e: any) {
-    toast.error('Erreur: ' + (e.message || 'Échec'))
+    toast.error(`Échec${e?.status ? ' (' + e.status + ')' : ''} : ${e?.message || 'mot de passe non modifié'}`)
   } finally {
     savingPassword.value = false
   }

@@ -53,9 +53,40 @@ pub async fn users_get(state: State<'_, AppState>, token: Option<String>, id: i6
     Ok(row)
 }
 
+/// Hachage du mot de passe, EN DIRECT (plus de tokio::spawn_blocking).
+///
+/// Les paramètres Argon2id du projet (m=2048 Kio, t=1, p=1) coûtent quelques
+/// millisecondes : passer par un thread séparé + catch_unwind n'apportait rien
+/// et ajoutait trois façons d'échouer silencieusement sur Android (commande
+/// asynchrone, runtime Tokio, `panic = abort` en release, timeout IPC court).
+/// La création d'utilisateur et le changement de mot de passe étaient les DEUX
+/// seules commandes à emprunter ce chemin.
+fn hash_or_error(password: &str) -> ApiResult<String> {
+    crate::auth::hash_password(password)
+        .map_err(|e| ApiError::bad_request(format!("Mot de passe refusé : {}", e.message)))
+}
+
+/// VÉRIFICATION APRÈS ÉCRITURE : on relit la ligne en base et on teste le
+/// nouveau mot de passe contre le hash réellement stocké. Si ça ne colle pas, on
+/// le dit franchement au lieu d'afficher « enregistré » à tort.
+fn verifier_mot_de_passe_enregistre(
+    state: &State<'_, AppState>, id: i64, password: &str,
+) -> ApiResult<()> {
+    let row = db(state)
+        .get_opt("users", id)?
+        .ok_or_else(|| ApiError::internal("Compte introuvable après enregistrement"))?;
+    let stored = row.get("password_hash").and_then(Value::as_str).unwrap_or_default();
+    if stored.trim().is_empty() || !crate::auth::compare_password(password, stored) {
+        return Err(ApiError::internal(
+            "Le mot de passe n'a pas pu être enregistré en base (relecture échouée)",
+        ));
+    }
+    Ok(())
+}
+
 /// POST /api/users - Création locale immédiate + synchronisation différée
 #[tauri::command]
-pub async fn users_create(
+pub fn users_create(
     state: State<'_, AppState>, token: Option<String>, email: String,
     password: String, role: String, nom: String,
 ) -> ApiResult<Value> {
@@ -85,18 +116,7 @@ pub async fn users_create(
         return Err(ApiError::new(409, "Cet email est déjà utilisé par un compte local actif"));
     }
 
-    let hash_start = std::time::Instant::now();
-    let pwd_clone = password.clone();
-    let hash = tokio::task::spawn_blocking(move || {
-        let argon2_start = std::time::Instant::now();
-        let result = std::panic::catch_unwind(|| crate::auth::hash_password(&pwd_clone))
-            .map_err(|_| ApiError::internal("Erreur interne lors du hachage du mot de passe"));
-        eprintln!("[users_create][PERF] Argon2/hash_password = {:?}", argon2_start.elapsed());
-        result
-    }).await
-      .map_err(|e| ApiError::internal(format!("spawn_blocking: {}", e)))??
-      .map_err(|e| ApiError::bad_request(e.to_string()))?;
-    eprintln!("[users_create][PERF] attente spawn_blocking + hash = {:?}", hash_start.elapsed());
+    let hash = hash_or_error(&password)?;
 
     let mut row = crate::commands::jmap();
     row.insert("email".into(), json!(email));
@@ -105,7 +125,6 @@ pub async fn users_create(
     row.insert("nom".into(), json!(nom));
     row.insert("created_at".into(), json!(crate::db::now_iso()));
     row.insert("deleted".into(), json!(0));
-    let db_start = std::time::Instant::now();
     let (id, reactivated) = if let Some(existing_id) = existing_id {
         row.remove("created_at");
         let updated = db(&state).update("users", existing_id, &row)?;
@@ -120,15 +139,17 @@ pub async fn users_create(
         })?;
         (created.get("id").and_then(Value::as_i64).unwrap_or(0), false)
     };
-    eprintln!("[users_create][PERF] SQLite + outbox = {:?}", db_start.elapsed());
+    // Le compte doit pouvoir se connecter TOUT DE SUITE : on relit le hash
+    // depuis SQLite et on le teste avant de répondre « créé ».
+    verifier_mot_de_passe_enregistre(&state, id, &password)?;
 
     Ok(json!({"id": id, "email": email, "role": role, "nom": nom,
-        "reactivated": reactivated, "syncPending": true}))
+        "reactivated": reactivated, "password_verifie": true, "syncPending": true}))
 }
 
 /// PUT /api/users/:id - Mise à jour locale immédiate + synchronisation différée
 #[tauri::command]
-pub async fn users_update(
+pub fn users_update(
     state: State<'_, AppState>, token: Option<String>, id: i64,
     email: Option<String>, role: Option<String>, nom: Option<String>, password: Option<String>,
 ) -> ApiResult<Value> {
@@ -156,26 +177,37 @@ pub async fn users_update(
     }
     if let Some(ref n)=nom { let n=n.trim(); if !validators::is_valid_nom(n){return Err(ApiError::bad_request("Nom invalide"));} updates.insert("nom".into(),json!(n)); }
     if let Some(ref r)=role { let r=r.trim(); if !validators::is_valid_role(r){return Err(ApiError::bad_request("Rôle invalide (admin ou employe)"));} updates.insert("role".into(),json!(r)); }
-    if let Some(ref pwd)=password {
-        let pwd=pwd.trim();
+    // Mot de passe : champ OPTIONNEL. Vide = on n'y touche pas.
+    let mut nouveau_mdp: Option<String> = None;
+    if let Some(ref pwd) = password {
+        let pwd = pwd.trim();
         if !pwd.is_empty() {
-            if !validators::is_valid_password(pwd){return Err(ApiError::bad_request("Mot de passe invalide (min 6 caractères, au moins une lettre)"));}
-            let pwd_clone=pwd.to_string(); let hash_start=std::time::Instant::now();
-            let hash=tokio::task::spawn_blocking(move || {
-                let argon2_start=std::time::Instant::now();
-                let result=std::panic::catch_unwind(|| crate::auth::hash_password(&pwd_clone))
-                    .map_err(|_| ApiError::internal("Erreur interne lors du hachage du mot de passe"));
-                eprintln!("[users_update][PERF] Argon2/hash_password = {:?}",argon2_start.elapsed()); result
-            }).await.map_err(|e|ApiError::internal(format!("spawn_blocking: {}",e)))??
-              .map_err(|e|ApiError::bad_request(e.to_string()))?;
-            eprintln!("[users_update][PERF] attente spawn_blocking + hash = {:?}",hash_start.elapsed());
-            updates.insert("password_hash".into(),json!(hash));
+            if !validators::is_valid_password(pwd) {
+                return Err(ApiError::bad_request(
+                    "Mot de passe invalide (min 6 caractères, au moins une lettre)",
+                ));
+            }
+            updates.insert("password_hash".into(), json!(hash_or_error(pwd)?));
+            nouveau_mdp = Some(pwd.to_string());
         }
     }
-    if updates.is_empty(){return Err(ApiError::bad_request("Aucun champ à modifier"));}
-    let db_start=std::time::Instant::now(); let updated=db(&state).update("users",id,&updates)?;
-    eprintln!("[users_update][PERF] SQLite + outbox = {:?}",db_start.elapsed());
-    Ok(json!({"id":id,"email":updated.get("email"),"role":updated.get("role"),"nom":updated.get("nom"),"syncPending":true}))
+    if updates.is_empty() {
+        return Err(ApiError::bad_request("Aucun champ à modifier"));
+    }
+    let updated = db(&state).update("users", id, &updates)?;
+    // Relecture de contrôle : si le hash n'est pas en base, l'écran doit
+    // afficher une ERREUR, pas « mot de passe modifié ».
+    if let Some(ref pwd) = nouveau_mdp {
+        verifier_mot_de_passe_enregistre(&state, id, pwd)?;
+    }
+    Ok(json!({
+        "id": id,
+        "email": updated.get("email"),
+        "role": updated.get("role"),
+        "nom": updated.get("nom"),
+        "password_change": nouveau_mdp.is_some(),
+        "syncPending": true
+    }))
 }
 
 /// DELETE /api/users/:id - Archivage local immédiat + sync différée

@@ -29,10 +29,12 @@
       <div v-for="j in jeux" :key="j.id" 
         class="card-hover relative min-h-44 text-center group w-full max-w-full min-w-0 overflow-hidden flex flex-col justify-end transition-all"
         :class="j.deleted ? 'opacity-65 border-dashed border-neon-red/40 bg-bg-surface/40' : ''">
-        <img v-if="(j.image_url || j.jaquette_url) && !imgErr[j.id]" :src="j.image_url || j.jaquette_url" :alt="j.titre" class="absolute inset-0 w-full h-full object-cover" @error="imgErr[j.id] = true" />
+        <img v-if="jaquetteSrc(j) && !imgErr[j.id]" :src="jaquetteSrc(j)" :alt="j.titre"
+          referrerpolicy="no-referrer" loading="lazy" decoding="async"
+          class="absolute inset-0 w-full h-full object-cover" @error="imgErr[j.id] = true" />
         <div class="absolute inset-0 bg-gradient-to-t from-bg via-bg/60 to-transparent"></div>
         <div class="relative z-10 p-2">
-          <div v-if="(!j.image_url && !j.jaquette_url) || imgErr[j.id]" class="w-12 h-12 mx-auto rounded-xl bg-bg-surface/90 flex items-center justify-center mb-3">
+          <div v-if="!jaquetteSrc(j) || imgErr[j.id]" class="w-12 h-12 mx-auto rounded-xl bg-bg-surface/90 flex items-center justify-center mb-3">
             <Gamepad2 class="w-7 h-7" :class="j.deleted ? 'text-neon-red/70' : 'text-txt-dim'" />
           </div>
           <p class="font-medium text-sm truncate w-full max-w-full" :class="{ 'line-through text-txt-dim': j.deleted }">{{ j.titre }}</p>
@@ -78,6 +80,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { normalizeImageUrl } from '@/utils/helpers'
 import { api } from '@/utils/api'
 import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
@@ -93,6 +96,11 @@ const showArchived = ref(false)
 const editingJeu = ref<any>(null)
 const form = reactive({ titre: '', genre: '', console_id: null, jaquette_url: '' })
 const imgErr = reactive<Record<number, boolean>>({})
+
+// Lien de jaquette utilisable (corrige les liens sans « https:// »).
+function jaquetteSrc(j: any) {
+  return normalizeImageUrl(j?.image_url || j?.jaquette_url)
+}
 
 function consoleName(id: number | null) {
   if (!id) return 'Toutes consoles'
@@ -138,7 +146,11 @@ async function saveJeu() {
   if (form.genre && !isValidGenre(form.genre)) return toast.error('Genre invalide (2-50 caractères)')
   form.titre = sanitizeInput(form.titre, 100)
   if (form.genre) form.genre = sanitizeInput(form.genre, 50)
-  if (form.jaquette_url) form.jaquette_url = sanitizeInput(form.jaquette_url, 500)
+  if (form.jaquette_url) {
+    const propre = normalizeImageUrl(sanitizeInput(form.jaquette_url, 500))
+    if (!propre) return toast.error("Lien de jaquette invalide : donnez une adresse web (https://…)")
+    form.jaquette_url = propre
+  }
 
   try {
     if (editingJeu.value) {

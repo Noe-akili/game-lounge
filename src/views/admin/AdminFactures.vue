@@ -270,7 +270,7 @@ import { getFacturePdfBlob, saveFacturePdf } from '@/lib/clientPdf'
 import { formatCurrency, formatDate } from '@/utils/helpers'
 import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
-import { Receipt, Eye, Download, Printer, XCircle, Plus, Pencil, Trash2, X, RotateCcw } from 'lucide-vue-next'
+import { Receipt, Eye, Download, Printer, XCircle, Plus, Pencil, Trash2, X, RotateCcw, Coins } from 'lucide-vue-next'
 import Loader from '@/components/ui/Loader.vue'
 import { isValidId, isValidPrix, isValidFactureStatut, isValidModePaiement, isValidQuantite, sanitizeInput } from '@/utils/validators'
 

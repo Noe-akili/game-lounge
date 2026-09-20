@@ -235,19 +235,37 @@ pub fn sessions_create(
         return Err(ApiError::bad_request("Cette console a déjà une session en cours"));
     }
 
-    let mut tarif_prix: i64 = 2000;
-    let mut duree_minutes: i64 = 60;
-    let mut tarif_id_val: Option<i64> = None;
-    if let Some(tid) = tarif_id {
-        if let Some(tarif) = db.find_one("tarifs", |t| row_id(t) == Some(tid))? {
-            tarif_prix = tarif.get("prix").and_then(Value::as_i64).unwrap_or(2000);
-            duree_minutes = tarif
-                .get("duree_minutes")
-                .and_then(Value::as_i64)
-                .unwrap_or(60);
-            tarif_id_val = Some(tid);
-        }
+    // LA DURÉE DE LA SESSION VIENT TOUJOURS DU TARIF CHOISI.
+    // Avant, un tarif absent ou introuvable retombait silencieusement sur
+    // 60 min / 2000 FC : le client qui payait un tarif de 5 min obtenait une
+    // session d'une heure et le compte à rebours n'avait aucun rapport avec ce
+    // qui avait été payé. On refuse donc explicitement.
+    let Some(tid) = tarif_id else {
+        return Err(ApiError::bad_request(
+            "Choisissez un tarif : c'est lui qui fixe la durée de la session",
+        ));
+    };
+    let Some(tarif) = db.find_one("tarifs", |t| row_id(t) == Some(tid))? else {
+        return Err(ApiError::bad_request(
+            "Tarif introuvable ou archivé : choisissez un tarif actif",
+        ));
+    };
+    let tarif_prix = tarif.get("prix").and_then(Value::as_i64).unwrap_or(0);
+    let duree_minutes = tarif
+        .get("duree_minutes")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    if duree_minutes <= 0 {
+        return Err(ApiError::bad_request(
+            "Ce tarif n'a pas de durée valide : corrigez sa durée (en minutes) dans Tarifs",
+        ));
     }
+    if tarif_prix <= 0 {
+        return Err(ApiError::bad_request(
+            "Ce tarif n'a pas de prix valide : corrigez son prix dans Tarifs",
+        ));
+    }
+    let tarif_id_val: Option<i64> = Some(tid);
 
     let mut row = jmap();
     row.insert("console_id".into(), json!(console_id));

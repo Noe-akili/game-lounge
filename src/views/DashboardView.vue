@@ -33,8 +33,11 @@
         role="button"
         @click="filtre = filtre === stat.key ? 'toutes' : stat.key"
       >
-        <div class="flex items-center gap-2" :class="stat.color"><component :is="stat.icon" class="w-5 h-5" /></div>
-        <span class="stat-value" :class="stat.color">{{ stat.value }}</span>
+        <!-- Couleur retirée des compteurs : seule la carte du filtre ACTIF est
+             mise en avant. Quatre couleurs néon côte à côte ne hiérarchisaient
+             plus rien. -->
+        <div class="flex items-center gap-2 text-txt-dim"><component :is="stat.icon" class="w-5 h-5" /></div>
+        <span class="stat-value" :class="filtre === stat.key ? 'text-neon-violet' : 'text-txt'">{{ stat.value }}</span>
         <span class="stat-label">{{ stat.label }}</span>
       </motion.div>
     </div>
@@ -74,7 +77,7 @@
             <p class="text-xs text-txt-dim truncate flex-1 min-w-0">{{ c.joueur_nom || 'Joueur' }} — {{ c.jeu_nom || 'Jeu' }}</p>
             <button
               @click="openEndModal(c)"
-              class="btn-neon-red px-3 py-1.5 text-xs shrink-0 flex items-center gap-1"
+              class="px-3 py-1.5 text-xs shrink-0 flex items-center gap-1 rounded-lg border border-neon-red/40 text-neon-red hover:bg-neon-red/10 transition-colors"
             >
               <Square class="w-4 h-4" />
               <span>Terminer</span>
@@ -88,15 +91,15 @@
     <div class="grid grid-cols-3 gap-2 sm:gap-3 w-full max-w-full">
       <div class="card py-3 px-2 min-w-0">
         <p class="text-[10px] leading-tight text-txt-muted uppercase tracking-wider">Sessions</p>
-        <p class="font-gaming text-lg font-bold text-neon-blue leading-tight">{{ sessionsDuJour.length }}</p>
+        <p class="font-gaming text-lg font-bold text-txt leading-tight">{{ sessionsDuJour.length }}</p>
       </div>
       <div class="card py-3 px-2 min-w-0">
         <p class="text-[10px] leading-tight text-txt-muted uppercase tracking-wider">Encaissé</p>
-        <p class="font-gaming text-lg font-bold text-neon-green leading-tight break-words">{{ formatCurrency(encaisseDuJour) }}</p>
+        <p class="font-gaming text-lg font-bold text-txt leading-tight break-words">{{ formatCurrency(encaisseDuJour) }}</p>
       </div>
       <div class="card py-3 px-2 min-w-0">
         <p class="text-[10px] leading-tight text-txt-muted uppercase tracking-wider">Temps joué</p>
-        <p class="font-gaming text-lg font-bold text-neon-violet leading-tight break-words">{{ tempsJoueAffiche }}</p>
+        <p class="font-gaming text-lg font-bold text-txt leading-tight break-words">{{ tempsJoueAffiche }}</p>
       </div>
     </div>
 
@@ -222,10 +225,10 @@ const estEnPause = (c) => aUneSession(c) && c.session_statut === 'pause'
 const estLibre = (c) => !aUneSession(c) && c.etat !== 'maintenance' && c.etat !== 'hors_service'
 
 const stats = computed(() => [
-  { key: 'toutes', label: 'Consoles', value: consoles.value.length, color: 'text-neon-blue', icon: Monitor },
-  { key: 'occupees', label: 'Occupées', value: consoles.value.filter(estOccupee).length, color: 'text-neon-red', icon: Monitor },
-  { key: 'pause', label: 'En pause', value: consoles.value.filter(estEnPause).length, color: 'text-neon-yellow', icon: Pause },
-  { key: 'libres', label: 'Libres', value: consoles.value.filter(estLibre).length, color: 'text-neon-green', icon: Monitor },
+  { key: 'toutes', label: 'Consoles', value: consoles.value.length, icon: Monitor },
+  { key: 'occupees', label: 'Occupées', value: consoles.value.filter(estOccupee).length, icon: Monitor },
+  { key: 'pause', label: 'En pause', value: consoles.value.filter(estEnPause).length, icon: Pause },
+  { key: 'libres', label: 'Libres', value: consoles.value.filter(estLibre).length, icon: Monitor },
 ])
 
 // ===== Alertes de fin de session (moins de 5 min, ou temps dépassé) =====
