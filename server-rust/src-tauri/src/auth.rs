@@ -21,7 +21,7 @@ pub fn hash_password(password: &str) -> ApiResult<String> {
         return Err(ApiError::bad_request("Mot de passe invalide"));
     }
     let salt = SaltString::generate(&mut OsRng);
-    let params = match argon2::Params::new(8192, 1, 1, None) {
+    let params = match argon2::Params::new(2048, 1, 1, None) {
         Ok(p) => p,
         Err(_) => argon2::Params::default(),
     };
