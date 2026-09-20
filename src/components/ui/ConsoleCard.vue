@@ -109,6 +109,7 @@ import { formatCurrency, formatDuration } from '@/utils/helpers'
 import LiveSessionTimer from './LiveSessionTimer.vue'
 
 const props = defineProps({
+  readonly: { type: Boolean, default: false },
   console: { type: Object, required: true },
 })
 
