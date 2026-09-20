@@ -151,7 +151,7 @@ const modesPaiement = [
   { value: 'jetons', label: 'Jetons', icon: Coins },
 ]
 
-  const sessionId = computed(() => props.console?.session_id || props.console?.id || null)
+  const sessionId = computed(() => props.console?.session_id || null)
   const timerDisplay = computed(() => formatDuration(elapsed.value))
 
   // Aperçu de facturation = MÊME règle que le backend (compute_montant) :
