@@ -199,10 +199,15 @@ pub async fn users_create(
         return Err(ApiError::bad_request("Rôle invalide (admin ou employe)"));
     }
 
-    // Hachage ultra-rapide Argon2id calibré mobile (<30ms) avec capture de panique
-    let hash = std::panic::catch_unwind(|| crate::auth::hash_password(&password))
-        .map_err(|_| ApiError::internal("Erreur interne lors du hachage du mot de passe"))?
-        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    // Hachage ultra-rapide sur thread dédié pour ne jamais bloquer l'exécuteur Tokio
+    let pwd_clone = password.clone();
+    let hash = tokio::task::spawn_blocking(move || {
+        std::panic::catch_unwind(|| crate::auth::hash_password(&pwd_clone))
+            .map_err(|_| ApiError::internal("Erreur interne lors du hachage du mot de passe"))
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("spawn_blocking: {}", e)))??
+    .map_err(|e| ApiError::bad_request(e.to_string()))?;
 
     let now_str = crate::db::now_iso();
 
@@ -303,10 +308,15 @@ pub async fn users_update(
             if !validators::is_valid_password(pwd) {
                 return Err(ApiError::bad_request("Mot de passe invalide (min 6 caractères, au moins une lettre)"));
             }
-            // Hachage ultra-rapide Argon2id calibré mobile (<30ms) avec capture de panique
-            let hash = std::panic::catch_unwind(|| crate::auth::hash_password(pwd))
-                .map_err(|_| ApiError::internal("Erreur interne lors du hachage du mot de passe"))?
-                .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            // Hachage ultra-rapide sur thread dédié pour ne jamais bloquer l'exécuteur Tokio
+            let pwd_clone = pwd.to_string();
+            let hash = tokio::task::spawn_blocking(move || {
+                std::panic::catch_unwind(|| crate::auth::hash_password(&pwd_clone))
+                    .map_err(|_| ApiError::internal("Erreur interne lors du hachage du mot de passe"))
+            })
+            .await
+            .map_err(|e| ApiError::internal(format!("spawn_blocking: {}", e)))??
+            .map_err(|e| ApiError::bad_request(e.to_string()))?;
             sets.push(format!("password_hash = '{}'", escape_sql(&hash)));
         }
     }
