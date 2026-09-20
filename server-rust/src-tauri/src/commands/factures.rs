@@ -327,11 +327,51 @@ pub fn factures_update(
         }
         updates.insert("statut".into(), json!(s));
     }
-    if let Some(m) = mode_paiement {
-        if !validators::is_valid_mode_paiement(&m) {
+    let facture = get_by_id(db(&state), "factures", id, "Facture non trouvée")?;
+    let old_mode = facture.get("mode_paiement").and_then(Value::as_str).unwrap_or("especes");
+
+    if let Some(ref m) = mode_paiement {
+        if !validators::is_valid_mode_paiement(m) {
             return Err(ApiError::bad_request("Mode paiement invalide"));
         }
         updates.insert("mode_paiement".into(), json!(m));
+
+        // Déduction de jetons si le paiement bascule sur 'jetons'
+        if m == "jetons" && old_mode != "jetons" {
+            let joueur_id = facture.get("joueur_id").and_then(Value::as_i64).unwrap_or(0);
+            let montant_final = montant_ttc.unwrap_or_else(|| facture.get("montant_ttc").and_then(Value::as_f64).unwrap_or(0.0)) as i64;
+            let valeur_jeton = db(&state)
+                .find_one("fidelite_regles", |_| true)
+                .ok()
+                .flatten()
+                .and_then(|r| r.get("valeur_jeton").and_then(Value::as_i64))
+                .unwrap_or(100);
+            let jetons_requis = if montant_final <= 0 || valeur_jeton <= 0 { 1 } else { ((montant_final as f64 / valeur_jeton as f64).ceil() as i64).max(1) };
+            
+            if joueur_id > 0 {
+                let joueur = db(&state).find_one("joueurs", |j| crate::db::row_id(j) == Some(joueur_id))?
+                    .ok_or_else(|| ApiError::not_found("Joueur introuvable pour déduire les jetons"))?;
+                let solde = joueur.get("jetons_solde").and_then(Value::as_i64).unwrap_or(0);
+                if solde < jetons_requis {
+                    return Err(ApiError::bad_request(&format!(
+                        "Solde insuffisant : {} jeton(s) requis pour {} FC (solde actuel : {} jeton(s))",
+                        jetons_requis, montant_final, solde
+                    )));
+                }
+                let mut upd_j = jmap();
+                upd_j.insert("jetons_solde".into(), json!(solde - jetons_requis));
+                db(&state).update("joueurs", joueur_id, &upd_j)?;
+
+                let mut jtx = jmap();
+                jtx.insert("joueur_id".into(), json!(joueur_id));
+                jtx.insert("type".into(), json!("utilisation"));
+                jtx.insert("quantite".into(), json!(jetons_requis));
+                let num_fac = facture.get("numero_facture").and_then(Value::as_str).unwrap_or("FAC");
+                jtx.insert("description".into(), json!(format!("Paiement facture {}", num_fac)));
+                jtx.insert("created_at".into(), json!(crate::db::now_iso()));
+                db(&state).insert("jetons_transactions", &jtx)?;
+            }
+        }
     }
     if let Some(m) = montant_ttc {
         if !validators::is_valid_prix(m) {
