@@ -560,9 +560,10 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
     //    Ce sont deux allers-retours réseau d'entretien, sans effet sur les données
     //    affichées : les exécuter à chaque écriture locale ralentissait chaque
     //    synchronisation sans rien apporter.
+    // `cur` est lu DANS TOUS LES CAS : il est renvoyé dans le statut final plus bas.
+    let cur = db(state).sync_cursor_get().unwrap_or(0);
     if entretien_du_cycle() {
         let device = db(state).device_id().unwrap_or_default();
-        let cur = db(state).sync_cursor_get().unwrap_or(0);
         let _ = crate::supabase::peer_register(&pool, &device, cur, uploaded as i64).await;
         db(state).outbox_cleanup().ok();
         let _ = crate::supabase::sync_changes_cleanup(&pool).await;

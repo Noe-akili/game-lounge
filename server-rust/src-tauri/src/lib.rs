@@ -10,8 +10,6 @@ pub mod session_watcher;
 pub mod validators;
 
 use std::sync::Mutex;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use rand::RngCore;
 use tauri::Manager;
 
 use db::Db;
