@@ -63,7 +63,10 @@ fn seed_impl(db: &crate::db::Db) {
         }
         return;
     }
-    match auth_core::hash_password(DEFAULT_ADMIN_PASSWORD) {
+    // Hachage RÉSILIENT (thread dédié + repli scrypt/bcrypt) : ce code tourne au
+    // démarrage sur le thread principal, une panique ici fermerait l'application
+    // avant même l'écran de connexion.
+    match auth_core::hash_password_resilient(DEFAULT_ADMIN_PASSWORD).map(|(h, _algo)| h) {
         Ok(hash) => {
             let mut u = jmap();
             u.insert("email".into(), json!(DEFAULT_ADMIN_EMAIL));

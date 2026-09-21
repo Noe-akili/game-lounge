@@ -397,8 +397,11 @@ fn auto_sync_loop(handle: tauri::AppHandle, mut wake_rx: tokio::sync::mpsc::Unbo
             tokio::select! {
                 _ = wake_rx.recv() => {
                     // Réveil instantané : une donnée locale vient d'être écrite.
-                    // Débounce léger : les rafales (import, facture + lignes) créent
-                    // plusieurs événements ; la 1re sync vide la file entière.
+                    // Débounce RÉEL de 1,5 s : une action de l'employé (démarrer une
+                    // session = plusieurs écritures) déclenchait autant de cycles de
+                    // synchronisation complets qu'il y avait d'écritures. On laisse
+                    // la rafale se terminer, puis UN seul cycle part avec tout.
+                    tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
                     while wake_rx.try_recv().is_ok() {}
                 }
                 _ = periodic.tick() => {

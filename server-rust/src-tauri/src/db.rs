@@ -945,6 +945,8 @@ impl Db {
     /// Applique un changement VENU DU CLOUD (pull delta) SANS journaliser dans
     /// l'outbox (sinon boucle infinie) ni marquer la table dirty.
     /// Retourne : "applied" | "skipped" (identique) | "tombstone" | "conflict" | "ignored".
+    /// Applique UN changement distant. Enveloppe publique : verrouille la base
+    /// puis délègue à la version qui travaille sur une connexion déjà ouverte.
     pub fn apply_remote_change(
         &self,
         entity: &str,
@@ -952,13 +954,131 @@ impl Db {
         payload: &Map<String, Value>,
         remote_change_id: &str,
         remote_created_at: &str,
-    ) -> ApiResult<&str> {
+    ) -> ApiResult<&'static str> {
         let conn = match self.0.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
+        self.apply_remote_change_conn(
+            &conn,
+            entity,
+            record_id,
+            payload,
+            remote_change_id,
+            remote_created_at,
+        )
+    }
+
+    /// Applique un LOT de lignes reçues du cloud dans UNE SEULE transaction.
+    ///
+    /// C'était la vraie cause de la lenteur de la synchronisation : chaque ligne
+    /// était écrite dans sa propre transaction (donc une écriture disque validée
+    /// par ligne) et reverrouillait la base. Sur un lot de 500 lignes, cela fait
+    /// 500 verrouillages et 500 validations disque. Ici : un verrou, une
+    /// transaction, une validation — typiquement dix à cinquante fois plus rapide
+    /// sur un téléphone, et l'interface n'est plus bloquée entre chaque ligne.
+    ///
+    /// Une ligne fautive n'annule pas le lot : elle est journalisée et ignorée.
+    pub fn apply_remote_rows(&self, entity: &str, rows: &[Value]) -> usize {
+        if rows.is_empty() {
+            return 0;
+        }
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let transaction_ouverte = conn.execute_batch("BEGIN IMMEDIATE").is_ok();
+        let mut appliquees = 0usize;
+        for row in rows {
+            let Some(obj) = row.as_object() else { continue };
+            let id = obj.get("id").and_then(Value::as_i64).unwrap_or(0);
+            if id == 0 {
+                continue;
+            }
+            match self.apply_remote_change_conn(&conn, entity, id, obj, "", "") {
+                Ok(statut) => {
+                    if statut == "applied" || statut == "tombstone" {
+                        appliquees += 1;
+                    }
+                }
+                Err(e) => {
+                    crate::logger::log_sync(&format!(
+                        "pull {entity} #{id} ignorée : {}",
+                        e.message
+                    ));
+                }
+            }
+        }
+        if transaction_ouverte && conn.execute_batch("COMMIT").is_err() {
+            let _ = conn.execute_batch("ROLLBACK");
+            crate::logger::log_sync(&format!(
+                "pull {entity} : validation du lot impossible, lot annulé"
+            ));
+            return 0;
+        }
+        appliquees
+    }
+
+    /// Applique un LOT de changements delta (avec leur change_id et leur date)
+    /// dans UNE SEULE transaction, et renvoie le statut de chacun dans l'ordre.
+    ///
+    /// Même raison que `apply_remote_rows` : la boucle delta appliquait jusqu'à
+    /// 500 changements un par un, chacun avec son verrou et sa validation disque.
+    /// Les notifications (cloche) sont faites par l'appelant APRÈS la validation,
+    /// pour ne jamais signaler un changement qui n'a pas été écrit.
+    pub fn apply_remote_changes(
+        &self,
+        lot: &[(&str, i64, &Map<String, Value>, &str, &str)],
+    ) -> Vec<&'static str> {
+        if lot.is_empty() {
+            return Vec::new();
+        }
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let transaction_ouverte = conn.execute_batch("BEGIN IMMEDIATE").is_ok();
+        let mut statuts: Vec<&'static str> = Vec::with_capacity(lot.len());
+        for (entity, record_id, payload, change_id, created_at) in lot {
+            match self.apply_remote_change_conn(
+                &conn,
+                entity,
+                *record_id,
+                payload,
+                change_id,
+                created_at,
+            ) {
+                Ok(statut) => statuts.push(statut),
+                Err(e) => {
+                    crate::logger::log_sync(&format!(
+                        "apply {entity} #{record_id} ignoré : {}",
+                        e.message
+                    ));
+                    statuts.push("error");
+                }
+            }
+        }
+        if transaction_ouverte && conn.execute_batch("COMMIT").is_err() {
+            let _ = conn.execute_batch("ROLLBACK");
+            crate::logger::log_sync("lot delta non validé (annulé), reprise au prochain cycle");
+            return vec!["error"; lot.len()];
+        }
+        statuts
+    }
+
+    /// Cœur de l'application d'un changement distant, sur une connexion déjà
+    /// verrouillée (donc utilisable à l'intérieur d'une transaction de lot).
+    fn apply_remote_change_conn(
+        &self,
+        conn: &Connection,
+        entity: &str,
+        record_id: i64,
+        payload: &Map<String, Value>,
+        remote_change_id: &str,
+        remote_created_at: &str,
+    ) -> ApiResult<&'static str> {
         // 1) CONFLIT : un changement local non envoyé existe pour cette entité ?
-        if self.outbox_pending_for_conn(&*conn, entity, record_id).unwrap_or(false) {
+        if self.outbox_pending_for_conn(conn, entity, record_id).unwrap_or(false) {
             // Règle par type de donnée (spec §9) : les données protégées gardent
             // TOUJOURS le local ; les autres comparent l'horodatage (plus récent gagne).
             let local_wins = is_protected(entity)
@@ -969,7 +1089,7 @@ impl Db {
                     .unwrap_or(false);
             let reason = if local_wins { "local_wins" } else { "remote_wins" };
             self.conflict_log_conn(
-                &*conn,
+                conn,
                 remote_change_id,
                 entity,
                 record_id,
@@ -992,13 +1112,13 @@ impl Db {
                 // effectué avant la première sync) : on la crée DIRECTEMENT
                 // archivée. Sinon l'archive resterait invisible sur cet appareil
                 // et ne pourrait jamais être restaurée.
-                let local_cols = self.columns_conn(&*conn, entity).unwrap_or_default();
+                let local_cols = self.columns_conn(conn, entity).unwrap_or_default();
                 let mut map = serde_json::Map::new();
                 for (k, v) in payload {
                     if *k == "id" || !local_cols.contains(k) {
                         continue;
                     }
-                    if entity == "users" && *k == "password_hash" && garder_hash_local(&*conn, record_id) {
+                    if entity == "users" && *k == "password_hash" && garder_hash_local(conn, record_id) {
                         continue;
                     }
                     map.insert(k.clone(), v.clone());
@@ -1027,7 +1147,7 @@ impl Db {
             return Ok("tombstone");
         }
         // 3) INSERT/UPDATE avec skip-si-identique (zéro fsync inutile)
-        let local_cols = self.columns_conn(&*conn, entity).unwrap_or_default();
+        let local_cols = self.columns_conn(conn, entity).unwrap_or_default();
         let mut map = serde_json::Map::new();
         let mut upd = serde_json::Map::new();
         for (k, v) in payload {
@@ -1037,7 +1157,7 @@ impl Db {
             // Hash : le local ne gagne que si un changement local n'est pas
             // encore parti (voir garder_hash_local). Sinon on applique celui du
             // cloud — sans quoi un compte répliqué reste sans mot de passe.
-            if entity == "users" && *k == "password_hash" && garder_hash_local(&*conn, record_id) {
+            if entity == "users" && *k == "password_hash" && garder_hash_local(conn, record_id) {
                 continue;
             }
             map.insert(k.clone(), v.clone());

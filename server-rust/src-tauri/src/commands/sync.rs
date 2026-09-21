@@ -172,25 +172,41 @@ pub async fn sync_run(app: tauri::AppHandle, state: State<'_, AppState>, token: 
 /// Compte uniquement les changements RÉELS (applied/tombstone) pour une
 /// progression vraie (mission §7).
 #[cfg(feature = "supabase-sync")]
+/// Écrit les lignes reçues du cloud EN UN SEUL LOT (une transaction, un verrou).
+///
+/// Avant : une transaction et un verrouillage de la base PAR LIGNE, ce qui rendait
+/// la synchronisation très lente sur téléphone et bloquait l'interface par
+/// à-coups. Le découpage en tranches laisse respirer les autres opérations
+/// Schéma cloud déjà vérifié pendant ce lancement (voir run_sync_impl §0).
+#[cfg(feature = "supabase-sync")]
+static SCHEMA_VERIFIE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Horodatage (ms) du dernier entretien cloud effectué.
+#[cfg(feature = "supabase-sync")]
+static DERNIER_ENTRETIEN: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// Vrai si le cycle courant doit faire l'entretien (au plus toutes les 5 min).
+#[cfg(feature = "supabase-sync")]
+fn entretien_du_cycle() -> bool {
+    const PERIODE_MS: i64 = 5 * 60 * 1000;
+    let maintenant = chrono::Utc::now().timestamp_millis();
+    let dernier = DERNIER_ENTRETIEN.load(std::sync::atomic::Ordering::Relaxed);
+    if maintenant - dernier < PERIODE_MS {
+        return false;
+    }
+    DERNIER_ENTRETIEN.store(maintenant, std::sync::atomic::Ordering::Relaxed);
+    true
+}
+
+/// (démarrage de session, login) entre deux tranches.
 fn apply_rows(db: &crate::db::Db, table: &str, rows: &[Value]) -> usize {
+    const TRANCHE: usize = 200;
     let mut applied = 0;
-    for row in rows {
-        let Some(obj) = row.as_object() else { continue };
-        let id = obj.get("id").and_then(Value::as_i64).unwrap_or(0);
-        if id == 0 {
-            continue;
-        }
-        match db.apply_remote_change(table, id, obj, "", "") {
-            Ok(status) => {
-                if status == "applied" || status == "tombstone" {
-                    applied += 1;
-                }
-            }
-            Err(e) => eprintln!("[sync] pull {} #{} failed: {}", table, id, e.message),
-        }
+    for morceau in rows.chunks(TRANCHE) {
+        applied += db.apply_remote_rows(table, morceau);
     }
     if applied > 0 {
-        eprintln!("[sync] pull {}: {} rows écrites", table, applied);
+        eprintln!("[sync] pull {}: {} lignes écrites", table, applied);
     }
     applied
 }
@@ -298,15 +314,26 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
         }));
     };
 
-    // 0) Migrations du schéma cloud (idempotentes). La colonne deleted + les index
-    //    uniques id ne partent qu'UNE FOIS (flag persistant).
-    match crate::supabase::ensure_cloud_schema(&pool).await {
-        Ok(_) => {}
-        Err(e) => eprintln!("[sync] migration schéma cloud failed: {}", e),
-    }
-    match crate::supabase::ensure_sync_schema(&pool).await {
-        Ok(_) => {}
-        Err(e) => eprintln!("[sync] migration delta sync failed: {}", e),
+    // 0) Migrations du schéma cloud (idempotentes) — UNE SEULE FOIS par lancement.
+    //    Avant, ces deux requêtes DDL partaient à CHAQUE cycle de synchronisation,
+    //    soit deux allers-retours réseau inutiles ajoutés à chaque écriture locale.
+    //    Sur une connexion mobile, c'est plusieurs secondes perdues par cycle.
+    if !SCHEMA_VERIFIE.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        match crate::supabase::ensure_cloud_schema(&pool).await {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("[sync] migration schéma cloud failed: {}", e);
+                // Échec : on réessaiera au prochain cycle.
+                SCHEMA_VERIFIE.store(false, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        match crate::supabase::ensure_sync_schema(&pool).await {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("[sync] migration delta sync failed: {}", e);
+                SCHEMA_VERIFIE.store(false, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
     }
     let migrated = db(state).get_setting("cloud_migration_v2").ok().and_then(|o| o).unwrap_or_default();
     if migrated != "1" {
@@ -475,6 +502,12 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
             }
             let mut last_seq = cursor;
             let batch_len = batch.len();
+            // Le lot est préparé puis écrit EN UNE TRANSACTION (voir
+            // Db::apply_remote_changes) : avant, chaque changement reverrouillait
+            // la base et validait sur le disque, d'où une synchronisation très
+            // lente et des à-coups dans l'interface.
+            let mut lot: Vec<(&str, i64, &serde_json::Map<String, Value>, &str, &str)> = Vec::new();
+            let mut metas: Vec<(&str, i64, &str, &str)> = Vec::new();
             for change in &batch {
                 let seq = change.get("sequence").and_then(Value::as_i64).unwrap_or(0);
                 let entity = change.get("entity").and_then(Value::as_str).unwrap_or_default();
@@ -483,32 +516,31 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
                 let origin_device = change.get("device_id").and_then(Value::as_str).unwrap_or_default();
                 let created_at = change.get("created_at").and_then(Value::as_str).unwrap_or_default();
                 let payload_opt = change.get("payload").and_then(Value::as_object);
+                last_seq = seq.max(last_seq);
                 if entity.is_empty() || record_id == 0 || payload_opt.is_none() {
-                    last_seq = seq;
                     continue;
                 }
-                let payload = payload_opt.unwrap();
-                match db(state).apply_remote_change(entity, record_id, payload, change_id, created_at) {
-                    Ok(status) => {
-                        if status == "applied" || status == "tombstone" {
-                            downloaded += 1;
-                            // Cloche : changement effectué par un AUTRE appareil.
-                            // Native thread -> l'écoute continue même quand aucun
-                            // écran n'est affiché / app en arrière-plan.
-                            db(state).notify_remote_change(
-                                entity,
-                                if status == "tombstone" { "DELETE" } else { "UPDATE" },
-                                record_id,
-                                change_id,
-                                origin_device,
-                            );
-                        } else if status == "conflict" {
-                            eprintln!("[sync] conflit {} #{}: local gagne", entity, record_id);
-                        }
+                lot.push((entity, record_id, payload_opt.unwrap(), change_id, created_at));
+                metas.push((entity, record_id, change_id, origin_device));
+            }
+            let statuts = db(state).apply_remote_changes(&lot);
+            // Notifications APRÈS écriture confirmée : la cloche ne sonne jamais
+            // pour un changement qui n'a pas été enregistré.
+            for (statut, (entity, record_id, change_id, origin_device)) in statuts.iter().zip(metas.iter()) {
+                match *statut {
+                    "applied" | "tombstone" => {
+                        downloaded += 1;
+                        db(state).notify_remote_change(
+                            entity,
+                            if *statut == "tombstone" { "DELETE" } else { "UPDATE" },
+                            *record_id,
+                            change_id,
+                            origin_device,
+                        );
                     }
-                    Err(e) => eprintln!("[sync] apply {} #{} failed: {}", entity, record_id, e.message),
+                    "conflict" => eprintln!("[sync] conflit {} #{}: local gagne", entity, record_id),
+                    _ => {}
                 }
-                last_seq = seq;
             }
             db(state).sync_cursor_set(last_seq).ok();
             cursor = last_seq;
@@ -524,12 +556,17 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
         }
     }
 
-    // 4) Registre appareil (pour le nettoyage du journal §12) + nettoyages.
-    let device = db(state).device_id().unwrap_or_default();
-    let cur = db(state).sync_cursor_get().unwrap_or(0);
-    let _ = crate::supabase::peer_register(&pool, &device, cur, uploaded as i64).await;
-    db(state).outbox_cleanup().ok();
-    let _ = crate::supabase::sync_changes_cleanup(&pool).await;
+    // 4) Registre appareil + nettoyages : AU PLUS une fois toutes les 5 minutes.
+    //    Ce sont deux allers-retours réseau d'entretien, sans effet sur les données
+    //    affichées : les exécuter à chaque écriture locale ralentissait chaque
+    //    synchronisation sans rien apporter.
+    if entretien_du_cycle() {
+        let device = db(state).device_id().unwrap_or_default();
+        let cur = db(state).sync_cursor_get().unwrap_or(0);
+        let _ = crate::supabase::peer_register(&pool, &device, cur, uploaded as i64).await;
+        db(state).outbox_cleanup().ok();
+        let _ = crate::supabase::sync_changes_cleanup(&pool).await;
+    }
 
     // 5) Statut final.
     let pending = db(state).outbox_pending_count().unwrap_or(0);

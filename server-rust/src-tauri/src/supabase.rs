@@ -708,6 +708,32 @@ fn build_change_script(
 /// les OK partent en ACKED, les erreurs applicatives en FAILED.
 /// Retourne (change_ids ACKed, change_ids en erreur).
 #[cfg(feature = "supabase-sync")]
+static CLOUD_COLS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(feature = "supabase-sync")]
+/// Colonnes d'une table cloud, avec cache mémoire (un seul aller-retour réseau
+/// par table et par lancement de l'application).
+pub async fn table_columns_cached(pool: &SupabasePool, table: &str) -> Vec<String> {
+    let cache = CLOUD_COLS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    if let Ok(guard) = cache.lock() {
+        if let Some(cols) = guard.get(table) {
+            if !cols.is_empty() {
+                return cols.clone();
+            }
+        }
+    }
+    let cols = supabase_table_columns(pool, table).await.unwrap_or_default();
+    if !cols.is_empty() {
+        if let Ok(mut guard) = cache.lock() {
+            guard.insert(table.to_string(), cols.clone());
+        }
+    }
+    cols
+}
+
+#[cfg(feature = "supabase-sync")]
 pub async fn push_outbox_batch(
     pool: &SupabasePool,
     changes: &Vec<Value>,
@@ -725,7 +751,12 @@ pub async fn push_outbox_batch(
     }
     let mut cols_cache: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
     for t in tables {
-        let cols = supabase_table_columns(pool, &t).await.unwrap_or_default();
+        // Colonnes mises en cache POUR TOUTE LA DURÉE DU PROCESSUS : la structure
+        // des tables cloud ne change pas en cours de route, et cette requête
+        // partait à chaque lot envoyé (un aller-retour réseau par table et par
+        // lot). Sur une connexion mobile, c'était une part importante du temps
+        // de synchronisation.
+        let cols = table_columns_cached(pool, &t).await;
         cols_cache.insert(t, cols);
     }
     let mut scripts: Vec<String> = Vec::new();

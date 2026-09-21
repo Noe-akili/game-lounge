@@ -207,10 +207,14 @@ async function saveUser() {
       // Le serveur relit le hash en base avant de répondre : password_change
       // à true = le nouveau mot de passe est réellement utilisable.
       const res: any = await api.put(`/users/${editingId.value}`, payload)
-      toast.success(res?.password_change ? 'Utilisateur et mot de passe mis à jour' : 'Utilisateur mis à jour')
+      // « algo » indique la méthode de sécurisation retenue par l'appareil : utile
+      // si l'appareil a dû basculer sur une méthode de secours.
+      const methode = res?.algo && res.algo !== 'argon2id' ? ` (méthode ${res.algo})` : ''
+      toast.success(res?.password_change ? `Utilisateur et mot de passe mis à jour${methode}` : 'Utilisateur mis à jour')
     } else {
-      await api.post('/users', form)
-      toast.success('Utilisateur créé — il peut se connecter immédiatement')
+      const res: any = await api.post('/users', form)
+      const methode = res?.algo && res.algo !== 'argon2id' ? ` (méthode ${res.algo})` : ''
+      toast.success(`Utilisateur créé — il peut se connecter immédiatement${methode}`)
     }
     closeForm()
     Object.assign(form, { nom: '', email: '', password: '', role: 'employe' })

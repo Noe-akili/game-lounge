@@ -15,13 +15,20 @@ const SCRYPT_LOG_N: u8 = 14;
 const SCRYPT_R: u32 = 8;
 const SCRYPT_P: u32 = 1;
 
+/// Mémoire Argon2id en Kio. 1 Mio au lieu de 2 : sur un Android d'entrée de
+/// gamme, chaque Mio réservé d'un coup est un risque d'échec d'allocation, et
+/// une allocation qui échoue en Rust = arrêt IMMÉDIAT du processus (l'app se
+/// ferme). Le coût en temps est compensé par t_cost = 2.
+const ARGON2_M_COST_KIB: u32 = 1024;
+const ARGON2_T_COST: u32 = 2;
+
 // Hash Argon2id (calibré mobile pour exécution synchrone immédiate <30ms)
 pub fn hash_password(password: &str) -> ApiResult<String> {
     if password.len() < 6 || password.len() > 128 {
         return Err(ApiError::bad_request("Mot de passe invalide"));
     }
     let salt = SaltString::generate(&mut OsRng);
-    let params = match argon2::Params::new(2048, 1, 1, None) {
+    let params = match argon2::Params::new(ARGON2_M_COST_KIB, ARGON2_T_COST, 1, None) {
         Ok(p) => p,
         Err(_) => argon2::Params::default(),
     };
@@ -30,6 +37,107 @@ pub fn hash_password(password: &str) -> ApiResult<String> {
         .hash_password(password.as_bytes(), &salt)
         .map_err(|e| ApiError::internal(format!("Argon2: {}", e)))?
         .to_string())
+}
+
+/// Texte lisible d'une panique (pour le journal).
+fn panic_texte(p: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = p.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = p.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "panique sans message".to_string()
+    }
+}
+
+/// HACHAGE À TOUTE ÉPREUVE — c'est la fonction que les commandes doivent utiliser.
+///
+/// Pourquoi tout ça pour un simple hachage ? Parce que c'était la cause exacte de
+/// « l'application se ferme toute seule quand je crée un utilisateur ou change un
+/// mot de passe » :
+///
+///  1. Créer un compte et changer un mot de passe sont les SEULES opérations qui
+///     hachent un mot de passe. Modifier l'e-mail ou le rôle n'y passe pas — d'où
+///     le fait que ces deux-là fonctionnent et pas les autres.
+///  2. Une commande Tauri SYNCHRONE s'exécute sur le thread principal Android
+///     (celui de la WebView, appelé depuis Java). Si le code panique là, la
+///     panique doit traverser la frontière Java/Rust : Rust n'a pas le droit de
+///     le faire et coupe le processus (SIGABRT) => l'application disparaît sans
+///     message. Avant, le hachage tournait dans une tâche de fond : la même
+///     panique était contenue et donnait seulement « ça ne marche pas ».
+///
+/// Trois protections cumulées ici :
+///  * exécution sur un thread DÉDIÉ avec 8 Mio de pile (plus de débordement
+///    possible, et une panique meurt dans ce thread, jamais dans le thread Java) ;
+///  * `catch_unwind` par algorithme : la panique devient une erreur affichable ;
+///  * REPLI d'algorithme : Argon2id, puis scrypt, puis bcrypt. Les trois sont déjà
+///    acceptés à la connexion (`compare_password`), donc même si Argon2 est
+///    inutilisable sur cet appareil, le compte est créé et le mot de passe
+///    fonctionne.
+///
+/// Retourne le hash et le nom de l'algorithme retenu (journalisé et renvoyé au
+/// frontend, pour savoir ce qui s'est réellement passé sur l'appareil).
+pub fn hash_password_resilient(password: &str) -> ApiResult<(String, &'static str)> {
+    if password.len() < 6 || password.len() > 128 {
+        return Err(ApiError::bad_request(
+            "Mot de passe invalide (6 à 128 caractères)",
+        ));
+    }
+    let pwd = password.to_string();
+    let handle = std::thread::Builder::new()
+        .name("hash-mdp".into())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || -> Result<(String, &'static str), String> {
+            let mut echecs: Vec<String> = Vec::new();
+
+            // 1) Argon2id (préféré)
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hash_password(&pwd))) {
+                Ok(Ok(h)) => return Ok((h, "argon2id")),
+                Ok(Err(e)) => echecs.push(format!("argon2: {}", e.message)),
+                Err(p) => echecs.push(format!("argon2 PANIQUE: {}", panic_texte(&*p))),
+            }
+
+            // 2) scrypt (déjà utilisé historiquement par ce projet)
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                hash_password_scrypt(&pwd)
+            })) {
+                Ok(Ok(h)) => return Ok((h, "scrypt")),
+                Ok(Err(e)) => echecs.push(format!("scrypt: {}", e.message)),
+                Err(p) => echecs.push(format!("scrypt PANIQUE: {}", panic_texte(&*p))),
+            }
+
+            // 3) bcrypt (le plus léger en mémoire : dernier filet)
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                bcrypt::hash(&pwd, 10)
+            })) {
+                Ok(Ok(h)) => return Ok((h, "bcrypt")),
+                Ok(Err(e)) => echecs.push(format!("bcrypt: {}", e)),
+                Err(p) => echecs.push(format!("bcrypt PANIQUE: {}", panic_texte(&*p))),
+            }
+
+            Err(echecs.join(" | "))
+        })
+        .map_err(|e| ApiError::internal(format!("Thread de hachage non créé : {e}")))?;
+
+    match handle.join() {
+        Ok(Ok((hash, algo))) => {
+            crate::logger::log_auth(&format!("hachage mot de passe OK ({algo})"));
+            Ok((hash, algo))
+        }
+        Ok(Err(detail)) => {
+            crate::logger::log_auth(&format!("hachage mot de passe ÉCHEC : {detail}"));
+            Err(ApiError::internal(format!(
+                "Impossible de sécuriser le mot de passe sur cet appareil ({detail})"
+            )))
+        }
+        Err(p) => {
+            let txt = panic_texte(&*p);
+            crate::logger::log_auth(&format!("hachage mot de passe INTERROMPU : {txt}"));
+            Err(ApiError::internal(format!(
+                "Le calcul du mot de passe a été interrompu ({txt})"
+            )))
+        }
+    }
 }
 
 // Hash scrypt legacy (seed initial, compat)

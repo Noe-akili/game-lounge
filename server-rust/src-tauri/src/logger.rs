@@ -50,6 +50,7 @@ pub fn init() {
         let _ = LOG_FILE.set(Mutex::new(f));
     }
     let _ = LOG_BUF.set(Mutex::new(Vec::new()));
+    installer_hook_panique();
     // Hook pour capturer eprintln! via log crate ? On utilise un simple wrapper
     eprintln!("[logger] Rust logger initialisé - tout sera dans 1.log");
     log("BOOT", "logger initialisé");
@@ -93,4 +94,32 @@ pub fn get_logs(limit: usize) -> Vec<String> {
         }
     }
     Vec::new()
+}
+
+/// Enregistre TOUTE panique Rust dans 1.log (message + fichier + ligne + thread).
+///
+/// Sans ce hook, une panique sur Android ne laissait aucune trace exploitable :
+/// l'application se fermait et le journal restait muet. Le hook est posé au tout
+/// début du démarrage, avant l'ouverture de la base.
+fn installer_hook_panique() {
+    let precedent = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let lieu = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_else(|| "lieu inconnu".to_string());
+        let thread = std::thread::current()
+            .name()
+            .unwrap_or("thread-sans-nom")
+            .to_string();
+        let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "panique sans message".to_string()
+        };
+        log("PANIC", &format!("[{thread}] {msg} ({lieu})"));
+        precedent(info);
+    }));
 }
