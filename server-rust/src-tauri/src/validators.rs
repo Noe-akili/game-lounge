@@ -12,10 +12,8 @@ fn phone_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"^\+?[0-9]{8,15}$").unwrap())
 }
-fn password_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"^(?=.*[A-Za-z]).{6,}$").unwrap())
-}
+// Note: la regex `^(?=.*[A-Za-z]).{6,}$` utilisait un look-ahead `(?=...)` non supporté par la crate regex de Rust.
+// Le contrôle est fait directement en Rust dans is_valid_password.
 fn nom_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"^[a-zA-ZÀ-ÿ0-9\s\-'&]{2,50}$").unwrap())
@@ -76,7 +74,7 @@ pub fn is_valid_phone(phone: &str) -> bool {
 }
 
 pub fn is_valid_password(password: &str) -> bool {
-    password_re().is_match(password)
+    password.len() >= 6 && password.chars().any(|c| c.is_alphabetic())
 }
 
 pub fn is_valid_nom(nom: &str) -> bool {
