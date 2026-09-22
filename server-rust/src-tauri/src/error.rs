@@ -39,6 +39,10 @@ impl ApiError {
     pub fn service_unavailable(message: impl Into<String>) -> Self {
         Self::new(503, message)
     }
+
+    pub fn network(message: impl Into<String>) -> Self {
+        Self::new(503, message)
+    }
 }
 
 impl std::fmt::Display for ApiError {
