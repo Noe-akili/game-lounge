@@ -26,9 +26,14 @@
     </div>
 
     <div v-else class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden">
-      <div v-for="j in jeux" :key="j.id" 
-        class="card-hover relative min-h-44 text-center group w-full max-w-full min-w-0 overflow-hidden flex flex-col justify-end transition-all"
-        :class="j.deleted ? 'opacity-65 border-dashed border-neon-red/40 bg-bg-surface/40' : ''">
+      <div v-for="j in jeux" :key="j.id"
+        class="card-hover relative min-h-44 text-center group w-full max-w-full min-w-0 overflow-hidden flex flex-col justify-end transition-all cursor-pointer select-none"
+        :class="[j.deleted ? 'opacity-65 border-dashed border-neon-red/40 bg-bg-surface/40' : '', sel.estSelectionne(j.id) ? 'ring-2 ring-neon-violet' : '']"
+        v-on="sel.press(j, () => { if (!j.deleted) editJeu(j) })">
+        <div v-if="sel.actif" class="absolute top-2 left-2 z-20 w-6 h-6 rounded-md border-2 flex items-center justify-center backdrop-blur-sm"
+          :class="sel.estSelectionne(j.id) ? 'bg-neon-violet border-neon-violet' : 'bg-bg/60 border-white/60'">
+          <Check v-if="sel.estSelectionne(j.id)" class="w-4 h-4 text-white" />
+        </div>
         <img v-if="jaquetteSrc(j) && !imgErr[j.id]" :src="jaquetteSrc(j)" :alt="j.titre"
           referrerpolicy="no-referrer" loading="lazy" decoding="async"
           class="absolute inset-0 w-full h-full object-cover" @error="imgErr[j.id] = true" />
@@ -44,7 +49,7 @@
             <span v-else class="text-xs text-txt-dim truncate w-full max-w-full">{{ consoleName(j.console_id) }}</span>
           </div>
         </div>
-        <div class="relative z-10 flex gap-2 mt-2 pb-2 justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex-wrap shrink-0">
+        <div v-if="!sel.actif" class="relative z-10 flex gap-2 mt-2 pb-2 justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex-wrap shrink-0" @click.stop>
           <template v-if="j.deleted">
             <button @click="restoreJeu(j.id)" class="p-1.5 rounded-lg bg-bg-card/80 hover:bg-neon-green/20 text-neon-green border border-neon-green/30 transition-colors" title="Restaurer"><RotateCcw class="w-3.5 h-3.5" /></button>
             <button @click="permanentDeleteJeu(j.id)" class="p-1.5 rounded-lg bg-bg-card/80 hover:bg-neon-red/20 text-neon-red border border-neon-red/30 transition-colors" title="Supprimer définitivement"><Trash2 class="w-3.5 h-3.5" /></button>
@@ -56,6 +61,8 @@
         </div>
       </div>
     </div>
+
+    <SelectionBar :sel="sel" />
 
     <Modal :open="showAdd || !!editingJeu" @close="closeModal">
       <div class="p-6">
@@ -84,7 +91,9 @@ import { normalizeImageUrl } from '@/utils/helpers'
 import { api } from '@/utils/api'
 import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
-import { Plus, Gamepad2, Pencil, Trash2, RotateCcw } from 'lucide-vue-next'
+import { Plus, Gamepad2, Pencil, Trash2, RotateCcw, Check } from 'lucide-vue-next'
+import SelectionBar from '@/components/ui/SelectionBar.vue'
+import { useMultiSelect } from '@/composables/useMultiSelect'
 import Loader from '@/components/ui/Loader.vue'
 import { isValidTitre, isValidGenre, sanitizeInput } from '@/utils/validators'
 
@@ -96,6 +105,18 @@ const showArchived = ref(false)
 const editingJeu = ref<any>(null)
 const form = reactive({ titre: '', genre: '', console_id: null, jaquette_url: '' })
 const imgErr = reactive<Record<number, boolean>>({})
+
+// SÉLECTION MULTIPLE : appui long sur une jaquette puis appuis simples.
+const sel = useMultiSelect({
+  nomSingulier: 'jeu',
+  nomPluriel: 'jeux',
+  liste: () => jeux.value,
+  estArchive: (j: any) => !!j.deleted,
+  archiver: (j: any) => api.delete(`/jeux/${j.id}`),
+  supprimer: (j: any) => api.delete(`/jeux/${j.id}/permanent`),
+  restaurer: (j: any) => api.post(`/jeux/${j.id}/restore`, {}),
+  apres: fetchJeux,
+})
 
 // Lien de jaquette utilisable (corrige les liens sans « https:// »).
 function jaquetteSrc(j: any) {

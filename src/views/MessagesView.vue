@@ -15,7 +15,14 @@
       <p class="text-xs text-txt-dim mt-1">Créez un message pour l'équipe</p>
     </div>
     <div v-else class="space-y-2">
-      <div v-for="m in messages" :key="m.id" class="card flex items-start gap-3 w-full max-w-full min-w-0 overflow-hidden">
+      <div v-for="m in messages" :key="m.id"
+        class="card flex items-start gap-3 w-full max-w-full min-w-0 overflow-hidden cursor-pointer select-none transition-colors"
+        :class="sel.estSelectionne(m.id) ? 'ring-2 ring-neon-violet bg-neon-violet/5 border-neon-violet/40' : ''"
+        v-on="sel.press(m, () => editMessage(m))">
+        <div v-if="sel.actif" class="w-5 h-5 mt-2 rounded-md border-2 flex items-center justify-center shrink-0"
+          :class="sel.estSelectionne(m.id) ? 'bg-neon-violet border-neon-violet' : 'border-txt-dim/50'">
+          <Check v-if="sel.estSelectionne(m.id)" class="w-3 h-3 text-white" />
+        </div>
         <div class="w-10 h-10 rounded-xl bg-neon-violet/20 flex items-center justify-center shrink-0">
           <MessageSquare class="w-5 h-5 text-neon-violet" />
         </div>
@@ -24,12 +31,14 @@
           <p class="text-sm text-txt-dim break-words">{{ m.contenu }}</p>
           <p class="text-xs text-txt-dim mt-1">{{ formatDate(m.created_at) }} · {{ m.auteur || 'Système' }}</p>
         </div>
-        <div class="flex gap-1 shrink-0">
+        <div v-if="!sel.actif" class="flex gap-1 shrink-0" @click.stop>
           <button @click="editMessage(m)" class="p-2 rounded-lg hover:bg-bg-hover text-txt-dim"><Pencil class="w-4 h-4" /></button>
           <button @click="deleteMessage(m.id)" class="p-2 rounded-lg hover:bg-neon-red/10 text-neon-red"><Trash2 class="w-4 h-4" /></button>
         </div>
       </div>
     </div>
+
+    <SelectionBar :sel="sel" />
 
     <Modal :open="showForm" @close="closeForm">
       <div class="p-6">
@@ -54,7 +63,9 @@ import { toast } from 'vue-sonner'
 import { formatDate } from '@/utils/helpers'
 import Modal from '@/components/ui/Modal.vue'
 import Loader from '@/components/ui/Loader.vue'
-import { MessageSquare, Plus, Pencil, Trash2 } from 'lucide-vue-next'
+import { MessageSquare, Plus, Pencil, Trash2, Check } from 'lucide-vue-next'
+import SelectionBar from '@/components/ui/SelectionBar.vue'
+import { useMultiSelect } from '@/composables/useMultiSelect'
 import { isValidTitre, isValidContenu, sanitizeInput } from '@/utils/validators'
 
 const loading = ref(true)
@@ -62,6 +73,16 @@ const messages = ref<any[]>([])
 const showForm = ref(false)
 const editingId = ref<number | null>(null)
 const form = reactive({ titre: '', contenu: '' })
+
+// SÉLECTION MULTIPLE : appui long sur un message puis appuis simples.
+// Les messages n'ont pas de corbeille : la suppression est directe.
+const sel = useMultiSelect({
+  nomSingulier: 'message',
+  nomPluriel: 'messages',
+  liste: () => messages.value,
+  supprimer: (m: any) => api.delete(`/messages/${m.id}`),
+  apres: fetchData,
+})
 
 async function fetchData() {
   loading.value = true

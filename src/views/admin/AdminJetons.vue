@@ -22,7 +22,14 @@
     </div>
 
     <div v-else class="space-y-2 w-full max-w-full min-w-0 overflow-hidden">
-      <div v-for="t in filteredTransactions" :key="t.id" class="card flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden flex-wrap hover:border-neon-violet/20 transition-colors cursor-pointer" @click="viewTransaction(t)">
+      <div v-for="t in filteredTransactions" :key="t.id"
+        class="card flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden flex-wrap hover:border-neon-violet/20 transition-colors cursor-pointer select-none"
+        :class="sel.estSelectionne(t.id) ? 'ring-2 ring-neon-violet bg-neon-violet/5 border-neon-violet/40' : ''"
+        v-on="sel.press(t, () => viewTransaction(t))">
+        <div v-if="sel.actif" class="w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0"
+          :class="sel.estSelectionne(t.id) ? 'bg-neon-violet border-neon-violet' : 'border-txt-dim/50'">
+          <Check v-if="sel.estSelectionne(t.id)" class="w-3 h-3 text-white" />
+        </div>
         <div class="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
           :class="t.type === 'gain' ? 'bg-neon-green/20' : t.type === 'bonus' ? 'bg-neon-violet/20' : 'bg-neon-red/20'">
           <Coins class="w-5 h-5" :class="t.type === 'gain' ? 'text-neon-green' : t.type === 'bonus' ? 'text-neon-violet' : 'text-neon-red'" />
@@ -35,7 +42,7 @@
           <p class="font-gaming font-bold truncate" :class="t.type === 'depense' ? 'text-neon-red' : 'text-neon-yellow'">{{ t.type === 'depense' ? '-' : '+' }}{{ t.quantite }} jetons</p>
           <span class="badge shrink-0 max-w-full truncate" :class="t.type === 'gain' ? 'badge-green' : t.type === 'bonus' ? 'badge-violet' : 'badge-red'">{{ t.type }}</span>
         </div>
-        <div class="flex gap-1 shrink-0 flex-wrap" @click.stop>
+        <div v-if="!sel.actif" class="flex gap-1 shrink-0 flex-wrap" @click.stop>
           <button @click="editTransaction(t)" class="p-2 rounded-lg hover:bg-bg-hover text-txt-dim transition-colors" title="Modifier">
             <Pencil class="w-4 h-4" />
           </button>
@@ -107,6 +114,8 @@
       </template>
     </div>
 
+    <SelectionBar :sel="sel" />
+
     <Modal :open="showForm" @close="closeForm">
       <div class="p-6">
         <h3 class="font-gaming text-xl font-bold mb-4">{{ editingId ? 'Modifier' : 'Nouvelle' }} transaction</h3>
@@ -163,7 +172,9 @@ import { toast } from 'vue-sonner'
 import Loader from '@/components/ui/Loader.vue'
 import Modal from '@/components/ui/Modal.vue'
 import { formatDate, formatCurrency } from '@/utils/helpers'
-import { Plus, Pencil, Trash2, Coins, Search } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2, Coins, Search, Check } from 'lucide-vue-next'
+import SelectionBar from '@/components/ui/SelectionBar.vue'
+import { useMultiSelect } from '@/composables/useMultiSelect'
 import { isValidId, isValidJetonType, isValidQuantite, isValidRegleType, isValidSeuil, isValidJetonsAttribues, sanitizeInput } from '@/utils/validators'
 
 const loading = ref(true)
@@ -178,6 +189,15 @@ const showDetail = ref(false)
 const selected = ref(null)
 const editingId = ref(null)
 const formTx = reactive({ joueur_id: null, type: 'gain', quantite: 1, raison: '', session_id: null })
+
+// SÉLECTION MULTIPLE : appui long sur une transaction puis appuis simples.
+const sel = useMultiSelect({
+  nomSingulier: 'transaction',
+  nomPluriel: 'transactions',
+  liste: () => filteredTransactions.value,
+  supprimer: (t: any) => api.delete(`/jetons/${t.id}`),
+  apres: fetchTransactions,
+})
 
 const filteredTransactions = computed(() => {
   if (!search.value) return transactions.value

@@ -91,7 +91,7 @@ import { ref, computed } from 'vue'
 import {
   BookOpen, Search, ChevronDown, Monitor, PlayCircle, Users, Coins,
   Receipt, DollarSign, Cloud, Shield, Settings, MessageSquare, Info, Zap,
-  UserCheck
+  UserCheck, CheckCheck
 } from 'lucide-vue-next'
 
 const searchQuery = ref('')
@@ -326,6 +326,55 @@ const docs = [
           { title: 'Gestion des utilisateurs', desc: 'Créer les comptes employés, modifier les mots de passe et les permissions (connexion internet requise : les comptes sont gérés en ligne).' },
           { title: 'Paramètres du lounge', desc: 'Changer le nom de l\'application et les règles de fidélité.' }
         ]
+      }
+    ]
+  },
+  {
+    id: 'selection',
+    category: 'general',
+    title: 'Supprimer plusieurs éléments d\'un coup',
+    subtitle: 'L\'appui long, comme dans la galerie photo du téléphone',
+    icon: CheckCheck,
+    iconBg: 'bg-neon-violet/20',
+    iconColor: 'text-neon-violet',
+    sections: [
+      {
+        heading: 'Comment ça marche',
+        bullets: [
+          { title: '1. Appui long', desc: 'Gardez le doigt appuyé environ une demi-seconde sur une ligne (facture, joueur, jeu, console, tarif, session, message, compte). Le téléphone vibre légèrement : l\'élément est sélectionné.' },
+          { title: '2. Appuis simples', desc: 'Touchez ensuite les autres éléments : chaque appui ajoute ou retire l\'élément de la sélection.' },
+          { title: '3. Barre du bas', desc: 'Elle indique combien d\'éléments sont choisis et propose Archiver, Restaurer, Supprimer définitivement, ou Tout sélectionner.' },
+          { title: '4. Pour sortir', desc: 'Appuyez sur la croix à gauche de la barre, ou retirez tous les éléments de la sélection.' }
+        ]
+      },
+      {
+        heading: 'Archiver ou supprimer définitivement ?',
+        content: 'Archiver met de côté (l\'élément reste récupérable avec la case « Afficher archivés » puis Restaurer). Supprimer définitivement efface pour de bon : une question de confirmation est toujours posée avant.'
+      },
+      {
+        tip: 'Pendant la sélection, les petits boutons de chaque ligne disparaissent : c\'est normal, cela évite d\'appuyer par erreur sur Modifier ou Supprimer.'
+      }
+    ]
+  },
+  {
+    id: 'facture_pdf',
+    category: 'finance',
+    title: 'La facture en PDF',
+    subtitle: 'Ce que contient le document et où il est enregistré',
+    icon: Receipt,
+    iconBg: 'bg-neon-blue/20',
+    iconColor: 'text-neon-blue',
+    sections: [
+      {
+        heading: 'Un vrai document présentable',
+        content: 'Le PDF reprend le nom de votre établissement (celui réglé dans les Paramètres), la personne facturée, la session, le mode de paiement, le statut, le détail des lignes, puis les totaux HT, TVA et le total à payer bien mis en évidence. S\'il y a beaucoup de lignes, le document continue sur une deuxième page numérotée.'
+      },
+      {
+        heading: 'Exporter ou imprimer',
+        content: 'Le bouton Exporter PDF enregistre le fichier dans Documents/GameLounge/Factures (Android peut demander de choisir le dossier la première fois, c\'est normal). Le bouton Imprimer ouvre le document dans la visionneuse du téléphone, d\'où vous pouvez imprimer ou partager.'
+      },
+      {
+        tip: 'Changez le nom de l\'établissement dans Administration > Paramètres : toutes les factures suivantes l\'utiliseront automatiquement.'
       }
     ]
   },

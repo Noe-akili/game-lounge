@@ -31,10 +31,14 @@
     </div>
 
     <div v-else class="space-y-2 w-full max-w-full min-w-0 overflow-hidden">
-      <div v-for="j in joueurs" :key="j.id" 
-        class="card flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden flex-wrap transition-colors cursor-pointer"
-        :class="j.deleted ? 'opacity-65 border-dashed border-neon-red/40 bg-bg-surface/40' : 'hover:border-neon-violet/20'" 
-        @click="viewJoueur(j)">
+      <div v-for="j in joueurs" :key="j.id"
+        class="card flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden flex-wrap transition-colors cursor-pointer select-none"
+        :class="[j.deleted ? 'opacity-65 border-dashed border-neon-red/40 bg-bg-surface/40' : 'hover:border-neon-violet/20', sel.estSelectionne(j.id) ? 'ring-2 ring-neon-violet bg-neon-violet/5 border-neon-violet/40' : '']"
+        v-on="sel.press(j, () => viewJoueur(j))">
+        <div v-if="sel.actif" class="w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0"
+          :class="sel.estSelectionne(j.id) ? 'bg-neon-violet border-neon-violet' : 'border-txt-dim/50'">
+          <Check v-if="sel.estSelectionne(j.id)" class="w-3 h-3 text-white" />
+        </div>
         <!-- Sticker/icône du joueur -->
         <div class="w-11 h-11 rounded-full flex items-center justify-center font-bold shrink-0 overflow-hidden"
           :class="j.deleted ? 'bg-neon-red/10 text-neon-red' : 'bg-neon-violet/20 text-neon-violet'">
@@ -51,7 +55,7 @@
         <div class="text-right shrink-0 min-w-0">
           <p class="font-gaming font-bold text-neon-yellow truncate">{{ j.jetons_solde || 0 }} jetons</p>
         </div>
-        <div class="flex gap-1 shrink-0 flex-wrap" @click.stop>
+        <div v-if="!sel.actif" class="flex gap-1 shrink-0 flex-wrap" @click.stop>
           <template v-if="j.deleted">
             <button @click="restoreJoueur(j.id)" class="p-2 rounded-lg hover:bg-neon-green/10 text-neon-green transition-colors" title="Restaurer">
               <RotateCcw class="w-4 h-4" />
@@ -71,6 +75,8 @@
         </div>
       </div>
     </div>
+
+    <SelectionBar :sel="sel" />
 
     <Modal :open="showAdd || !!editingJoueur" @close="closeForm">
       <div class="p-6">
@@ -202,7 +208,9 @@ import Modal from '@/components/ui/Modal.vue'
 // importé non plus : dès qu'un joueur avait au moins un mouvement de jetons, le
 // rendu du détail échouait (« formatDate is not a function ») et la fiche restait
 // vide. C'était LA cause du bug « le joueur qui a utilisé ses jetons ne s'affiche pas ».
-import { UserPlus, Pencil, Search, Users, Trash2, RotateCcw, Coins } from 'lucide-vue-next'
+import { UserPlus, Pencil, Search, Users, Trash2, RotateCcw, Coins, Check } from 'lucide-vue-next'
+import SelectionBar from '@/components/ui/SelectionBar.vue'
+import { useMultiSelect } from '@/composables/useMultiSelect'
 import Loader from '@/components/ui/Loader.vue'
 import { formatCurrency, formatDate } from '@/utils/helpers'
 import { isValidNom, isValidPhone, isValidEmail, sanitizeInput } from '@/utils/validators'
@@ -217,6 +225,18 @@ const showDetail = ref(false)
 const detailJoueur = ref<any>(null)
 const detailData = ref<any>({})
 const form = reactive({ nom: '', telephone: '', email: '', jetons_solde: 0, sticker: '' })
+
+// SÉLECTION MULTIPLE : appui long puis appuis simples, actions groupées en bas.
+const sel = useMultiSelect({
+  nomSingulier: 'joueur',
+  nomPluriel: 'joueurs',
+  liste: () => joueurs.value,
+  estArchive: (j: any) => !!j.deleted,
+  archiver: (j: any) => api.delete(`/joueurs/${j.id}`),
+  supprimer: (j: any) => api.delete(`/joueurs/${j.id}/permanent`),
+  restaurer: (j: any) => api.post(`/joueurs/${j.id}/restore`, {}),
+  apres: fetchData,
+})
 
 let timeout: any = null
 function onSearch() {

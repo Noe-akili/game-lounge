@@ -88,9 +88,16 @@
         <p class="text-txt-dim text-sm">Aucune session terminée</p>
       </div>
       <div v-else class="space-y-2 w-full max-w-full min-w-0">
-        <div v-for="s in (showAll ? allSessionsFiltered : recentSessions)" :key="s.id" class="card flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 text-sm w-full max-w-full min-w-0 overflow-hidden hover:border-neon-violet/20 transition-colors cursor-pointer" :class="s.deleted ? 'opacity-60 border-dashed border-neon-red/40' : ''" @click="viewDetail(s)">
+        <div v-for="s in (showAll ? allSessionsFiltered : recentSessions)" :key="s.id"
+          class="card flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 text-sm w-full max-w-full min-w-0 overflow-hidden hover:border-neon-violet/20 transition-colors cursor-pointer select-none"
+          :class="[s.deleted ? 'opacity-60 border-dashed border-neon-red/40' : '', sel.estSelectionne(s.id) ? 'ring-2 ring-neon-violet bg-neon-violet/5 border-neon-violet/40' : '']"
+          v-on="sel.press(s, () => viewDetail(s))">
           <div class="flex items-center gap-2 sm:gap-3 flex-1 min-w-0 w-full">
-            <CheckCircle2 class="w-5 h-5 text-neon-green shrink-0" />
+            <div v-if="sel.actif" class="w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0"
+              :class="sel.estSelectionne(s.id) ? 'bg-neon-violet border-neon-violet' : 'border-txt-dim/50'">
+              <Check v-if="sel.estSelectionne(s.id)" class="w-3 h-3 text-white" />
+            </div>
+            <CheckCircle2 v-else class="w-5 h-5 text-neon-green shrink-0" />
             <div class="flex-1 min-w-0">
               <p class="truncate">{{ s.console_nom }} — {{ s.joueur_nom }} · {{ s.jeu_nom }} <span v-if="s.deleted" class="text-neon-red text-[10px] uppercase font-bold">· Archivée</span></p>
               <p class="text-xs text-txt-dim truncate">{{ formatDate(s.created_at) }} · {{ s.statut }}</p>
@@ -98,7 +105,7 @@
           </div>
           <div class="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto shrink-0">
             <span class="font-gaming font-bold text-neon-green shrink-0">{{ formatCurrency(s.montant) }}</span>
-            <div class="flex gap-1 shrink-0" @click.stop>
+            <div v-if="!sel.actif" class="flex gap-1 shrink-0" @click.stop>
               <template v-if="s.deleted">
                 <button @click="restoreSession(s.id)" class="p-1.5 rounded-lg hover:bg-neon-green/10 text-neon-green" title="Restaurer"><RotateCcw class="w-3.5 h-3.5" /></button>
                 <button @click="permanentDeleteSession(s.id)" class="p-1.5 rounded-lg hover:bg-neon-red/10 text-neon-red" title="Supprimer définitivement"><Trash2 class="w-3.5 h-3.5" /></button>
@@ -112,6 +119,8 @@
         </div>
       </div>
     </div>
+
+    <SelectionBar :sel="sel" />
 
     <Modal :open="showDetail" @close="showDetail = false" size="lg">
       <div class="p-6" v-if="selected">
@@ -192,7 +201,9 @@ import { ref, reactive, onMounted, computed, onUnmounted } from 'vue'
 import { api } from '@/utils/api'
 import { formatDuration, formatCurrency, formatDate } from '@/utils/helpers'
 import { toast } from 'vue-sonner'
-import { PlayCircle, PauseCircle, Square, CheckCircle2, RefreshCw, Plus, Pencil, Trash2, RotateCcw } from 'lucide-vue-next'
+import { PlayCircle, PauseCircle, Square, CheckCircle2, RefreshCw, Plus, Pencil, Trash2, RotateCcw, Check } from 'lucide-vue-next'
+import SelectionBar from '@/components/ui/SelectionBar.vue'
+import { useMultiSelect } from '@/composables/useMultiSelect'
 import Loader from '@/components/ui/Loader.vue'
 import Modal from '@/components/ui/Modal.vue'
 import LiveSessionTimer from '@/components/ui/LiveSessionTimer.vue'
@@ -215,6 +226,18 @@ const editingId = ref(null)
 const form = reactive({ console_id: null, joueur_id: null, jeu_id: null, duree_minutes: 0, montant: 0, statut: 'en_cours' })
 
 const allSessionsFiltered = computed(() => allSessions.value.filter(s => s.statut === 'terminee' || s.statut === 'annulee').slice(0, 50))
+
+// SÉLECTION MULTIPLE : appui long sur une session terminée puis appuis simples.
+const sel = useMultiSelect({
+  nomSingulier: 'session',
+  nomPluriel: 'sessions',
+  liste: () => (showAll.value ? allSessionsFiltered.value : recentSessions.value),
+  estArchive: (s: any) => !!s.deleted,
+  archiver: (s: any) => api.delete(`/sessions/${s.id}`),
+  supprimer: (s: any) => api.delete(`/sessions/${s.id}/permanent`),
+  restaurer: (s: any) => api.post(`/sessions/${s.id}/restore`, {}),
+  apres: fetchData,
+})
 
 async function fetchData() {
   loading.value = true

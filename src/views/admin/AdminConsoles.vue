@@ -26,9 +26,14 @@
     </div>
 
     <div v-else class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden">
-      <div v-for="c in consoles" :key="c.id" 
-        class="card-hover relative min-h-44 text-center group w-full max-w-full min-w-0 overflow-hidden flex flex-col justify-end transition-all"
-        :class="c.deleted ? 'opacity-65 border-dashed border-neon-red/40 bg-bg-surface/40' : ''">
+      <div v-for="c in consoles" :key="c.id"
+        class="card-hover relative min-h-44 text-center group w-full max-w-full min-w-0 overflow-hidden flex flex-col justify-end transition-all cursor-pointer select-none"
+        :class="[c.deleted ? 'opacity-65 border-dashed border-neon-red/40 bg-bg-surface/40' : '', sel.estSelectionne(c.id) ? 'ring-2 ring-neon-violet' : '']"
+        v-on="sel.press(c, () => { if (!c.deleted) editConsole(c) })">
+        <div v-if="sel.actif" class="absolute top-2 left-2 z-20 w-6 h-6 rounded-md border-2 flex items-center justify-center backdrop-blur-sm"
+          :class="sel.estSelectionne(c.id) ? 'bg-neon-violet border-neon-violet' : 'bg-bg/60 border-white/60'">
+          <Check v-if="sel.estSelectionne(c.id)" class="w-4 h-4 text-white" />
+        </div>
         <!-- referrerpolicy="no-referrer" : beaucoup d'hébergeurs d'images
              refusent l'affichage quand la page appelante est inconnue (WebView
              Android) — sans lui, l'image restait vide alors que le lien est bon. -->
@@ -47,7 +52,7 @@
             <span v-else class="badge inline-block max-w-full truncate" :class="statusBadge(c.etat)">{{ statusLabel(c.etat) }}</span>
           </div>
         </div>
-        <div class="relative z-10 flex gap-2 mt-2 pb-2 justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex-wrap shrink-0">
+        <div v-if="!sel.actif" class="relative z-10 flex gap-2 mt-2 pb-2 justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex-wrap shrink-0" @click.stop>
           <template v-if="c.deleted">
             <button @click="restoreConsole(c.id)" class="p-1.5 rounded-lg bg-bg-card/80 hover:bg-neon-green/20 text-neon-green border border-neon-green/30 transition-colors" title="Restaurer"><RotateCcw class="w-3.5 h-3.5" /></button>
             <button @click="permanentDeleteConsole(c.id)" class="p-1.5 rounded-lg bg-bg-card/80 hover:bg-neon-red/20 text-neon-red border border-neon-red/30 transition-colors" title="Supprimer définitivement"><Trash2 class="w-3.5 h-3.5" /></button>
@@ -59,6 +64,8 @@
         </div>
       </div>
     </div>
+
+    <SelectionBar :sel="sel" />
 
     <Modal :open="showForm" @close="showForm = false">
       <div class="p-6">
@@ -107,7 +114,9 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { api } from '@/utils/api'
 import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
-import { Plus, Monitor, Pencil, Trash2, RotateCcw } from 'lucide-vue-next'
+import { Plus, Monitor, Pencil, Trash2, RotateCcw, Check } from 'lucide-vue-next'
+import SelectionBar from '@/components/ui/SelectionBar.vue'
+import { useMultiSelect } from '@/composables/useMultiSelect'
 import Loader from '@/components/ui/Loader.vue'
 import { isValidNom, isValidConsoleType, isValidPosteNumero, sanitizeInput } from '@/utils/validators'
 import { normalizeImageUrl } from '@/utils/helpers'
@@ -119,6 +128,18 @@ const showArchived = ref(false)
 const editingId = ref<number | null>(null)
 const form = reactive({ nom: '', type: 'PS5', poste_numero: 1, etat: 'disponible', image_url: '' })
 const imgErr = reactive<Record<number, boolean>>({})
+
+// SÉLECTION MULTIPLE : appui long sur une console puis appuis simples.
+const sel = useMultiSelect({
+  nomSingulier: 'console',
+  nomPluriel: 'consoles',
+  liste: () => consoles.value,
+  estArchive: (c: any) => !!c.deleted,
+  archiver: (c: any) => api.delete(`/consoles/${c.id}`),
+  supprimer: (c: any) => api.delete(`/consoles/${c.id}/permanent`),
+  restaurer: (c: any) => api.post(`/consoles/${c.id}/restore`, {}),
+  apres: fetchConsoles,
+})
 const formImgErr = ref(false)
 
 // Lien d'image réellement utilisable pour l'affichage (corrige les liens

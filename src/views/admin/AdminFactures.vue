@@ -16,6 +16,25 @@
       </div>
     </div>
 
+    <!-- RÉSUMÉ : trois chiffres utiles avant la liste (encaissé, en attente, annulé) -->
+    <div v-if="!loading && factures.length" class="grid grid-cols-3 gap-2 sm:gap-3 w-full max-w-full min-w-0">
+      <div class="card p-3 min-w-0">
+        <p class="text-[11px] uppercase tracking-wider text-txt-dim truncate">Encaissé</p>
+        <p class="font-gaming font-bold text-neon-green text-base sm:text-lg truncate">{{ formatCurrency(resume.encaisse) }}</p>
+        <p class="text-[11px] text-txt-dim">{{ resume.nbPayees }} facture(s) payée(s)</p>
+      </div>
+      <div class="card p-3 min-w-0">
+        <p class="text-[11px] uppercase tracking-wider text-txt-dim truncate">En attente</p>
+        <p class="font-gaming font-bold text-neon-yellow text-base sm:text-lg truncate">{{ formatCurrency(resume.attente) }}</p>
+        <p class="text-[11px] text-txt-dim">{{ resume.nbAttente }} à encaisser</p>
+      </div>
+      <div class="card p-3 min-w-0">
+        <p class="text-[11px] uppercase tracking-wider text-txt-dim truncate">Annulées</p>
+        <p class="font-gaming font-bold text-neon-red text-base sm:text-lg truncate">{{ resume.nbAnnulees }}</p>
+        <p class="text-[11px] text-txt-dim">sur {{ factures.length }} affichée(s)</p>
+      </div>
+    </div>
+
     <div v-if="loading" class="card w-full max-w-full min-w-0 overflow-hidden">
       <Loader variant="neon" size="lg" text="Chargement des factures..." />
     </div>
@@ -26,7 +45,15 @@
     </div>
 
     <div v-else class="space-y-2 w-full max-w-full min-w-0 overflow-hidden">
-      <div v-for="f in factures" :key="f.id" class="card flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden flex-wrap hover:border-neon-violet/20 transition-colors cursor-pointer" :class="f.deleted ? 'opacity-60 border-dashed border-neon-red/40' : ''" @click="viewDetail(f)">
+      <div v-for="f in factures" :key="f.id"
+        class="card flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden flex-wrap hover:border-neon-violet/20 transition-colors cursor-pointer select-none"
+        :class="[f.deleted ? 'opacity-60 border-dashed border-neon-red/40' : '', sel.estSelectionne(f.id) ? 'ring-2 ring-neon-violet bg-neon-violet/5 border-neon-violet/40' : '']"
+        v-on="sel.press(f, () => viewDetail(f))">
+        <!-- Pastille de sélection (appui long) -->
+        <div v-if="sel.actif" class="w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0"
+          :class="sel.estSelectionne(f.id) ? 'bg-neon-violet border-neon-violet' : 'border-txt-dim/50'">
+          <Check v-if="sel.estSelectionne(f.id)" class="w-3 h-3 text-white" />
+        </div>
         <div class="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
           :class="f.statut === 'payee' ? 'bg-neon-green/20' : f.statut === 'annulee' ? 'bg-neon-red/20' : 'bg-neon-yellow/20'">
           <Receipt class="w-5 h-5"
@@ -34,14 +61,14 @@
         </div>
         <div class="flex-1 min-w-0 overflow-hidden">
           <p class="font-medium font-mono text-sm truncate">{{ f.numero_facture }}</p>
-          <p class="text-xs text-txt-dim truncate">{{ f.joueur_nom }} · {{ formatDate(f.date_paiement || f.created_at) }}</p>
+          <p class="text-xs text-txt-dim truncate">{{ f.joueur_nom }} · {{ formatDate(f.date_paiement || f.created_at) }}<span v-if="f.mode_paiement"> · {{ libellePaiement(f.mode_paiement) }}</span></p>
         </div>
         <div class="text-right shrink-0 min-w-0">
           <p class="font-gaming font-bold text-neon-green truncate">{{ formatCurrency(f.montant_ttc) }}</p>
           <span v-if="f.deleted" class="badge badge-red shrink-0">Archivée</span>
           <span v-else class="badge shrink-0 max-w-full truncate" :class="statusBadge(f.statut)">{{ statusLabel(f.statut) }}</span>
         </div>
-        <div class="flex gap-1 shrink-0 flex-wrap" @click.stop>
+        <div v-if="!sel.actif" class="flex gap-1 shrink-0 flex-wrap" @click.stop>
           <button @click="viewDetail(f)" class="p-2 rounded-lg hover:bg-bg-hover text-txt-dim" title="Voir">
             <Eye class="w-4 h-4" />
           </button>
@@ -73,6 +100,9 @@
         </div>
       </div>
     </div>
+
+    <!-- Barre d'actions groupées (apparaît après un appui long) -->
+    <SelectionBar :sel="sel" />
 
     <Modal :open="showDetail" @close="showDetail = false" size="lg">
       <div class="p-6" v-if="selected">
@@ -270,7 +300,9 @@ import { getFacturePdfBlob, saveFacturePdf } from '@/lib/clientPdf'
 import { formatCurrency, formatDate } from '@/utils/helpers'
 import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
-import { Receipt, Eye, Download, Printer, XCircle, Plus, Pencil, Trash2, X, RotateCcw, Coins } from 'lucide-vue-next'
+import { Receipt, Eye, Download, Printer, XCircle, Plus, Pencil, Trash2, X, RotateCcw, Coins, Check } from 'lucide-vue-next'
+import SelectionBar from '@/components/ui/SelectionBar.vue'
+import { useMultiSelect } from '@/composables/useMultiSelect'
 import Loader from '@/components/ui/Loader.vue'
 import { isValidId, isValidPrix, isValidFactureStatut, isValidModePaiement, isValidQuantite, sanitizeInput } from '@/utils/validators'
 
@@ -291,6 +323,39 @@ const form = reactive({ joueur_id: null, session_id: null, montant_ht: 0, taux_t
 const showLigneForm = ref(false)
 const editingLigneId = ref(null)
 const ligneForm = reactive({ description: '', quantite: 1, prix_unitaire: 0, total_ligne: 0 })
+
+// SÉLECTION MULTIPLE : appui long sur une facture -> sélection, puis appuis
+// simples pour ajouter les suivantes, et actions groupées dans la barre du bas.
+const sel = useMultiSelect({
+  nomSingulier: 'facture',
+  nomPluriel: 'factures',
+  liste: () => factures.value,
+  estArchive: (f: any) => !!f.deleted,
+  archiver: isEmployee.value ? undefined : (f: any) => api.delete(`/factures/${f.id}`),
+  supprimer: isEmployee.value ? undefined : (f: any) => api.delete(`/factures/${f.id}/permanent`),
+  restaurer: isEmployee.value ? undefined : (f: any) => api.post(`/factures/${f.id}/restore`, {}),
+  apres: fetchData,
+})
+
+// Résumé affiché au-dessus de la liste.
+const resume = computed(() => {
+  const vivantes = factures.value.filter((f: any) => !f.deleted)
+  const somme = (arr: any[]) => arr.reduce((t, f) => t + (Number(f.montant_ttc) || 0), 0)
+  const payees = vivantes.filter((f: any) => f.statut === 'payee')
+  const attente = vivantes.filter((f: any) => f.statut === 'en_attente')
+  return {
+    encaisse: somme(payees),
+    nbPayees: payees.length,
+    attente: somme(attente),
+    nbAttente: attente.length,
+    nbAnnulees: vivantes.filter((f: any) => f.statut === 'annulee').length,
+  }
+})
+
+/// Mode de paiement en clair (même vocabulaire que sur le PDF).
+function libellePaiement(code: string) {
+  return ({ especes: 'Espèces', carte: 'Carte', mobile: 'Mobile Money', jetons: 'Jetons' } as any)[code] || code
+}
 
 function statusBadge(s) { return { payee: 'badge-green', en_attente: 'badge-yellow', annulee: 'badge-red' }[s] || 'badge-violet' }
 function statusLabel(s) { return { payee: 'Payée', en_attente: 'En attente', annulee: 'Annulée' }[s] || s }

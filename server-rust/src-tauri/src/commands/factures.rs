@@ -167,7 +167,14 @@ pub fn factures_pdf(state: State<'_, AppState>, token: Option<String>, id: i64) 
         .filter(|l| l.get("facture_id").and_then(Value::as_i64) == Some(id))
         .collect();
 
-    let pdf = crate::pdf::facture_pdf(&f, joueur.as_ref(), &lignes)
+    // Le nom de l'établissement (Paramètres > nom de l'application) est imprimé
+    // en en-tête et en pied de page de la facture.
+    let nom_app = db
+        .get_setting("app_name")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "Game Lounge".to_string());
+    let pdf = crate::pdf::facture_pdf(&f, joueur.as_ref(), &lignes, &nom_app)
         .map_err(|e| ApiError::internal(format!("Erreur génération PDF: {e}")))?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(pdf);
     Ok(json!({ "pdf_base64": b64 }))
@@ -207,7 +214,14 @@ pub fn factures_save_pdf(
         .filter(|l| l.get("facture_id").and_then(Value::as_i64) == Some(id))
         .collect();
 
-    let pdf = crate::pdf::facture_pdf(&f, joueur.as_ref(), &lignes)
+    // Le nom de l'établissement (Paramètres > nom de l'application) est imprimé
+    // en en-tête et en pied de page de la facture.
+    let nom_app = db
+        .get_setting("app_name")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "Game Lounge".to_string());
+    let pdf = crate::pdf::facture_pdf(&f, joueur.as_ref(), &lignes, &nom_app)
         .map_err(|e| ApiError::internal(format!("Erreur génération PDF: {e}")))?;
 
     // Dossier par défaut : /storage/emulated/0/Documents/GameLounge/Factures

@@ -25,7 +25,10 @@
         </select>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden">
-        <div v-for="t in filteredTarifs" :key="t.id" class="card flex flex-col gap-2 p-3 w-full max-w-full min-w-0 overflow-hidden hover:border-neon-violet/20 transition-colors">
+        <div v-for="t in filteredTarifs" :key="t.id"
+          class="card flex flex-col gap-2 p-3 w-full max-w-full min-w-0 overflow-hidden hover:border-neon-violet/20 transition-colors cursor-pointer select-none"
+          :class="sel.estSelectionne(t.id) ? 'ring-2 ring-neon-violet bg-neon-violet/5 border-neon-violet/40' : ''"
+          v-on="sel.press(t, () => { if (!t.deleted) editTarif(t) })">
           <div class="flex items-start justify-between gap-2">
             <div class="flex-1 min-w-0">
               <p class="font-medium truncate text-sm">{{ t.description }}</p>
@@ -33,14 +36,18 @@
             </div>
             <span class="font-gaming font-bold text-neon-green shrink-0">{{ formatCurrency(t.prix) }}</span>
           </div>
-          <div class="flex items-center gap-2 justify-end">
+          <div class="flex items-center gap-2 justify-end" @click.stop>
+            <div v-if="sel.actif" class="mr-auto w-5 h-5 rounded-md border-2 flex items-center justify-center"
+              :class="sel.estSelectionne(t.id) ? 'bg-neon-violet border-neon-violet' : 'border-txt-dim/50'">
+              <Check v-if="sel.estSelectionne(t.id)" class="w-3 h-3 text-white" />
+            </div>
             <span v-if="t.deleted" class="badge badge-red shrink-0">Archivé</span>
             <span v-else class="badge shrink-0" :class="t.actif ? 'badge-green' : 'badge-red'">{{ t.actif ? 'Actif' : 'Inactif' }}</span>
-            <template v-if="t.deleted">
+            <template v-if="!sel.actif && t.deleted">
               <button @click="restoreTarif(t.id)" class="p-1.5 rounded-lg hover:bg-neon-green/10 text-neon-green shrink-0" title="Restaurer"><RotateCcw class="w-3.5 h-3.5" /></button>
               <button @click="permanentDeleteTarif(t.id)" class="p-1.5 rounded-lg hover:bg-neon-red/10 text-neon-red shrink-0" title="Supprimer définitivement"><Trash2 class="w-3.5 h-3.5" /></button>
             </template>
-            <template v-else>
+            <template v-else-if="!sel.actif">
               <button @click="editTarif(t)" class="p-1.5 rounded-lg hover:bg-bg-hover text-txt-dim shrink-0"><Pencil class="w-3.5 h-3.5" /></button>
               <button @click="deleteTarif(t.id)" class="p-1.5 rounded-lg hover:bg-neon-red/10 text-neon-red shrink-0"><Trash2 class="w-3.5 h-3.5" /></button>
             </template>
@@ -51,6 +58,8 @@
         {{ includeArchived ? 'Aucun tarif actif ou archivé dans la base locale' : 'Aucun tarif actif' }}
       </p>
     </div>
+
+    <SelectionBar :sel="sel" />
 
     <Modal :open="showAdd || editing" @close="showAdd = false; editing = null">
       <div class="p-6">
@@ -85,7 +94,9 @@ import { api } from '@/utils/api'
 import { formatCurrency } from '@/utils/helpers'
 import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
-import { Plus, Pencil, Trash2, RotateCcw } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2, RotateCcw, Check } from 'lucide-vue-next'
+import SelectionBar from '@/components/ui/SelectionBar.vue'
+import { useMultiSelect } from '@/composables/useMultiSelect'
 import Loader from '@/components/ui/Loader.vue'
 import { isValidTarifType, isValidDuree, isValidPrix, sanitizeInput } from '@/utils/validators'
 
@@ -98,6 +109,18 @@ const filterConsole = ref('')
 const filterJeu = ref('')
 const includeArchived = ref(false)
 const form = reactive({ type: 'session', duree_minutes: 60, prix: 2000, description: '', console_type: 'PS5', jeu: '' })
+
+// SÉLECTION MULTIPLE : appui long sur un tarif puis appuis simples.
+const sel = useMultiSelect({
+  nomSingulier: 'tarif',
+  nomPluriel: 'tarifs',
+  liste: () => filteredTarifs.value,
+  estArchive: (t: any) => !!t.deleted,
+  archiver: (t: any) => api.delete(`/tarifs/${t.id}`),
+  supprimer: (t: any) => api.delete(`/tarifs/${t.id}/permanent`),
+  restaurer: (t: any) => api.post(`/tarifs/${t.id}/restore`),
+  apres: fetchData,
+})
 
 const filteredJeux = computed(() => {
   if (!form.console_type) return jeux.value

@@ -39,10 +39,14 @@
     </div>
 
     <div v-else class="space-y-2 w-full max-w-full min-w-0 overflow-hidden">
-      <div v-for="u in users" :key="u.id" 
-        class="card flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden flex-wrap transition-colors cursor-pointer"
-        :class="u.deleted ? 'opacity-60 border-dashed border-border/70 hover:border-txt-dim' : 'hover:border-neon-violet/20'"
-        @click="viewUser(u)">
+      <div v-for="u in users" :key="u.id"
+        class="card flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full max-w-full min-w-0 overflow-hidden flex-wrap transition-colors cursor-pointer select-none"
+        :class="[u.deleted ? 'opacity-60 border-dashed border-border/70 hover:border-txt-dim' : 'hover:border-neon-violet/20', sel.estSelectionne(u.id) ? 'ring-2 ring-neon-violet bg-neon-violet/5 border-neon-violet/40' : '']"
+        v-on="sel.press(u, () => viewUser(u))">
+        <div v-if="sel.actif" class="w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0"
+          :class="sel.estSelectionne(u.id) ? 'bg-neon-violet border-neon-violet' : 'border-txt-dim/50'">
+          <Check v-if="sel.estSelectionne(u.id)" class="w-3 h-3 text-white" />
+        </div>
         <div class="w-11 h-11 rounded-full flex items-center justify-center font-bold shrink-0"
           :class="u.deleted ? 'bg-txt-dim/20 text-txt-dim' : (u.role === 'admin' ? 'bg-neon-violet/20 text-neon-violet' : 'bg-neon-blue/20 text-neon-blue')">
           {{ u.nom?.charAt(0) }}
@@ -59,7 +63,7 @@
           {{ u.role === 'admin' ? 'Admin' : 'Employé' }}
         </span>
 
-        <div class="flex gap-1 shrink-0 flex-wrap" @click.stop>
+        <div v-if="!sel.actif" class="flex gap-1 shrink-0 flex-wrap" @click.stop>
           <template v-if="u.deleted">
             <button @click="restoreUser(u.id)" class="p-2 rounded-lg hover:bg-neon-green/10 text-txt-dim hover:text-neon-green transition-colors" title="Restaurer le compte">
               <RotateCcw class="w-4 h-4" />
@@ -79,6 +83,8 @@
         </div>
       </div>
     </div>
+
+    <SelectionBar :sel="sel" />
 
     <!-- Modal Formulaire Création / Modification -->
     <Modal :open="showForm" @close="closeForm">
@@ -144,7 +150,9 @@ import { api } from '@/utils/api'
 import { useAuthStore } from '@/stores/auth'
 import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
-import { UserPlus, Trash2, Loader2, Pencil, RotateCcw, Archive, Info } from 'lucide-vue-next'
+import { UserPlus, Trash2, Loader2, Pencil, RotateCcw, Archive, Info, Check } from 'lucide-vue-next'
+import SelectionBar from '@/components/ui/SelectionBar.vue'
+import { useMultiSelect } from '@/composables/useMultiSelect'
 import Loader from '@/components/ui/Loader.vue'
 import { formatDate } from '@/utils/helpers'
 import { isValidEmail, isValidPassword, isValidNom, isValidRole, sanitizeInput } from '@/utils/validators'
@@ -161,6 +169,20 @@ const auth = useAuthStore()
 const currentUserId = computed(() => auth.user?.id)
 
 const form = reactive({ nom: '', email: '', password: '', role: 'employe' })
+
+// SÉLECTION MULTIPLE : appui long sur un compte puis appuis simples.
+// Le compte actuellement connecté est volontairement ignoré (on ne peut pas se
+// supprimer soi-même) et tout passe par le serveur : comptes 100 % en ligne.
+const sel = useMultiSelect({
+  nomSingulier: 'compte',
+  nomPluriel: 'comptes',
+  liste: () => users.value.filter((u: any) => u.id !== currentUserId.value),
+  estArchive: (u: any) => !!u.deleted,
+  archiver: (u: any) => api.delete(`/users/${u.id}`),
+  supprimer: (u: any) => api.delete(`/users/${u.id}/permanent`),
+  restaurer: (u: any) => api.post(`/users/${u.id}/restore`, {}),
+  apres: fetchUsers,
+})
 
 async function fetchUsers() {
   listLoading.value = true
