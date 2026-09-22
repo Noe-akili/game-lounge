@@ -167,6 +167,9 @@ const ROUTES: RouteDef[] = [
   { m: 'DELETE', p: '/messages/:id', f: ({ token, segs }) => ({ cmd: 'messages_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== PARAMÈTRES FIDÉLITÉ =====
+  { m: 'GET', p: '/parametres/app/:key', f: ({ token, segs }) => ({ cmd: 'app_settings_get', args: { token, key: segs.key } }) },
+  { m: 'GET', p: '/parametres/app', f: ({ token }) => ({ cmd: 'app_settings_get', args: { token } }) },
+  { m: 'POST', p: '/parametres/app', f: ({ token, body }) => ({ cmd: 'app_settings_set', args: { token, key: val(body, 'key'), value: String(val(body, 'value') ?? '') } }) },
   { m: 'GET', p: '/parametres/fidelite', f: ({ token }) => ({ cmd: 'fidelite_get', args: { token } }) },
   { m: 'GET', p: '/parametres/fidelite/:id', f: ({ token, segs }) => ({ cmd: 'fidelite_get_by_id', args: { token, id: num(segs.id) } }) },
   { m: 'POST', p: '/parametres/fidelite', f: ({ token, body }) => ({ cmd: 'fidelite_create', args: { token, regleType: val(body, 'regle_type'), seuil: num(val(body, 'seuil')), jetonsAttribues: num(val(body, 'jetons_attribues')), valeurJeton: num(val(body, 'valeur_jeton')), actif: bval(val(body, 'actif')) } }) },

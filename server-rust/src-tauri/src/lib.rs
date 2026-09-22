@@ -320,6 +320,8 @@ pub fn run() {
             commands::tarifs_permanent_delete,
             // ==== PARAMÈTRES FIDÉLITÉ ====
             commands::parametres::fidelite_get,
+            commands::parametres::app_settings_get,
+            commands::parametres::app_settings_set,
             commands::parametres::fidelite_put,
             commands::parametres::fidelite_create,
             commands::parametres::fidelite_get_by_id,

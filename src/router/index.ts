@@ -17,6 +17,7 @@ const routes = [
       { path: 'jetons', component: () => import('@/views/admin/AdminJetons.vue') },
       { path: 'messages', component: () => import('@/views/MessagesView.vue') },
       { path: 'parametres', component: () => import('@/views/ParametresView.vue') },
+      { path: 'documentation', component: () => import('@/views/DocumentationView.vue') },
       { path: 'admin', component: () => import('@/views/admin/AdminDashboard.vue'), meta: { adminOnly: true } },
       { path: 'admin/consoles', component: () => import('@/views/admin/AdminConsoles.vue'), meta: { adminOnly: true } },
       { path: 'admin/jeux', component: () => import('@/views/admin/AdminJeux.vue') },

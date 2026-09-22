@@ -178,3 +178,67 @@ pub fn fidelite_delete(
     db(&state).remove("parametres_fidelite", id)?;
     Ok(json!({ "success": true }))
 }
+/// GET /api/parametres/app/:key or /api/parametres/app
+#[tauri::command]
+pub async fn app_settings_get(
+    state: State<'_, AppState>,
+    token: Option<String>,
+    key: Option<String>,
+) -> ApiResult<Value> {
+    claims(&state, &token)?;
+    let k = key.unwrap_or_else(|| "app_name".to_string());
+    let mut val = db(&state).get_setting(&k).ok().and_then(|o| o);
+
+    #[cfg(feature = "supabase-sync")]
+    if val.is_none() {
+        if let Some(pool) = state.supabase_pool.lock().ok().and_then(|g| g.clone()) {
+            if let Ok(rows) = crate::supabase::pull_app_settings(&pool).await {
+                for (sk, sv) in rows {
+                    let _ = db(&state).set_setting(&sk, &sv);
+                    if sk == k {
+                        val = Some(sv);
+                    }
+                }
+            }
+        }
+    }
+
+    let default_val = if k == "app_name" { "Game Lounge" } else { "" };
+    let final_val = val.unwrap_or_else(|| default_val.to_string());
+    Ok(json!({ "key": k, "value": final_val }))
+}
+
+/// POST /api/parametres/app
+#[tauri::command]
+pub async fn app_settings_set(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    token: Option<String>,
+    key: String,
+    value: String,
+) -> ApiResult<Value> {
+    use tauri::Emitter;
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    let clean_key = key.trim().to_string();
+    if clean_key.is_empty() {
+        return Err(ApiError::bad_request("Clé requise"));
+    }
+    let clean_val = value.trim().to_string();
+
+    db(&state).set_setting(&clean_key, &clean_val)?;
+
+    #[cfg(feature = "supabase-sync")]
+    {
+        if let Some(pool) = state.supabase_pool.lock().ok().and_then(|g| g.clone()) {
+            if let Err(e) = crate::supabase::set_app_setting(&pool, &clean_key, &clean_val).await {
+                eprintln!("[app_settings] Erreur sauvegarde Supabase: {}", e);
+            } else {
+                crate::logger::log_cloud(&format!("app_setting '{}' mis à jour sur Supabase", clean_key));
+            }
+        }
+    }
+
+    let _ = app.emit("app-setting-changed", json!({ "key": clean_key, "value": clean_val }));
+    Ok(json!({ "success": true, "key": clean_key, "value": clean_val }))
+}

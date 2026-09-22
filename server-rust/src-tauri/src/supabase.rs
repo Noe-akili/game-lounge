@@ -377,6 +377,36 @@ fn pg_col_to_string(row: &tokio_postgres::Row, idx: usize) -> Option<String> {
 }
 
 #[cfg(feature = "supabase-sync")]
+#[cfg(feature = "supabase-sync")]
+pub async fn pull_app_settings(pool: &SupabasePool) -> Result<Vec<(String, String)>, String> {
+    let rows = supabase_query(pool, "SELECT key, value FROM app_settings", &[]).await?;
+    let mut res = Vec::new();
+    for r in rows {
+        let k: String = r.get(0);
+        let v: String = r.get(1);
+        res.push((k, v));
+    }
+    Ok(res)
+}
+
+#[cfg(not(feature = "supabase-sync"))]
+pub async fn pull_app_settings(_pool: &()) -> Result<Vec<(String, String)>, String> {
+    Ok(Vec::new())
+}
+
+#[cfg(feature = "supabase-sync")]
+pub async fn set_app_setting(pool: &SupabasePool, key: &str, value: &str) -> Result<(), String> {
+    let sql = "INSERT INTO app_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value";
+    let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] = [&key, &value];
+    supabase_query(pool, sql, params.as_slice()).await?;
+    Ok(())
+}
+
+#[cfg(not(feature = "supabase-sync"))]
+pub async fn set_app_setting(_pool: &(), _key: &str, _value: &str) -> Result<(), String> {
+    Ok(())
+}
+
 pub async fn pull_users(pool: &SupabasePool) -> ApiResult<Vec<Value>> {
     // `deleted` fait partie du SELECT : sans elle, toute ligne pullée paraît
     // active et un compte archivé ailleurs était ressuscité sur cet appareil.

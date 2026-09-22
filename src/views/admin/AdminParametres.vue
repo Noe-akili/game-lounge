@@ -240,11 +240,11 @@ function changeTheme(mode: string) {
   toast.success(`Thème: ${mode === 'dark' ? 'Sombre' : 'Clair'}`)
 }
 
-function saveGeneral() {
+async function saveGeneral() {
   if (!appNameDraft.value.trim()) return toast.error("Le nom de l'application est requis")
-  settings.setAppName(appNameDraft.value)
+  await settings.saveAppName(appNameDraft.value)
   appNameDraft.value = settings.appName
-  toast.success("Configuration générale enregistrée")
+  toast.success("Nom de l'application mis à jour et synchronisé avec Supabase !")
 }
 
 async function fetchData() {

@@ -74,6 +74,10 @@
       <span>Rapports</span>
      </router-link>
 
+            <router-link to="/documentation" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
+       <BookOpen class="w-4 h-4" />
+       <span>Documentation</span>
+      </router-link>
       <span class="px-4 py-2 mt-4 text-[10px] font-semibold text-txt-dim uppercase tracking-widest">Paramètres</span>
       <router-link to="/admin/parametres" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
        <Settings class="w-4 h-4" />
@@ -122,6 +126,10 @@
       <MessageSquare class="w-4 h-4" />
       <span>Messages</span>
      </router-link>
+          <router-link to="/documentation" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
+      <BookOpen class="w-4 h-4" />
+      <span>Documentation</span>
+     </router-link>
      <router-link to="/parametres" class="sidebar-link" active-class="sidebar-link-active" @click="$emit('close')">
       <Settings class="w-4 h-4" />
       <span>Paramètres</span>
@@ -160,7 +168,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
 import {
  Gamepad2, LayoutDashboard, Monitor, Joystick, Users, DollarSign, Coins,
- Receipt, BarChart3, Settings, UserCog, LogOut, PlayCircle, CreditCard, MessageSquare, X, Moon, Sun, Bug
+ Receipt, BarChart3, Settings, UserCog, LogOut, PlayCircle, CreditCard, MessageSquare, X, Moon, Sun, Bug, BookOpen
 } from 'lucide-vue-next'
 
 const props = defineProps({ open: Boolean })
