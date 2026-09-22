@@ -90,7 +90,8 @@
 import { ref, computed } from 'vue'
 import {
   BookOpen, Search, ChevronDown, Monitor, PlayCircle, Users, Coins,
-  Receipt, DollarSign, Cloud, Shield, Settings, MessageSquare, Info, Zap
+  Receipt, DollarSign, Cloud, Shield, Settings, MessageSquare, Info, Zap,
+  UserCheck
 } from 'lucide-vue-next'
 
 const searchQuery = ref('')
@@ -322,9 +323,43 @@ const docs = [
         bullets: [
           { title: 'Rapports & Chiffre d\'affaires', desc: 'Consulter les statistiques financières journalières et mensuelles.' },
           { title: 'Gestion des tarifs & consoles', desc: 'Ajouter, modifier ou archiver des consoles et des grilles tarifaires.' },
-          { title: 'Gestion des utilisateurs', desc: 'Créer les comptes employés, modifier les mots de passe et les permissions.' },
+          { title: 'Gestion des utilisateurs', desc: 'Créer les comptes employés, modifier les mots de passe et les permissions (connexion internet requise : les comptes sont gérés en ligne).' },
           { title: 'Paramètres du lounge', desc: 'Changer le nom de l\'application et les règles de fidélité.' }
         ]
+      }
+    ]
+  },
+  {
+    id: 'comptes',
+    category: 'admin',
+    title: 'Comptes du personnel : tout se passe en ligne',
+    subtitle: 'Pourquoi le téléphone ne garde aucun mot de passe',
+    icon: UserCheck,
+    iconBg: 'bg-neon-violet/20',
+    iconColor: 'text-neon-violet',
+    sections: [
+      {
+        heading: 'Les comptes vivent sur le serveur, pas sur le téléphone',
+        content: 'Les comptes du personnel sont enregistrés uniquement sur le serveur. Le téléphone garde seulement le nom, l\'email et le rôle de la personne connectée, pour pouvoir écrire \"session démarrée par Jean\". Aucun mot de passe n\'est gardé sur l\'appareil, même en secret. Si le téléphone est volé, il n\'y a aucun mot de passe à voler.'
+      },
+      {
+        heading: 'Se connecter demande internet',
+        content: 'Au moment de la connexion, c\'est le serveur qui vérifie le mot de passe. Il faut donc une connexion internet pour ouvrir une session. Une fois connecté, vous pouvez travailler sans réseau : la session reste ouverte.'
+      },
+      {
+        heading: 'Créer, modifier ou supprimer un compte',
+        content: 'Dans Administration > Utilisateurs, chaque action (créer un compte, changer un mot de passe, changer le rôle, archiver ou supprimer) part directement sur le serveur. S\'il n\'y a pas de réseau, l\'application le dit clairement et ne fait rien à moitié : vous réessayez quand internet revient.'
+      },
+      {
+        heading: 'Quand un compte est supprimé',
+        bullets: [
+          { title: 'Sur l\'appareil de la personne', desc: 'L\'application s\'en aperçoit toute seule en moins d\'une minute (ou dès son ouverture).' },
+          { title: 'Effacement automatique', desc: 'Toutes les données de l\'application sur cet appareil sont effacées : sessions, joueurs, factures, historique.' },
+          { title: 'Retour au login', desc: 'L\'écran de connexion s\'affiche aussitôt, avec un message expliquant que le compte n\'est plus actif.' }
+        ]
+      },
+      {
+        tip: 'Se déconnecter volontairement ramène aussi tout de suite à l\'écran de connexion. Les données du lounge restent alors sur l\'appareil : seule la session est fermée.'
       }
     ]
   },

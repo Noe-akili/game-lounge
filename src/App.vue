@@ -40,7 +40,7 @@
 import { ref, watch, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { motion } from 'motion-v'
-import { Toaster } from 'vue-sonner'
+import { Toaster, toast } from 'vue-sonner'
 import { useAuthStore } from '@/stores/auth'
 import { useSyncStore } from '@/stores/sync'
 import { useNotifStore } from '@/stores/notifications'
@@ -49,6 +49,47 @@ const router = useRouter()
 const auth = useAuthStore()
 const routeLoading = ref(false)
 const isMobile = typeof window !== 'undefined' && window.innerWidth < 640
+
+// ============================================================
+// RETOUR À L'ÉCRAN DE CONNEXION (déconnexion, session expirée,
+// compte supprimé) : le store demande la navigation par un
+// événement, App.vue l'exécute avec le vrai routeur.
+// ============================================================
+if (typeof window !== 'undefined') {
+  window.addEventListener('gl:goto-login', () => {
+    if (router.currentRoute.value.path !== '/login') router.replace('/login')
+  })
+}
+
+// ============================================================
+// COMPTES 100 % EN LIGNE : détection de suppression du compte.
+// Rust émet "account-revoked" dès qu'il constate que le compte
+// connecté n'existe plus côté serveur. On prévient la personne,
+// on efface les données de l'appareil et on repart au login.
+// ============================================================
+let accountListenerBound = false
+function bindAccountRevoked() {
+  if (accountListenerBound || typeof window === 'undefined') return
+  const listen = (window as any).__TAURI__?.event?.listen
+  if (typeof listen !== 'function') return
+  accountListenerBound = true
+  listen('account-revoked', (ev: any) => {
+    const message = ev?.payload?.message
+      || "Votre compte n'est plus actif. Les données de cet appareil ont été effacées."
+    toast.error(message, { duration: 8000 })
+    auth.accountRevoked(message)
+  })
+}
+
+// Contrôle en ligne du compte : au démarrage, puis à chaque retour de
+// l'application au premier plan (c'est là qu'une suppression faite pendant la
+// nuit doit être vue tout de suite). Hors ligne, rien ne se passe.
+function surveillerCompte() {
+  if (typeof document === 'undefined') return
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && auth.isAuthenticated) auth.checkAccount()
+  })
+}
 
 let timeout: ReturnType<typeof setTimeout> | null = null
 router.beforeEach(() => {
@@ -60,6 +101,10 @@ router.afterEach(() => {
 })
 onMounted(async () => {
   setTimeout(() => (routeLoading.value = false), 400)
+  // L'écoute de la révocation de compte est posée TOUJOURS (même sur l'écran de
+  // login) : l'événement peut arriver pendant la restauration de session.
+  bindAccountRevoked()
+  surveillerCompte()
 })
 
 // ============================================================
@@ -86,6 +131,10 @@ function startBusinessProcesses() {
   // niveau App pour rester actifs sur TOUTES les vues — mais APRÈS auth.
   useSyncStore().bindListeners()
   useNotifStore().bind()
+  bindAccountRevoked()
+  // Premier contrôle du compte dès l'affichage de l'accueil : si le compte a été
+  // supprimé pendant que l'application était fermée, la session ne survit pas.
+  auth.checkAccount()
 }
 
 // Démarrage des processus métier UNIQUEMENT après que l'écran d'accueil

@@ -1,3 +1,4 @@
+pub mod account_watcher;
 pub mod auth;
 pub mod commands;
 pub mod db;
@@ -185,10 +186,10 @@ pub fn run() {
                 eprintln!("Final DB move panicked, emergency in-memory");
                 Db::open_in_memory().unwrap_or_else(|e| panic!("emergency in-memory failed: {e}"))
             });
-            // SEED du compte par défaut (noeakili@gmail.com) : garantit qu'il
-            // existe localement AVANT tout login (vérifié en priorité par le
-            // fallback offline). Idempotent : ne fait rien s'il existe déjà.
-            // Tous les utilisateurs proviennent exclusivement de Supabase.
+            // COMPTES 100 % EN LIGNE : aucun compte n'est seedé ni stocké ici.
+            // L'appareil ne connaît que l'identité de la personne connectée
+            // (nom, email, rôle) — jamais son mot de passe. La vérification du
+            // mot de passe et toute la gestion des comptes se font sur Supabase.
             // Charge .env avant de lire JWT_SECRET (desktop/diagnostic).
             #[cfg(feature = "supabase-sync")]
             let _ = dotenvy::dotenv();
@@ -260,6 +261,10 @@ pub fn run() {
                 crate::db_notify::attach(handle.clone(), &state.db);
                 crate::session_watcher::start(handle, state.db.clone());
             }
+            // Surveillant de compte : si l'administrateur supprime le compte
+            // connecté, cet appareil efface TOUTES ses données et revient à
+            // l'écran de connexion (au plus une minute de décalage).
+            crate::account_watcher::start(app.handle().clone());
             #[cfg(target_os = "android")]
             eprintln!("Android setup complete, AppState managed (supabase bg init)");
             Ok(())
@@ -280,6 +285,8 @@ pub fn run() {
             commands::auth_session_save,
             commands::auth_session_load,
             commands::auth_session_clear,
+            commands::auth_account_check,
+            commands::auth_local_wipe,
             // ==== CONSOLES ====
             commands::consoles_list,
             commands::consoles_get,

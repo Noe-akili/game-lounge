@@ -25,15 +25,16 @@ type SyncProgressPayload = {
   status?: string
 }
 
-// Phases de la sync initiale (miroir de SYNC_PHASES côté Rust, même ordre)
+// Phases de la sync initiale (miroir de SYNC_PHASES côté Rust, même ordre).
+// Les comptes (users) n'y figurent plus : ils sont gérés 100 % en ligne et ne
+// sont jamais téléchargés sur l'appareil.
 export const SYNC_PHASES = [
-  'users', 'consoles', 'jeux', 'joueurs', 'tarifs', 'parametres_fidelite',
+  'consoles', 'jeux', 'joueurs', 'tarifs', 'parametres_fidelite',
   'messages', 'sessions_jeu', 'jetons_transactions', 'factures', 'lignes_facture',
 ]
 
 // Libellés lisibles par phase (cohérents avec le design Game Lounge)
 export const PHASE_LABELS: Record<string, string> = {
-  users: 'Utilisateurs',
   consoles: 'Consoles',
   jeux: 'Jeux',
   joueurs: 'Joueurs',

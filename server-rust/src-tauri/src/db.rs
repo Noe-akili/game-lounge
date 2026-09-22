@@ -222,39 +222,12 @@ pub fn find_active_sessions(
     out
 }
 
-/// Faut-il CONSERVER le hash local d'un utilisateur au lieu d'appliquer celui du
-/// cloud ?
-///
-/// Avant, `password_hash` était TOUJOURS ignoré à l'arrivée du cloud. Effet de
-/// bord : un compte créé (ou un mot de passe changé) sur un appareil arrivait sur
-/// les AUTRES appareils **sans hash**, donc impossible à utiliser hors ligne — le
-/// mot de passe « ne marchait pas ».
-///
-/// Règle retenue :
-///   * ligne locale absente, ou hash local vide  -> on prend celui du cloud ;
-///   * un changement local est encore en attente d'envoi (sync_outbox PENDING ou
-///     FAILED) -> le local gagne, sinon un hash cloud périmé réautoriserait
-///     l'ANCIEN mot de passe ;
-///   * sinon (local déjà poussé) -> on accepte le cloud.
-fn garder_hash_local(conn: &Connection, record_id: i64) -> bool {
-    let local_hash: Option<String> = conn
-        .query_row("SELECT password_hash FROM users WHERE id = ?", [record_id], |r| {
-            r.get::<_, Option<String>>(0)
-        })
-        .ok()
-        .flatten();
-    let Some(hash) = local_hash else { return false };
-    if hash.trim().is_empty() {
-        return false;
-    }
-    conn.query_row(
-        "SELECT COUNT(*) FROM sync_outbox WHERE table_name = 'users' AND record_id = ? \
-         AND status IN ('PENDING', 'FAILED')",
-        [record_id],
-        |r| r.get::<_, i64>(0),
-    )
-    .unwrap_or(0)
-        > 0
+/// COMPTES 100 % EN LIGNE : plus aucun arbitrage de hash n'est nécessaire, car
+/// l'appareil n'en stocke plus AUCUN. `password_hash` est systématiquement
+/// ignoré à l'écriture d'une ligne `users` (voir `apply_remote_change_conn`), la
+/// vérification du mot de passe se fait uniquement côté cloud, au login.
+fn colonne_interdite_en_local(entity: &str, colonne: &str) -> bool {
+    entity == "users" && colonne == "password_hash"
 }
 
 // Alphabet Crockford base32 (ULID) : pas de I, L, O, U pour éviter les confusions.
@@ -442,6 +415,13 @@ impl Db {
         let _ = conn.execute_batch(
             "UPDATE sessions_jeu SET duree_secondes = duree_minutes * 60 WHERE statut IN ('en_cours','pause') AND (SELECT COUNT(*) FROM app_settings WHERE key = 'sessions_seconds_seed_v1') = 0; \
              INSERT OR REPLACE INTO app_settings (key, value) VALUES ('sessions_seconds_seed_v1', '1');",
+        );
+        // COMPTES 100 % EN LIGNE : purge des mots de passe hérités des anciennes
+        // versions. Après cette migration, plus aucun hash ne dort sur le
+        // téléphone — un APK volé ne contient plus de quoi tenter des mots de passe.
+        let _ = conn.execute_batch(
+            "UPDATE users SET password_hash = '' WHERE password_hash IS NOT NULL AND password_hash <> ''; \
+             DELETE FROM sync_outbox WHERE table_name = 'users';",
         );
         apply_pragmas(&conn);
         // Test écriture immédiate pour détecter disque plein / permission early
@@ -1118,7 +1098,7 @@ impl Db {
                     if *k == "id" || !local_cols.contains(k) {
                         continue;
                     }
-                    if entity == "users" && *k == "password_hash" && garder_hash_local(conn, record_id) {
+                    if colonne_interdite_en_local(entity, k) {
                         continue;
                     }
                     map.insert(k.clone(), v.clone());
@@ -1154,10 +1134,9 @@ impl Db {
             if *k == "id" || !local_cols.contains(k) {
                 continue;
             }
-            // Hash : le local ne gagne que si un changement local n'est pas
-            // encore parti (voir garder_hash_local). Sinon on applique celui du
-            // cloud — sans quoi un compte répliqué reste sans mot de passe.
-            if entity == "users" && *k == "password_hash" && garder_hash_local(conn, record_id) {
+            // Aucun mot de passe sur l'appareil : le hash venu du cloud est
+            // simplement jeté (comptes 100 % en ligne).
+            if colonne_interdite_en_local(entity, k) {
                 continue;
             }
             map.insert(k.clone(), v.clone());
@@ -1273,6 +1252,13 @@ impl Db {
         record_id: i64,
         payload: &Value,
     ) -> ApiResult<()> {
+        // COMPTES 100 % EN LIGNE : la table `users` n'est JAMAIS poussée depuis
+        // l'appareil. Toute création / modification / suppression de compte est
+        // écrite directement dans le cloud (voir commands/users.rs) ; la copie
+        // locale n'est qu'un annuaire d'affichage, sans secret et sans autorité.
+        if table == "users" {
+            return Ok(());
+        }
         let device = self.device_id_conn(conn)?;
         conn.execute(
             "UPDATE sync_state SET device_sequence = device_sequence + 1 WHERE device_id = ?",
@@ -1646,6 +1632,103 @@ impl Db {
             .map_err(|e| ApiError::internal(format!("Commit delete {table}: {e}")))?;
         self.mark_dirty(table);
         self.notify_change(table, "DELETE", json!({ "id": id }));
+        Ok(())
+    }
+
+    // ===================================================================
+    // COMPTES 100 % EN LIGNE : annuaire d'affichage + effacement complet
+    // ===================================================================
+
+    /// Enregistre localement l'IDENTITÉ d'un compte (id, email, nom, rôle) pour
+    /// pouvoir afficher « session démarrée par X » même sans réseau. Jamais de
+    /// mot de passe : la colonne `password_hash` est forcée à vide. Cette
+    /// écriture n'est PAS journalisée (voir `enqueue_outbox`) : elle ne remonte
+    /// donc jamais vers le cloud et ne peut pas écraser la référence en ligne.
+    pub fn cache_identite_utilisateur(
+        &self,
+        id: i64,
+        email: &str,
+        nom: &str,
+        role: &str,
+        archive: bool,
+    ) -> ApiResult<()> {
+        if id == 0 {
+            return Ok(());
+        }
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        // La colonne email est UNIQUE : un ancien enregistrement portant le même
+        // email sous un autre id ferait échouer l'écriture.
+        let params_del: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(email.to_string()), Box::new(id)];
+        let _ = conn.execute(
+            "DELETE FROM users WHERE email = ? AND id <> ?",
+            rusqlite::params_from_iter(params_del),
+        );
+        let params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
+            Box::new(id),
+            Box::new(email.to_string()),
+            Box::new(nom.to_string()),
+            Box::new(role.to_string()),
+            Box::new(now_iso()),
+            Box::new(if archive { 1_i64 } else { 0_i64 }),
+        ];
+        conn.execute(
+            "INSERT INTO users (id, email, nom, role, password_hash, created_at, deleted) \
+             VALUES (?, ?, ?, ?, '', ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET email = excluded.email, nom = excluded.nom, \
+             role = excluded.role, password_hash = '', deleted = excluded.deleted",
+            rusqlite::params_from_iter(params),
+        )
+        .map_err(|e| ApiError::internal(format!("annuaire utilisateur: {e}")))?;
+        Ok(())
+    }
+
+    /// Retire un compte de l'annuaire local (il vient d'être supprimé en ligne).
+    pub fn oublier_identite_utilisateur(&self, id: i64) -> ApiResult<()> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        conn.execute("DELETE FROM users WHERE id = ?", [id])
+            .map_err(|e| ApiError::internal(format!("oubli utilisateur: {e}")))?;
+        Ok(())
+    }
+
+    /// EFFACEMENT TOTAL des données de l'application sur cet appareil.
+    ///
+    /// Utilisé quand le compte connecté a été supprimé par un administrateur :
+    /// l'appareil ne doit plus rien conserver (sessions, factures, joueurs,
+    /// annuaire, journal de sync, sauvegarde de session). L'identité technique
+    /// de l'appareil (device_id) et le secret de signature sont conservés : ils
+    /// ne contiennent aucune donnée d'exploitation et évitent de créer un
+    /// appareil fantôme à la prochaine connexion.
+    pub fn effacer_donnees_locales(&self) -> ApiResult<()> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let transaction = conn.execute_batch("BEGIN IMMEDIATE").is_ok();
+        for table in TABLES {
+            let _ = conn.execute(&format!("DELETE FROM \"{table}\""), []);
+        }
+        let _ = conn.execute_batch(
+            "DELETE FROM hangouts; \
+             DELETE FROM sync_outbox; \
+             DELETE FROM sync_conflicts; \
+             UPDATE sync_state SET device_sequence = 0, last_uploaded = NULL, last_received = '0', last_sync_at = NULL; \
+             DELETE FROM app_settings WHERE key IN ('session_backup', 'session_user', \
+               'initial_sync_completed', 'initial_sync_tables_done', 'cloud_migration_v2');",
+        );
+        if transaction && conn.execute_batch("COMMIT").is_err() {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(ApiError::internal(
+                "Effacement des données locales impossible",
+            ));
+        }
+        crate::logger::log("WIPE", "données locales effacées (compte supprimé)");
         Ok(())
     }
 

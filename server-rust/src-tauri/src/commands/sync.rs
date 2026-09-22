@@ -17,7 +17,9 @@ fn set_sync_state<'a>(state: &'a State<'_, AppState>, v: Value) {
 }
 
 fn local_status(state: &State<'_, AppState>) -> ApiResult<Value> {
-    let has_local = !db(state).query_all("users")?.is_empty();
+    // Données d'exploitation présentes ? (la table `users` n'est plus un
+    // indicateur : les comptes ne sont plus stockés localement)
+    let has_local = !db(state).query_all("consoles")?.is_empty();
     // Toggle PERSISTÉ en SQLite : reste activé après sortie des paramètres / redémarrage
     let sync_enabled = db(state).get_setting("sync_enabled").ok().and_then(|o| o).unwrap_or_default() == "1";
     #[cfg(feature = "supabase-sync")]
@@ -157,7 +159,7 @@ pub async fn sync_run(app: tauri::AppHandle, state: State<'_, AppState>, token: 
 
     #[cfg(not(feature = "supabase-sync"))]
     {
-        let _ = db(&state).query_all("users")?;
+        let _ = db(&state).query_all("consoles")?;
         return Ok(json!({
             "success": true,
             "message": "Synchronisation locale terminée (Supabase non configuré)",
@@ -213,9 +215,13 @@ fn apply_rows(db: &crate::db::Db, table: &str, rows: &[Value]) -> usize {
 
 /// Tables de la sync initiale dans l'ordre (données de référence d'abord, puis
 /// données d'exploitation). Dérivé de crate::db::TABLES — aucune table inventée.
+///
+/// COMPTES 100 % EN LIGNE : `users` NE FAIT PLUS PARTIE de la synchronisation.
+/// Les comptes ne sont ni téléchargés, ni envoyés, ni stockés localement : ils
+/// sont lus et écrits directement dans le cloud (voir commands/users.rs).
 #[cfg(feature = "supabase-sync")]
-const SYNC_PHASES: [&str; 11] = [
-    "users", "consoles", "jeux", "joueurs", "tarifs", "parametres_fidelite",
+const SYNC_PHASES: [&str; 10] = [
+    "consoles", "jeux", "joueurs", "tarifs", "parametres_fidelite",
     "messages", "sessions_jeu", "jetons_transactions", "factures", "lignes_facture",
 ];
 
@@ -574,6 +580,12 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
         db(state).outbox_cleanup().ok();
         let _ = crate::supabase::sync_changes_cleanup(&pool).await;
     }
+
+    // 4 bis) COMPTES 100 % EN LIGNE : la connexion cloud est déjà ouverte, on
+    //        profite du cycle pour vérifier que le compte connecté n'a pas été
+    //        supprimé ailleurs. Si c'est le cas, les données de l'appareil sont
+    //        effacées et le frontend repart sur l'écran de connexion.
+    let _ = crate::account_watcher::verifier(app, state).await;
 
     // 5) Statut final.
     let pending = db(state).outbox_pending_count().unwrap_or(0);

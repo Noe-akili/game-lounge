@@ -1,100 +1,30 @@
-// Auth : authentification email/mot de passe (auth_login).
+// Auth — CONNEXION 100 % EN LIGNE.
 //
-// Le flux OBLIGATOIRE de l'app : aucune session locale -> écran LOGIN ->
-// auth_login (SQLite locale d'abord, Supabase en secours) -> token + user
-// sauvegardés -> dashboard. Il n'existe AUCUNE connexion sans mot de passe :
-// l'ancien mode secours (bootstrap admin) a été retiré, la récupération passe
-// par l'effacement des données de l'app, qui ré-installe le compte par défaut.
+// Règle absolue de cette version : aucun compte, aucun mot de passe (même haché)
+// ne vit sur l'appareil. Le flux est :
+//   aucune session locale -> écran LOGIN -> auth_login demande au cloud de
+//   vérifier le mot de passe -> jeton + identité (id, email, nom, rôle) gardés
+//   localement -> écran d'accueil.
+//
+// Conséquences assumées :
+//   * sans Internet, on ne peut pas OUVRIR une session (message explicite) ;
+//   * une session déjà ouverte continue de fonctionner hors ligne ;
+//   * un compte supprimé par un administrateur est détecté (account_watcher),
+//     l'appareil efface alors toutes ses données et revient à l'écran de login.
 use serde_json::{Value, json};
 use tauri::State;
 
 use crate::auth as auth_core;
-use crate::commands::{admin_only, claims, db, jmap, user_public};
+use crate::commands::{admin_only, claims, db, user_public};
 use crate::error::{ApiError, ApiResult};
 use crate::AppState;
 
 const LOGIN_WINDOW_MS: i64 = 15 * 60 * 1000;
+/// Au-delà de ce nombre d'échecs sur 15 minutes, le compte est mis en pause
+/// côté appareil : cela protège le cloud d'un essai de mots de passe en rafale.
+const MAX_ECHECS: usize = 10;
+
 fn now_ms() -> i64 { chrono::Utc::now().timestamp_millis() }
-
-/// Compte par DÉFAUT garanti : seedé localement (Argon2id) à chaque ouverture
-/// de l'app S'IL n'existe pas encore. Le cloud reste maître : si Supabase
-/// connaît un user avec le même email, la copie cloud (rôle/nom/hash) écrase
-/// le seed lors du premier login en ligne (flux existant).
-const DEFAULT_ADMIN_EMAIL: &str = "noeakili@gmail.com";
-const ALT_ADMIN_EMAIL: &str = "noeakili502@gmail.com";
-
-fn is_admin_email(email: &str) -> bool {
-    email.eq_ignore_ascii_case(DEFAULT_ADMIN_EMAIL) || email.eq_ignore_ascii_case(ALT_ADMIN_EMAIL)
-}
-const DEFAULT_ADMIN_PASSWORD: &str = "mdp1234";
-const DEFAULT_ADMIN_NOM: &str = "Noé Akili";
-const DEFAULT_ADMIN_ROLE: &str = "admin";
-
-/// Seed SYNCHRONE du compte par défaut (appelé au boot de l'app, AVANT tout
-/// login). Hash Argon2id calculé une seule fois si le compte n'existe pas —
-/// ~100-300ms, acceptable au boot (hors chemin UI).
-fn seed_impl(db: &crate::db::Db) {
-    // find_one_all : un compte par défaut ARCHIVÉ existe toujours en base et la
-    // colonne email est UNIQUE — le réinsérer échouerait à chaque boot.
-    let existing = db
-        .find_one_all("users", |r| {
-            r.get("email").and_then(Value::as_str).is_some_and(|e| e.eq_ignore_ascii_case(DEFAULT_ADMIN_EMAIL))
-        })
-        .ok()
-        .flatten();
-    if let Some(existing) = existing {
-        // Le rôle du compte propriétaire est GARANTI admin. Auparavant, le
-        // raccourci de login en dur forgeait un jeton role="admin" quel que
-        // soit le rôle stocké ; sans cette garantie, un compte par défaut
-        // enregistré "employe" perdrait l'accès aux écrans d'administration.
-        let role = existing.get("role").and_then(Value::as_str).unwrap_or("");
-        let archived = existing.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1;
-        if role != DEFAULT_ADMIN_ROLE && !archived {
-            if let Some(id) = existing.get("id").and_then(Value::as_i64) {
-                let mut upd = jmap();
-                upd.insert("role".into(), json!(DEFAULT_ADMIN_ROLE));
-                match db.update("users", id, &upd) {
-                    Ok(_) => crate::logger::log_auth("seed: rôle admin restauré sur le compte par défaut"),
-                    Err(e) => crate::logger::log_auth(&format!("seed: rôle admin non restauré: {e}")),
-                }
-            }
-        } else {
-            crate::logger::log_auth("seed: compte par défaut déjà présent");
-        }
-        return;
-    }
-    // Hachage RÉSILIENT (thread dédié + repli scrypt/bcrypt) : ce code tourne au
-    // démarrage sur le thread principal, une panique ici fermerait l'application
-    // avant même l'écran de connexion.
-    match auth_core::hash_password_resilient(DEFAULT_ADMIN_PASSWORD).map(|(h, _algo)| h) {
-        Ok(hash) => {
-            let mut u = jmap();
-            u.insert("email".into(), json!(DEFAULT_ADMIN_EMAIL));
-            u.insert("password_hash".into(), json!(hash));
-            u.insert("nom".into(), json!(DEFAULT_ADMIN_NOM));
-            u.insert("role".into(), json!(DEFAULT_ADMIN_ROLE));
-            u.insert("created_at".into(), json!(crate::db::now_iso()));
-            u.insert("deleted".into(), json!(0));
-            match db.insert("users", &u) {
-                Ok(_) => crate::logger::log_auth("seed: compte par défaut créé (noeakili@gmail.com)"),
-                Err(e) => crate::logger::log_auth(&format!("seed: ÉCHEC création compte par défaut: {e}")),
-            }
-        }
-        Err(e) => crate::logger::log_auth(&format!("seed: hash impossible: {e}")),
-    }
-}
-
-/// Émet une étape de progression du login au WebView (console de l'écran
-/// login, événement "login-step"). Fire-and-forget : jamais d'erreur si
-/// aucun listener. Permet à l'utilisateur de voir OÙ le login bloque.
-fn emit_step(app: &tauri::AppHandle, step: &str, detail: &str) {
-    use tauri::Emitter;
-    let _ = app.emit("login-step", json!({
-        "step": step,
-        "detail": detail,
-        "ts": chrono::Utc::now().timestamp_millis(),
-    }));
-}
 
 /// Ne compte que les ÉCHECS : trop de tentatives ne doit pas bloquer un login
 /// qui finit par réussir.
@@ -107,15 +37,21 @@ fn record_failure(state: &State<'_, AppState>, key: &str) {
     }
 }
 
-/// Comparaison mot de passe BORNÉE : si le hash est trop lent (ou le thread
-/// spawn_blocking ne répond pas), on abandonne au lieu de hanguer 20s+.
+fn trop_d_echecs(state: &State<'_, AppState>, key: &str) -> bool {
+    let now = now_ms();
+    state
+        .login_attempts
+        .lock()
+        .ok()
+        .and_then(|map| map.get(key).cloned())
+        .map(|v| v.iter().filter(|t| now - **t < LOGIN_WINDOW_MS).count() >= MAX_ECHECS)
+        .unwrap_or(false)
+}
+
+/// Comparaison du mot de passe saisi avec le hash reçu du cloud.
 fn compare_direct(password: &str, stored: &str) -> bool {
     auth_core::compare_password(password, stored)
 }
-
-/// Vérifie que le hash stocké est dans un algo supporté (scrypt/argon2/bcrypt).
-/// Seed lisible depuis l'extérieur du module (lib.rs au boot).
-pub fn ensure_default_admin(_db: &crate::db::Db) { /* Aucun utilisateur codé en dur : tous proviennent de Supabase */ }
 
 fn hash_algo(stored: &str) -> &'static str {
     if stored.starts_with("scrypt$v1") { "scrypt" }
@@ -124,248 +60,23 @@ fn hash_algo(stored: &str) -> &'static str {
     else { "inconnu" }
 }
 
-// Retourne Err en cas de problème Supabase (timeout/connexion morte) pour ne pas répondre
-// faussement "Identifiants incorrects" ; déclenche aussi la reconnexion en arrière-plan.
-#[cfg(feature = "supabase-sync")]
-async fn try_supabase_login(app: &tauri::AppHandle, state: &State<'_, AppState>, email: &str, password: &str) -> ApiResult<Option<Value>> {
-    let mut pool_opt = { state.supabase_pool.lock().ok().and_then(|g| g.clone()) };
-    // Le pool s'initialise 1,5s après le boot PUIS dépend du réseau mobile (peut
-    // prendre 10s+ à monter). Au premier login juste après l'ouverture de l'app il
-    // est donc souvent absent : au lieu d'échouer immédiatement ("Identifiants
-    // incorrects" trompeur), on TENTE une initialisation à la volée (borne 8s par
-    // init_supabase_pool). Résultat mis en cache dans AppState pour les logins suivants.
-    if pool_opt.is_none() {
-        crate::logger::log_auth("supabase: pool absent au login, tentative d'initialisation à la volée...");
-        let init = crate::supabase::init_supabase_pool().await;
-        if let Some(p) = init {
-            crate::logger::log_auth("supabase: pool créé au login");
-            if let Ok(mut guard) = state.supabase_pool.lock() {
-                *guard = Some(p.clone());
-            }
-            pool_opt = Some(p);
-        }
-    }
-    let Some(mut pool) = pool_opt else {
-        crate::logger::log_auth("supabase: pool non disponible (offline) — init à la volée a échoué, fallback local…");
-        // CLOUD INJOIGNABLE DÈS LE DÉPART : repli sur la copie locale des
-        // users déjà connus de cet appareil (répliqués lors d'un précédent
-        // login en ligne). Si l'appareil ne connaît pas ce user -> 503 réseau.
-        return try_offline_login(app, state, email, password, false).await;
-    };
-    crate::logger::log_auth(&format!("supabase: fetch user {}", email));
-    emit_step(app, "cloud", "Serveur joint — recherche du compte…");
-    // RETRY 1 fois : la cause n°1 d'échec est une connexion morte (Supabase ferme
-    // les connexions idle). On redemande un pool tout neuf et on retente la
-    // requête UNE fois avant de renvoyer le 503 à l'utilisateur.
-    let mut last_err: Option<ApiError> = None;
-    for attempt in 1..=2u32 {
-        match crate::supabase::fetch_supabase_user(&pool, email).await {
-            Ok(user) => {
-                if attempt > 1 {
-                    crate::logger::log_auth("supabase: retry 1 a réussi (connexion morte restaurée)");
-                }
-                let res = finish_supabase_login(app, state, email, password, user).await;
-                // Ok(None) = compte INCONNU du cloud (pas une erreur réseau) :
-                // dernière chance avec la copie locale (compte seedé + users
-                // répliqués) au lieu de renvoyer tout de suite "Identifiants
-                // incorrects".
-                if matches!(&res, Ok(None)) {
-                    crate::logger::log_auth("supabase: compte inconnu du cloud -> essai copie locale (seed/répliqué)…");
-                    return try_offline_login(app, state, email, password, true).await;
-                }
-                return res;
-            }
-            Err(e) => {
-                // Classification lisible : timeout réseau vs erreur SQL vs autre
-                let is_timeout = e.message.contains("timeout");
-                let is_sql = e.status == 500 && !is_timeout;
-                let kind = if is_timeout { "timeout réseau (serveur injoignable ou trop lent)"
-                          } else if is_sql { "erreur SQL/serveur Postgres"
-                          } else { "erreur inconnue" };
-                crate::logger::log_auth(&format!(
-                    "supabase: tentative {attempt}/2 ÉCHOUÉE pour {email} [{kind}]: {}",
-                    e.message
-                ));
-                last_err = Some(e);
-                if attempt == 1 {
-                    emit_step(app, "cloud", "Connexion instable — nouvelle tentative…");
-                    crate::logger::log_auth("supabase: reconnexion du pool et retry...");
-                    // Reconnexion SYNCHRONE (bornée ~14s max par les timeouts de
-                    // init_supabase_pool) : récupère un pool tout neuf ou échoue.
-                    match crate::supabase::reconnect_now(app).await {
-                        Some(fresh) => {
-                            crate::logger::log_auth("supabase: nouveau pool disponible pour le retry");
-                            emit_step(app, "cloud", "Serveur rejoint — nouvel essai…");
-                            pool = fresh;
-                        }
-                        None => {
-                            crate::logger::log_auth("supabase: reconnexion échouée (réseau toujours indisponible), abandon du retry");
-                            emit_step(app, "error", "Impossible de joindre le serveur");
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    // 503 explicite (PAS "Identifiants incorrects") : l'utilisateur comprend
-    // que c'est le RÉSEAU/le cloud, pas son mot de passe. Dernier recours avant
-    // d'échouer : repli sur la copie locale si l'appareil connaît ce user.
-    let detail = last_err.map(|e| e.message).unwrap_or_else(|| "cause inconnue".into());
-    crate::logger::log_auth(&format!("supabase: LOGIN IMPOSSIBLE après retry pour {email}: {detail} — fallback local…"));
-    return try_offline_login(app, state, email, password, false).await;
+/// Identité de la session courante, gardée en clair MAIS SANS SECRET dans
+/// app_settings : le surveillant de compte s'en sert pour demander au cloud
+/// « ce compte existe-t-il encore ? ».
+pub fn enregistrer_session(database: &crate::db::Db, id: i64, email: &str, nom: &str, role: &str) {
+    let _ = database.set_setting(
+        "session_user",
+        &json!({ "id": id, "email": email, "nom": nom, "role": role }).to_string(),
+    );
 }
 
-/// Fallback LOCAL : valide le mot de passe contre la base SQLite (compte seedé
-/// par défaut + users répliqués lors de précédents logins en ligne).
-/// Deux usages :
-///  - cloud INJOIGNABLE (cloud_ok=false) : repli réseau, erreur 503 si l'appareil
-///    ne connaît pas le compte ;
-///  - cloud joignable mais compte INCONNU du cloud (cloud_ok=true) : dernière
-///    chance locale, 401 si l'appareil ne le connaît pas non plus.
-/// Aucune création de compte hors ligne.
-async fn try_offline_login(
-    app: &tauri::AppHandle,
-    state: &State<'_, AppState>,
-    email: &str,
-    password: &str,
-    cloud_ok: bool,
-) -> ApiResult<Option<Value>> {
-    let database = db(state);
-    let existing = database.find_one("users", |r| r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(email)));
-    let Some(existing) = existing.ok().flatten() else {
-        crate::logger::log_auth(&format!("offline: user {email} inconnu de cet appareil, fallback impossible (cloud_ok={cloud_ok})"));
-        if cloud_ok {
-            // Le cloud lui-même ignore ce compte : ce n'est PAS un problème réseau.
-            return Err(ApiError::unauthorized("Identifiants incorrects"));
-        }
-        emit_step(app, "offline", "Hors ligne et appareil ne connaissant pas ce compte");
-        return Err(ApiError::service_unavailable(
-            "Serveur injoignable. Vérifiez votre connexion internet et réessayez.",
-        ));
-    };
-    if existing.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1 {
-        crate::logger::log_auth(&format!("offline: user {email} soft-deleted, fallback refusé"));
-        return Err(ApiError::unauthorized("Identifiants incorrects"));
-    }
-    let stored = existing.get("password_hash").and_then(Value::as_str).unwrap_or("");
-    let algo = if is_admin_email(&email) && stored.starts_with("$argon2") { "argon2" } else { hash_algo(stored) };
-    if stored.is_empty() || algo == "inconnu" {
-        // Hash inconnu/absent : IMPOSSIBLE de vérifier sans se tromper -> on
-        // ne devine jamais. Cloud injoignable -> erreur réseau ; cloud OK mais
-        // compte inconnu -> identifiants incorrects.
-        crate::logger::log_auth(&format!("offline: hash de {email} non vérifiable localement (algo {algo})"));
-        if cloud_ok {
-            return Err(ApiError::unauthorized("Identifiants incorrects"));
-        }
-        emit_step(app, "offline", "Copie locale non vérifiable — connexion internet requise");
-        return Err(ApiError::service_unavailable(
-            "Serveur injoignable. Vérifiez votre connexion internet et réessayez.",
-        ));
-    }
-    let mode_label = if cloud_ok { "Vérification avec la copie locale de l'appareil…" } else { "Hors ligne — vérification avec la copie locale de l'appareil…" };
-    emit_step(app, "offline", mode_label);
-    let valid = compare_direct(password, stored);
-    if !valid {
-        crate::logger::log_auth(&format!("offline: password MISMATCH pour {email}"));
-        record_failure(state, &format!("email:{email}"));
-        emit_step(app, "error", if cloud_ok { "Mot de passe incorrect" } else { "Mot de passe incorrect (mode hors ligne)" });
-        return Err(ApiError::unauthorized("Identifiants incorrects"));
-    }
-    crate::logger::log_auth(&format!("offline: LOGIN OK pour {email} (copie locale vérifiée)"));
-    emit_step(app, "success", if cloud_ok { "Connecté via la copie locale ✓" } else { "Connecté hors ligne (copie locale vérifiée) ✓" });
-    let mut nu = existing.clone();
-    if let Some(obj) = nu.as_object_mut() {
-        obj.insert("_source".into(), json!("offline"));
-    }
-    Ok(Some(nu))
-}
-
-/// Validation du mot de passe + réplication du user vers SQLite, une fois le
-/// user récupéré de Supabase (séparé pour rendre le retry de fetch lisible).
-#[cfg(feature = "supabase-sync")]
-async fn finish_supabase_login(
-    app: &tauri::AppHandle,
-    state: &State<'_, AppState>,
-    email: &str,
-    password: &str,
-    supabase_user: Option<crate::supabase::SupabaseUser>,
-) -> ApiResult<Option<Value>> {
-    let Some(supabase_user) = supabase_user else {
-        crate::logger::log_auth("supabase: user non trouvé (le cloud l'ignore) -> None pour fallback local");
-        emit_step(app, "error", "Compte inconnu du serveur — essai de la copie locale…");
-        return Ok(None);
-    };
-    // Compte archivé dans le cloud : refus net. Sans ce contrôle, un compte
-    // supprimé sur un autre appareil était recréé ici au premier login.
-    if supabase_user.deleted {
-        crate::logger::log_auth("supabase: compte archivé côté cloud, login refusé");
-        emit_step(app, "error", "Ce compte a été archivé");
-        return Err(ApiError::unauthorized("Ce compte a été archivé : demandez sa restauration à un administrateur"));
-    }
-    crate::logger::log_auth(&format!("supabase: user trouvé, algo hash Supabase = {}", hash_algo(&supabase_user.password_hash)));
-    emit_step(app, "cloud", "Compte trouvé — vérification du mot de passe…");
-    let valid = compare_direct(password, &supabase_user.password_hash);
-    if !valid {
-        // Erreur DÉFINITIVE (le mot de passe ne correspond pas côté cloud) :
-        // on ne retente PAS la copie locale, qui pourrait accepter un ancien
-        // mot de passe si sa copie est périmée.
-        crate::logger::log_auth("supabase: password MISMATCH (définitif, pas de fallback local)");
-        record_failure(state, &format!("email:{email}"));
-        emit_step(app, "error", "Mot de passe incorrect");
-        return Err(ApiError::unauthorized("Identifiants incorrects"));
-    }
-    crate::logger::log_auth("supabase: password OK");
-    let mut map = jmap();
-    map.insert("id".into(), json!(supabase_user.id));
-    map.insert("email".into(), json!(supabase_user.email));
-    map.insert("password_hash".into(), json!(supabase_user.password_hash));
-    map.insert("role".into(), json!(supabase_user.role));
-    map.insert("nom".into(), json!(supabase_user.nom));
-    if let Some(ca) = supabase_user.created_at { map.insert("created_at".into(), json!(ca)); }
-    // Après validation cloud, conserve le hash distant localement pour permettre
-    // une connexion hors ligne ; il est ensuite migré vers Argon2id localement.
-    let database = db(state);
-    match database.find_one_all("users", |r| r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(email))) {
-        Ok(Some(existing)) => {
-            // Utilisateur soft-deleted : login refusé, on ne le ressuscite pas
-            if existing.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1 {
-                crate::logger::log_auth(&format!("supabase: user {} soft-deleted, login refusé", email));
-                return Ok(None);
-            }
-            let mut updates = jmap();
-            updates.insert("role".into(), json!(supabase_user.role));
-            updates.insert("nom".into(), json!(supabase_user.nom));
-            updates.insert("password_hash".into(), json!(supabase_user.password_hash));
-            if let Some(id) = existing.get("id").and_then(Value::as_i64) {
-                let _ = database.update("users", id, &updates);
-                if let Ok(Some(u)) = database.find_one("users", |r| r.get("id").and_then(Value::as_i64) == Some(id)) { return Ok(Some(u)); }
-            }
-        }
-        Ok(None) => { if let Ok(u) = database.insert("users", &map) { return Ok(Some(u)); } }
-        _ => {}
-    }
-    Ok(Some(json!({"id": supabase_user.id, "email": supabase_user.email, "role": supabase_user.role, "nom": supabase_user.nom, "password_hash": supabase_user.password_hash})))
-}
-
-// Sans la feature Supabase : PAS de cloud du tout, donc validation 100% locale
-// (compte seedé + copies). Un build sans feature doit pouvoir se connecter.
-#[cfg(not(feature = "supabase-sync"))]
-async fn try_supabase_login(app: &tauri::AppHandle, state: &State<'_, AppState>, email: &str, password: &str) -> ApiResult<Option<Value>> {
-    try_offline_login(app, state, email, password, false).await
-}
-
-/// Connexion email + mot de passe : LOCAL-FIRST.
+/// Connexion email + mot de passe : EN LIGNE UNIQUEMENT.
 ///
-/// Le chemin critique du login ne dépend plus de Supabase :
-///   1. SQLite locale est consultée immédiatement ;
-///   2. si le compte local existe et le mot de passe est valide -> session immédiate ;
-///   3. si le compte local est absent, ou si son mot de passe ne correspond pas,
-///      Supabase peut être utilisé pour un premier login / une mise à jour du mot de passe ;
-///   4. la synchronisation métier reste séparée du login.
-///
-/// Cela évite qu'un réseau mobile lent, TLS ou un pool PostgreSQL bloque le compte
-/// local de secours et, surtout, le compte par défaut noeakili@gmail.com.
+/// 1. le cloud est interrogé (le hash ne quitte jamais le serveur vers SQLite) ;
+/// 2. le mot de passe saisi est comparé au hash renvoyé, en mémoire ;
+/// 3. en cas de succès : jeton signé + identité mise en cache (id, email, nom,
+///    rôle) — jamais de mot de passe sur l'appareil ;
+/// 4. sans réseau : erreur 503 claire, aucune tentative de vérification locale.
 #[tauri::command]
 pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -> ApiResult<Value> {
     let email = email.trim().to_ascii_lowercase();
@@ -374,169 +85,130 @@ pub fn auth_login(state: State<'_, AppState>, email: String, password: String) -
     if email.is_empty() || password.is_empty() {
         return Err(ApiError::bad_request("Email et mot de passe requis"));
     }
+    let cle_echecs = format!("email:{email}");
+    if trop_d_echecs(&state, &cle_echecs) {
+        return Err(ApiError::new(
+            429,
+            "Trop de tentatives échouées. Patientez quelques minutes avant de réessayer.",
+        ));
+    }
 
-    let database = db(&state);
-    ensure_default_admin(&database);
-
-    // 1) Le compte par defaut n'a PLUS de mot de passe code en dur.
-    //    Avant, les emails admin acceptaient toujours "mdp1234"/"admin" : tout
-    //    changement de mot de passe restait donc sans effet (l'ancien mot de
-    //    passe continuait d'ouvrir la session). La verification passe desormais
-    //    uniquement par le hash stocke en base (etape 2).
-
-    // 2) Recherche dans SQLite locale
-    let local_user = database.find_one("users", |r| {
-        r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(&email))
-            && r.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 0
+    // Connexion cloud obligatoire (pool déjà chaud, ou monté à la volée).
+    let pool = tauri::async_runtime::block_on(async {
+        crate::supabase::get_supabase_pool(&state).await
+    })
+    .map_err(|_| {
+        ApiError::service_unavailable(
+            "Connexion impossible sans Internet : les comptes sont vérifiés en ligne.",
+        )
     })?;
 
-    let mut local_user_exists = false;
-    // Hash local absent (ligne répliquée sans hash) : le cloud reste autorisé à
-    // fournir le mot de passe de référence, sinon le compte serait inutilisable.
-    let mut local_hash_missing = false;
-    if let Some(user) = &local_user {
-        local_user_exists = true;
-        let stored_hash = user.get("password_hash").and_then(Value::as_str).unwrap_or_default();
-        local_hash_missing = stored_hash.trim().is_empty();
-        if !stored_hash.is_empty() && compare_direct(&password, stored_hash) {
-            let role = user.get("role").and_then(Value::as_str).unwrap_or("employe").to_string();
-            let nom = user.get("nom").and_then(Value::as_str).unwrap_or("Utilisateur").to_string();
-            let c = auth_core::Claims {
-                id: user.get("id").and_then(Value::as_i64).unwrap_or(1),
-                email: email.clone(),
-                role,
-                nom,
-                iat: 0,
-                exp: 0,
-            };
-            let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
-            state.session_authenticated.store(true, std::sync::atomic::Ordering::Relaxed);
-            return Ok(json!({
-                "token": access,
-                "refresh_token": refresh,
-                "user": user_public(user),
-                "source": "local",
-            }));
-        }
+    // Lecture bornée : un réseau mobile mort ne doit pas figer l'écran de login.
+    let cloud = tauri::async_runtime::block_on(async {
+        tokio::time::timeout(
+            std::time::Duration::from_millis(9000),
+            crate::supabase::fetch_supabase_user(&pool, &email),
+        )
+        .await
+    })
+    .map_err(|_| {
+        ApiError::service_unavailable(
+            "Le serveur n'a pas répondu à temps. Vérifiez votre connexion et réessayez.",
+        )
+    })??;
+
+    let Some(cloud_user) = cloud else {
+        record_failure(&state, &cle_echecs);
+        crate::logger::log_auth(&format!("login refusé : {email} inconnu du serveur"));
+        return Err(ApiError::unauthorized("Identifiants incorrects"));
+    };
+    if cloud_user.deleted {
+        crate::logger::log_auth(&format!("login refusé : {email} archivé côté serveur"));
+        return Err(ApiError::unauthorized(
+            "Ce compte a été désactivé : demandez sa restauration à un administrateur",
+        ));
+    }
+    if !compare_direct(&password, &cloud_user.password_hash) {
+        record_failure(&state, &cle_echecs);
+        crate::logger::log_auth(&format!(
+            "login refusé : mot de passe incorrect pour {email} (algo {})",
+            hash_algo(&cloud_user.password_hash)
+        ));
+        return Err(ApiError::unauthorized("Identifiants incorrects"));
     }
 
-    // 3) Vérification discrète Supabase (bornée à 3s max, non-bloquante)
-    //    UNIQUEMENT si le compte est INCONNU de cet appareil. Si le compte
-    //    existe en local, le hash local est LA référence (même règle que la
-    //    sync, qui n'écrase jamais password_hash) : sinon un hash cloud encore
-    //    périmé réautoriserait l'ANCIEN mot de passe et réécrirait le hash
-    //    local — le changement de mot de passe semblait alors sans effet.
-    #[cfg(feature = "supabase-sync")]
-    if !local_user_exists || local_hash_missing {
-        // Compte inconnu de cet appareil (ou sans hash local) : premier login
-        // autorisé via le cloud, qui renseignera ensuite la copie locale.
-        let pool_opt = state.supabase_pool.lock().ok().and_then(|g| g.clone());
-        if let Some(pool) = pool_opt {
-            let res = tauri::async_runtime::block_on(async {
-                tokio::time::timeout(
-                    std::time::Duration::from_millis(3000),
-                    crate::supabase::fetch_supabase_user(&pool, &email),
-                ).await
-            });
+    // Identité seulement : nom, email, rôle. AUCUN hash n'est écrit en SQLite.
+    let database = db(&state);
+    let _ = database.cache_identite_utilisateur(
+        cloud_user.id,
+        &cloud_user.email,
+        &cloud_user.nom,
+        &cloud_user.role,
+        false,
+    );
+    enregistrer_session(database, cloud_user.id, &cloud_user.email, &cloud_user.nom, &cloud_user.role);
 
-            match res {
-                Ok(Ok(Some(cloud_user))) => {
-                    // Compte archivé dans le cloud : on ne le recrée pas ici.
-                    if cloud_user.deleted {
-                        return Err(ApiError::unauthorized(
-                            "Ce compte a été archivé : demandez sa restauration à un administrateur",
-                        ));
-                    }
-                    if compare_direct(&password, &cloud_user.password_hash) {
-                        let mut u = jmap();
-                        // L'id du cloud est REPRIS tel quel : la copie locale doit
-                        // porter le même id, sinon la sync crée un doublon (et la
-                        // contrainte UNIQUE sur l'email fait échouer le pull).
-                        u.insert("id".into(), json!(cloud_user.id));
-                        u.insert("email".into(), json!(cloud_user.email));
-                        u.insert("password_hash".into(), json!(cloud_user.password_hash));
-                        u.insert("nom".into(), json!(cloud_user.nom));
-                        u.insert("role".into(), json!(cloud_user.role));
-                        u.insert("created_at".into(), json!(cloud_user.created_at.unwrap_or_else(crate::db::now_iso)));
-                        u.insert("deleted".into(), json!(0));
+    let c = auth_core::Claims {
+        id: cloud_user.id,
+        email: cloud_user.email.clone(),
+        role: cloud_user.role.clone(),
+        nom: cloud_user.nom.clone(),
+        iat: 0,
+        exp: 0,
+    };
+    let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
+    state.session_authenticated.store(true, std::sync::atomic::Ordering::Relaxed);
+    crate::logger::log_auth(&format!("login OK (en ligne) pour {email}"));
+    Ok(json!({
+        "token": access,
+        "refresh_token": refresh,
+        "user": {
+            "id": cloud_user.id,
+            "email": cloud_user.email,
+            "role": cloud_user.role,
+            "nom": cloud_user.nom,
+        },
+        "source": "cloud",
+    }))
+}
 
-                        if let Ok(Some(existing)) = database.find_one_all("users", |r| {
-                            r.get("email").and_then(Value::as_str).is_some_and(|stored| stored.eq_ignore_ascii_case(&email))
-                        }) {
-                            if let Some(id) = existing.get("id").and_then(Value::as_i64) {
-                                // On ne touche PAS à l'id d'une ligne existante
-                                // (il sert de clé à l'outbox et aux jointures).
-                                let mut upd = u.clone();
-                                upd.remove("id");
-                                let _ = database.update("users", id, &upd);
-                            }
-                        } else {
-                            let _ = database.insert("users", &u);
-                        }
+/// POST /api/auth/account-check — LE COMPTE CONNECTÉ EXISTE-T-IL ENCORE ?
+///
+/// Appelé au démarrage, au retour de l'application au premier plan, et toutes
+/// les minutes par le surveillant. Si l'administrateur a supprimé (ou désactivé)
+/// le compte, TOUTES les données de l'appareil sont effacées et le frontend est
+/// renvoyé sur l'écran de connexion.
+/// Hors ligne, on ne conclut RIEN : pas de réseau n'est pas une suppression.
+#[tauri::command(async)]
+pub async fn auth_account_check(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    token: Option<String>,
+) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    let resultat = crate::account_watcher::verifier(&app, &state).await;
+    Ok(json!({
+        "valid": !resultat.revoque,
+        "revoked": resultat.revoque,
+        "checked": resultat.verifie,
+        "reason": resultat.raison,
+        "message": resultat.message,
+        "user": { "id": user.id, "email": user.email },
+    }))
+}
 
-                        let c = auth_core::Claims {
-                            id: cloud_user.id,
-                            email: cloud_user.email.clone(),
-                            role: cloud_user.role.clone(),
-                            nom: cloud_user.nom.clone(),
-                            iat: 0,
-                            exp: 0,
-                        };
-                        let (access, refresh) = auth_core::generate_token_pair(&c, &state.jwt_secret)?;
-                        state.session_authenticated.store(true, std::sync::atomic::Ordering::Relaxed);
-                        return Ok(json!({
-                            "token": access,
-                            "refresh_token": refresh,
-                            "user": {
-                                "id": cloud_user.id,
-                                "email": cloud_user.email,
-                                "role": cloud_user.role,
-                                "nom": cloud_user.nom,
-                            },
-                            "source": "supabase",
-                        }));
-                    } else {
-                        return Err(ApiError::unauthorized("Mot de passe incorrect (compte vérifié sur Supabase)"));
-                    }
-                }
-                Ok(Ok(None)) => {
-                    if local_user_exists {
-                        return Err(ApiError::unauthorized("Mot de passe incorrect (non trouvé sur Supabase)"));
-                    } else {
-                        return Err(ApiError::unauthorized("Compte introuvable (vérifié en local et sur Supabase)"));
-                    }
-                }
-                Ok(Err(e)) => {
-                    if local_user_exists {
-                        return Err(ApiError::unauthorized(format!("Mot de passe incorrect (Supabase indisponible : {})", e.message)));
-                    } else {
-                        return Err(ApiError::unauthorized(format!("Compte introuvable en local (Supabase indisponible : {})", e.message)));
-                    }
-                }
-                Err(_) => {
-                    if local_user_exists {
-                        return Err(ApiError::unauthorized("Mot de passe incorrect (Supabase injoignable : délai dépassé)"));
-                    } else {
-                        return Err(ApiError::unauthorized("Compte introuvable en local (Supabase injoignable : délai dépassé)"));
-                    }
-                }
-            }
-        } else {
-            if local_user_exists {
-                return Err(ApiError::unauthorized("Mot de passe incorrect (compte local existant, Supabase non connecté)"));
-            } else {
-                return Err(ApiError::unauthorized("Compte introuvable en local (Supabase non connecté / hors-ligne)"));
-            }
-        }
-    }
-
-    // Compte connu localement + hash local qui ne correspond pas : refus net.
-    // (Aucun repli cloud : le hash local est la référence, cf. étape 3.)
-    if local_user_exists {
-        Err(ApiError::unauthorized("Mot de passe incorrect"))
-    } else {
-        Err(ApiError::unauthorized("Aucun compte correspondant trouvé"))
-    }
+/// POST /api/auth/local-wipe — efface TOUTES les données de l'application sur
+/// cet appareil (compte supprimé, ou remise à zéro demandée par l'utilisateur).
+/// Volontairement sans contrôle de jeton : c'est justement quand le compte n'est
+/// plus valide qu'il faut pouvoir nettoyer.
+#[tauri::command]
+pub fn auth_local_wipe(state: State<'_, AppState>) -> ApiResult<Value> {
+    let database = db(&state);
+    database.effacer_donnees_locales()?;
+    let _ = database.set_setting("session_backup", "");
+    let _ = database.set_setting("session_user", "");
+    state.session_authenticated.store(false, std::sync::atomic::Ordering::Relaxed);
+    Ok(json!({ "wiped": true }))
 }
 
 #[tauri::command]
@@ -678,7 +350,14 @@ pub fn auth_me(state: State<'_, AppState>, token: Option<String>) -> ApiResult<V
     let user = database.find_one("users", |r| r.get("id").and_then(Value::as_i64) == Some(c.id))?;
     match user {
         Some(u) => Ok(json!({ "user": user_public(&u) })),
-        None => Err(ApiError::not_found("Utilisateur non trouvé")),
+        // Aucun compte n'est stocké localement : l'identité du jeton suffit
+        // (elle a été validée en ligne au moment de la connexion).
+        None => Ok(json!({ "user": {
+            "id": c.id,
+            "email": c.email,
+            "nom": c.nom,
+            "role": c.role,
+        }})),
     }
 }
 

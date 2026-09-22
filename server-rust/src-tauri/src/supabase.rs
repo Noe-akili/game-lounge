@@ -913,7 +913,9 @@ fn normalize_pulled_row(item: &Value) -> Value {
 
 #[cfg(feature = "supabase-sync")]
 pub async fn pull_all(pool: &SupabasePool) -> ApiResult<std::collections::HashMap<String, Vec<Value>>> {
-    let tables = ["users", "consoles", "jeux", "joueurs", "sessions_jeu", "tarifs", "factures", "jetons_transactions", "messages", "parametres_fidelite", "lignes_facture"];
+    // COMPTES 100 % EN LIGNE : `users` est volontairement absente — un snapshot ne
+    // doit jamais rapatrier de comptes (ni leurs hash) sur l'appareil.
+    let tables = ["consoles", "jeux", "joueurs", "sessions_jeu", "tarifs", "factures", "jetons_transactions", "messages", "parametres_fidelite", "lignes_facture"];
     // RAPIDE : TOUTES les tables en UNE seule requête (UNION ALL de json_agg) ->
     // 1 aller-retour réseau au lieu de 11. Si une table manque (base cloud neuve),
     // la requête échoue -> fallback par table (résilient, comme avant).
@@ -1094,4 +1096,219 @@ fn val_to_text(v: &Value) -> String {
         Value::Bool(b) => format!("{}", *b),
         _ => "".to_string(),
     }
+}
+
+/// Type du pool cloud, quelle que soit la configuration de compilation : permet
+/// d'écrire des commandes (voir commands/users.rs) sans `#[cfg]` partout.
+#[cfg(feature = "supabase-sync")]
+pub type CloudPool = SupabasePool;
+#[cfg(not(feature = "supabase-sync"))]
+pub type CloudPool = ();
+
+// ============================================================================
+// COMPTES 100 % EN LIGNE
+// ----------------------------------------------------------------------------
+// Le cloud est la SEULE source de vérité pour la table `users`. L'appareil ne
+// conserve jamais de mot de passe (ni en clair, ni haché) : il garde seulement
+// un annuaire d'affichage (id, email, nom, rôle) pour pouvoir écrire « démarré
+// par X » sur une session.
+//
+// Comme `fetch_supabase_user`, ces requêtes mettent les valeurs en dur (après
+// échappement) : le pooler Supabase ne supporte pas les prepared statements du
+// protocole étendu, les paramètres $1 cassent la requête.
+// ============================================================================
+
+#[cfg(feature = "supabase-sync")]
+fn ligne_compte(row: &tokio_postgres::Row) -> Value {
+    json!({
+        "id": row.try_get::<_, i64>(0).unwrap_or(0),
+        "email": pg_col_to_string(row, 1).unwrap_or_default(),
+        "role": pg_col_to_string(row, 2).unwrap_or_else(|| "employe".to_string()),
+        "nom": pg_col_to_string(row, 3).unwrap_or_default(),
+        "created_at": pg_col_to_string(row, 4),
+        "deleted": row.try_get::<_, i32>(5).unwrap_or(0),
+    })
+}
+
+/// Colonnes lues pour un compte : JAMAIS `password_hash` — un hash ne doit pas
+/// même transiter jusqu'à l'écran d'administration.
+#[cfg(feature = "supabase-sync")]
+const COLONNES_COMPTE: &str =
+    "id, email, role, nom, created_at, COALESCE(deleted::int, 0)";
+
+/// Liste des comptes, directement depuis le cloud.
+#[cfg(feature = "supabase-sync")]
+pub async fn cloud_users_list(pool: &SupabasePool, inclure_archives: bool) -> ApiResult<Vec<Value>> {
+    let filtre = if inclure_archives { "" } else { "WHERE COALESCE(deleted::int, 0) = 0" };
+    let sql = format!("SELECT {COLONNES_COMPTE} FROM users {filtre} ORDER BY id");
+    let rows = supabase_query(pool, &sql, &[])
+        .await
+        .map_err(|e| ApiError::internal(format!("Liste des comptes en ligne : {e}")))?;
+    Ok(rows.iter().map(ligne_compte).collect())
+}
+
+/// Un compte précis (par id), directement depuis le cloud.
+#[cfg(feature = "supabase-sync")]
+pub async fn cloud_user_get(pool: &SupabasePool, id: i64) -> ApiResult<Option<Value>> {
+    let sql = format!("SELECT {COLONNES_COMPTE} FROM users WHERE id = {id} LIMIT 1");
+    let rows = supabase_query(pool, &sql, &[])
+        .await
+        .map_err(|e| ApiError::internal(format!("Lecture du compte en ligne : {e}")))?;
+    Ok(rows.first().map(ligne_compte))
+}
+
+/// Création (ou réactivation) d'un compte dans le cloud. Le hash est calculé sur
+/// l'appareil puis envoyé ; il n'est jamais écrit en SQLite.
+#[cfg(feature = "supabase-sync")]
+pub async fn cloud_user_create(
+    pool: &SupabasePool,
+    email: &str,
+    password_hash: &str,
+    nom: &str,
+    role: &str,
+) -> ApiResult<Value> {
+    let sql = format!(
+        "INSERT INTO users (email, password_hash, nom, role, created_at, deleted) \
+         VALUES ('{}', '{}', '{}', '{}', '{}', 0) \
+         ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, \
+         nom = EXCLUDED.nom, role = EXCLUDED.role, deleted = 0 \
+         RETURNING {COLONNES_COMPTE}",
+        escape_sql(&email.to_lowercase()),
+        escape_sql(password_hash),
+        escape_sql(nom),
+        escape_sql(role),
+        escape_sql(&crate::db::now_iso()),
+    );
+    let rows = supabase_query(pool, &sql, &[])
+        .await
+        .map_err(|e| ApiError::internal(format!("Création du compte en ligne : {e}")))?;
+    rows.first()
+        .map(ligne_compte)
+        .ok_or_else(|| ApiError::internal("Le serveur n'a pas confirmé la création du compte"))
+}
+
+/// Mise à jour d'un compte dans le cloud. `champs` contient déjà des valeurs
+/// prêtes (le mot de passe est transmis haché).
+#[cfg(feature = "supabase-sync")]
+pub async fn cloud_user_update(
+    pool: &SupabasePool,
+    id: i64,
+    champs: &[(&str, String)],
+) -> ApiResult<Value> {
+    if champs.is_empty() {
+        return Err(ApiError::bad_request("Aucun champ à modifier"));
+    }
+    let sets: Vec<String> = champs
+        .iter()
+        .map(|(col, val)| format!("{col} = '{}'", escape_sql(val)))
+        .collect();
+    let sql = format!(
+        "UPDATE users SET {} WHERE id = {id} RETURNING {COLONNES_COMPTE}",
+        sets.join(", ")
+    );
+    let rows = supabase_query(pool, &sql, &[])
+        .await
+        .map_err(|e| ApiError::internal(format!("Modification du compte en ligne : {e}")))?;
+    rows.first()
+        .map(ligne_compte)
+        .ok_or_else(|| ApiError::not_found("Ce compte n'existe plus sur le serveur"))
+}
+
+/// Archivage / restauration d'un compte dans le cloud (suppression douce).
+#[cfg(feature = "supabase-sync")]
+pub async fn cloud_user_set_deleted(pool: &SupabasePool, id: i64, archive: bool) -> ApiResult<()> {
+    let flag = if archive { 1 } else { 0 };
+    let sql = format!("UPDATE users SET deleted = {flag} WHERE id = {id}");
+    supabase_query(pool, &sql, &[])
+        .await
+        .map_err(|e| ApiError::internal(format!("Archivage du compte en ligne : {e}")))?;
+    Ok(())
+}
+
+/// Suppression DÉFINITIVE d'un compte dans le cloud.
+#[cfg(feature = "supabase-sync")]
+pub async fn cloud_user_permanent_delete(pool: &SupabasePool, id: i64) -> ApiResult<()> {
+    let sql = format!("DELETE FROM users WHERE id = {id}");
+    supabase_query(pool, &sql, &[])
+        .await
+        .map_err(|e| ApiError::internal(format!("Suppression du compte en ligne : {e}")))?;
+    Ok(())
+}
+
+/// État du compte connecté : existe-t-il encore, et est-il archivé ?
+/// Sert à la détection de suppression (voir `account_watcher`).
+#[cfg(feature = "supabase-sync")]
+pub async fn cloud_user_statut(pool: &SupabasePool, id: i64, email: &str) -> ApiResult<Value> {
+    let sql = format!(
+        "SELECT {COLONNES_COMPTE} FROM users WHERE id = {id} OR email = '{}' LIMIT 1",
+        escape_sql(&email.to_lowercase())
+    );
+    let rows = supabase_query(pool, &sql, &[])
+        .await
+        .map_err(|e| ApiError::internal(format!("Vérification du compte : {e}")))?;
+    match rows.first() {
+        None => Ok(json!({ "existe": false, "archive": false })),
+        Some(row) => {
+            let compte = ligne_compte(row);
+            let archive = compte.get("deleted").and_then(Value::as_i64).unwrap_or(0) == 1;
+            Ok(json!({
+                "existe": true,
+                "archive": archive,
+                "id": compte.get("id"),
+                "email": compte.get("email"),
+                "nom": compte.get("nom"),
+                "role": compte.get("role"),
+            }))
+        }
+    }
+}
+
+// ---- Variantes sans la feature cloud : la gestion des comptes est impossible,
+//      et on le dit clairement au lieu de retomber sur des données locales. ----
+
+#[cfg(not(feature = "supabase-sync"))]
+fn hors_ligne<T>() -> ApiResult<T> {
+    Err(ApiError::service_unavailable(
+        "La gestion des comptes est en ligne uniquement (version sans cloud)",
+    ))
+}
+
+#[cfg(not(feature = "supabase-sync"))]
+pub async fn get_supabase_pool(_state: &crate::AppState) -> ApiResult<()> {
+    hors_ligne()
+}
+
+#[cfg(not(feature = "supabase-sync"))]
+pub async fn cloud_users_list(_pool: &(), _inclure_archives: bool) -> ApiResult<Vec<Value>> {
+    hors_ligne()
+}
+
+#[cfg(not(feature = "supabase-sync"))]
+pub async fn cloud_user_get(_pool: &(), _id: i64) -> ApiResult<Option<Value>> {
+    hors_ligne()
+}
+
+#[cfg(not(feature = "supabase-sync"))]
+pub async fn cloud_user_create(_pool: &(), _email: &str, _hash: &str, _nom: &str, _role: &str) -> ApiResult<Value> {
+    hors_ligne()
+}
+
+#[cfg(not(feature = "supabase-sync"))]
+pub async fn cloud_user_update(_pool: &(), _id: i64, _champs: &[(&str, String)]) -> ApiResult<Value> {
+    hors_ligne()
+}
+
+#[cfg(not(feature = "supabase-sync"))]
+pub async fn cloud_user_set_deleted(_pool: &(), _id: i64, _archive: bool) -> ApiResult<()> {
+    hors_ligne()
+}
+
+#[cfg(not(feature = "supabase-sync"))]
+pub async fn cloud_user_permanent_delete(_pool: &(), _id: i64) -> ApiResult<()> {
+    hors_ligne()
+}
+
+#[cfg(not(feature = "supabase-sync"))]
+pub async fn cloud_user_statut(_pool: &(), _id: i64, _email: &str) -> ApiResult<Value> {
+    hors_ligne()
 }

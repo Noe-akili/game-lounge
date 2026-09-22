@@ -3,7 +3,7 @@
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full max-w-full min-w-0">
       <div>
         <h3 class="font-gaming text-lg font-bold">Utilisateurs</h3>
-        <p class="text-xs text-txt-dim">Gestion centralisée des comptes sur Supabase</p>
+        <p class="text-xs text-txt-dim">Comptes gérés 100 % en ligne — rien n'est stocké sur cet appareil</p>
       </div>
 
       <div class="flex items-center gap-3 flex-wrap">
@@ -16,6 +16,18 @@
           <UserPlus class="w-4 h-4" /> Ajouter un utilisateur
         </button>
       </div>
+    </div>
+
+    <!-- COMPTES 100 % EN LIGNE : l'utilisateur doit comprendre qu'ici, sans
+         internet, rien ne peut être créé ni modifié (aucune file d'attente). -->
+    <div class="card w-full max-w-full min-w-0 overflow-hidden flex items-start gap-3 border-neon-blue/20">
+      <Info class="w-4 h-4 text-neon-blue shrink-0 mt-0.5" />
+      <p class="text-xs text-txt-dim leading-relaxed">
+        Les comptes et les mots de passe vivent uniquement sur le serveur : cet appareil n'en garde
+        aucune copie. Une connexion internet est donc nécessaire pour créer, modifier, archiver ou
+        supprimer un compte. Quand un compte est supprimé, l'appareil de la personne concernée efface
+        automatiquement toutes ses données et revient à l'écran de connexion.
+      </p>
     </div>
 
     <div v-if="listLoading" class="card w-full max-w-full min-w-0 overflow-hidden">
@@ -132,7 +144,7 @@ import { api } from '@/utils/api'
 import { useAuthStore } from '@/stores/auth'
 import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
-import { UserPlus, Trash2, Loader2, Pencil, RotateCcw, Archive } from 'lucide-vue-next'
+import { UserPlus, Trash2, Loader2, Pencil, RotateCcw, Archive, Info } from 'lucide-vue-next'
 import Loader from '@/components/ui/Loader.vue'
 import { formatDate } from '@/utils/helpers'
 import { isValidEmail, isValidPassword, isValidNom, isValidRole, sanitizeInput } from '@/utils/validators'
@@ -156,7 +168,11 @@ async function fetchUsers() {
     const query = showArchived.value ? '?include_deleted=1' : ''
     users.value = await api.get(`/users${query}`)
   } catch (e: any) {
-    toast.error('Erreur chargement utilisateurs: ' + (e.message || 'Connectez-vous à internet'))
+    // Liste lue en ligne : hors réseau il n'y a rien à afficher, on le dit.
+    users.value = []
+    toast.error(e?.status === 503
+      ? 'Comptes indisponibles hors ligne : connectez l\'appareil à internet.'
+      : 'Erreur chargement utilisateurs: ' + (e.message || 'réessayez'))
   } finally {
     listLoading.value = false
   }

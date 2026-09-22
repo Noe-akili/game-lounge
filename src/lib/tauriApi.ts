@@ -27,7 +27,12 @@ function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<any> {
   // Les commandes users_* hachent un mot de passe (Argon2) et écrivent en base :
   // 8 s était trop juste sur un téléphone chargé et le timeout masquait la vraie
   // cause de l'échec (création / changement de mot de passe « sans effet »).
-  const timeoutMs = cmd.startsWith('users_') ? 25000 : ((cmd === 'auth_login' || cmd === 'auth_refresh') ? 35000 : 15000)
+  // Les commandes users_* et auth_account_check parlent au cloud (création de
+  // compte, vérification en ligne) : elles ont besoin de plus que 8 s sur un
+  // réseau mobile lent, sinon le timeout masque la vraie cause de l'échec.
+  const timeoutMs = (cmd.startsWith('users_') || cmd === 'auth_account_check')
+    ? 25000
+    : ((cmd === 'auth_login' || cmd === 'auth_refresh') ? 35000 : 15000)
   return Promise.race([
     Promise.resolve(fn.call(w.__TAURI__?.core || w.__TAURI_INTERNALS__, cmd, args)).catch((e:any)=>{ console.warn('[TAURI_INVOKE_ERROR]', cmd, e); throw e; }),
     new Promise((_, reject) => setTimeout(() => { console.warn('[TAURI_INVOKE_ERROR] timeout', cmd); reject({ message: 'Timeout IPC (Android WebView)', status: 504 }) }, timeoutMs))
@@ -84,6 +89,10 @@ const ROUTES: RouteDef[] = [
   { m: 'POST', p: '/auth/business-ready', f: () => ({ cmd: 'auth_business_ready', args: {} }) },
   { m: 'POST', p: '/auth/business-suspend', f: () => ({ cmd: 'auth_business_suspend', args: {} }) },
   { m: 'GET', p: '/auth/me', f: ({ token }) => ({ cmd: 'auth_me', args: { token } }) },
+  // COMPTES 100 % EN LIGNE : le compte connecté existe-t-il toujours ?
+  { m: 'POST', p: '/auth/account-check', f: ({ token }) => ({ cmd: 'auth_account_check', args: { token } }) },
+  // Effacement total des données de l'appareil (compte supprimé / remise à zéro)
+  { m: 'POST', p: '/auth/local-wipe', f: () => ({ cmd: 'auth_local_wipe', args: {} }) },
 
   // ===== CONSOLES =====
   { m: 'GET', p: '/consoles', f: ({ token, query }) => ({ cmd: 'consoles_list', args: { token, includeDeleted: bval(query.include_deleted) || false } }) },
