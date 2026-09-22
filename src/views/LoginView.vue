@@ -30,31 +30,9 @@
           Vérification en cours… réponse dans <span class="font-mono font-bold text-neon-violet">{{ countdownDisplay }}</span>
         </div>
 
-        <!-- Test diagnostic discret de Supabase -->
-        <button type="button" @click="testSupabase" :disabled="testingSupabase || loginPending"
-                class="w-full text-center text-xs text-txt-dim hover:text-cyan-400 underline underline-offset-4 py-1 transition-colors">
-          {{ testingSupabase ? 'Test Supabase en cours…' : 'Tester la connexion Supabase (diagnostic)' }}
-        </button>
-
         <!-- Verdict final : affiché à la réponse OU à 0 (jamais avant) -->
         <div v-if="verdict" class="text-sm text-center font-medium" :class="verdictClass">{{ verdict }}</div>
 
-        <!-- Console des étapes : montre OÙ le login en est / bloque -->
-        <div v-if="steps.length" class="rounded-lg border border-white/10 bg-black/40 p-3 font-mono text-[11px] leading-5">
-          <div class="text-txt-dim mb-1 flex items-center justify-between">
-            <span>— Journal de connexion —</span>
-            <button v-if="!loginPending" type="button" @click="clearConsole" class="text-txt-dim hover:text-txt text-[10px]">effacer</button>
-          </div>
-          <div ref="consoleEl" class="max-h-40 overflow-y-auto space-y-0.5">
-            <div v-for="(s, i) in steps" :key="i" class="flex gap-2">
-              <span class="text-txt-dim shrink-0">{{ s.t }}</span>
-              <span class="shrink-0" :class="s.status === 'fail' ? 'text-neon-red' : s.status === 'ok' ? 'text-neon-green' : 'text-neon-violet'">
-                {{ s.status === 'fail' ? '✗' : s.status === 'ok' ? '✓' : '•' }}
-              </span>
-              <span :class="s.status === 'fail' ? 'text-neon-red' : 'text-txt-muted'">{{ s.label }}</span>
-            </div>
-          </div>
-        </div>
       </form>
     </div>
   <WelcomeModal :open="showWelcome" :user="auth.user" @continue="proceedToApp" />
@@ -69,23 +47,16 @@ import WelcomeModal from '@/components/ui/WelcomeModal.vue'
 // AUCUN appel métier. Tout cela est lancé APRÈS, une fois l'écran d'accueil
 // affiché (App.vue + AppLayout).
 //
-// Transparence utilisateur :
-//  - Console d'étapes : le backend Rust émet des événements "login-step" à
-//    chaque phase (identifiants reçus -> serveur joint -> compte trouvé ->
-//    mot de passe vérifié -> session). La console les affiche en temps réel,
-//    ce qui permet de voir OÙ ça bloque (réseau, compte, mot de passe…).
-//  - Compte à rebours 60s : lancé dès la soumission. TANT QUE le compte
-//    tourne, aucun verdict (ni succès ni échec). À la réponse du backend OU
-//    à zéro, un verdict unique et clair est annoncé à l'utilisateur.
+// Transparence utilisateur : un compte à rebours est lancé dès la soumission.
+// Tant qu'il tourne, aucun verdict n'est annoncé ; à la réponse du serveur ou
+// à zéro, un seul message clair est affiché (jamais de jargon technique).
 
-import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { Loader2 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
-import { api } from '@/utils/api'
 import { isTauriRuntime } from '@/lib/tauriApi'
-import { listen } from '@tauri-apps/api/event'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -110,73 +81,12 @@ const form = reactive({
 const backendReady = ref(isTauriRuntime())
 
 onMounted(async () => {
-  // IMPORTANT : binder le listener des étapes DÈS le montage, même si Tauri
-  // est déjà prêt (cas normal sur Android). Un early-return ici empêchait
-  // l'affichage des étapes backend sur l'app Android.
-  bindLoginSteps()
   if (backendReady.value) return
   // WebView Android : l'injection Tauri peut être retardée au boot ; on attend
   // qu'elle soit prête plutôt que d'afficher une erreur trompeuse.
   const { waitForTauri } = await import('@/lib/transport')
   backendReady.value = await waitForTauri(4000)
-  bindLoginSteps() // 2e appel sans risque : la fonction est idempotente (listener déjà posé)
 })
-
-// ================= CONSOLE DES ÉTAPES =================
-type StepStatus = 'active' | 'ok' | 'fail'
-type Step = { label: string; status: StepStatus; t: string }
-const steps = ref<Step[]>([])
-const consoleEl = ref<HTMLElement | null>(null)
-
-function nowLabel(): string {
-  const d = new Date()
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
-
-function pushStep(label: string, status: StepStatus = 'active') {
-  // Termine visuellement l'étape précédente si elle était en cours.
-  const prev = steps.value[steps.value.length - 1]
-  if (prev && prev.status === 'active') prev.status = 'ok'
-  steps.value.push({ label, status, t: nowLabel() })
-  if (steps.value.length > 30) steps.value.shift()
-  nextTick(() => { consoleEl.value?.scrollTo({ top: consoleEl.value.scrollHeight }) })
-}
-
-function failStep(label: string) {
-  const prev = steps.value[steps.value.length - 1]
-  if (prev && prev.status === 'active') prev.status = 'ok'
-  steps.value.push({ label, status: 'fail', t: nowLabel() })
-  if (steps.value.length > 30) steps.value.shift()
-  nextTick(() => { consoleEl.value?.scrollTo({ top: consoleEl.value.scrollHeight }) })
-}
-
-function clearConsole() {
-  steps.value = []
-}
-
-// Étapes émises par le backend Rust (commande auth_login) via l'événement
-// "login-step" : on voit en direct où la vérification en est.
-let unlistenSteps: (() => void) | null = null
-let loginStepsReady: Promise<void> = Promise.resolve()
-function bindLoginSteps() {
-  if (unlistenSteps || typeof window === 'undefined') return loginStepsReady
-  loginStepsReady = listen('login-step', (e: any) => {
-    const p = e?.payload || {}
-    const step = String(p.step || '')
-    const detail = String(p.detail || '')
-    if (!detail) return
-    if (step === 'error') failStep(detail)
-    else if (step === 'success') pushStep(detail, 'ok')
-    else pushStep(detail)
-  }).then((un: any) => {
-    unlistenSteps = un
-  }).catch((e: any) => {
-    console.warn('[LOGIN_EVENT_LISTENER_ERROR]', e)
-    pushStep('Journal backend indisponible, vérification toujours en cours…')
-  })
-  return loginStepsReady
-}
 
 // ============ COMPTE À REBOURS 60s + VERDICT UNIQUE ============
 const LOGIN_TIMEOUT_S = 20
@@ -267,26 +177,6 @@ function homePath() {
   return auth.user?.role === 'admin' ? '/admin' : '/dashboard'
 }
 
-const testingSupabase = ref(false)
-
-async function testSupabase() {
-  if (testingSupabase.value) return
-  testingSupabase.value = true
-  pushStep('Diagnostic Supabase en cours…')
-  try {
-    const res: any = await api.post('/auth/test-supabase')
-    if (res?.connected) {
-      pushStep(`Supabase en ligne : ${res.message} ✓`, 'ok')
-    } else {
-      failStep(`Supabase injoignable : ${res?.message || 'hors-ligne'}`)
-    }
-  } catch (err: any) {
-    failStep(`Test Supabase : ${err?.message || err}`)
-  } finally {
-    testingSupabase.value = false
-  }
-}
-
 function proceedToApp() {
   const role = auth.user?.role || "employe"
   router.replace(role === "admin" ? "/admin" : "/dashboard")
@@ -299,29 +189,30 @@ async function handleLogin() {
     return
   }
   loginPending.value = true
-  verdict.value = ""
   success.value = false
   const mail = form.email.trim().toLowerCase()
-  pushStep(`Vérification des identifiants (${mail})…`)
+  startCountdown()
   try {
-    const data: any = await auth.login(mail, form.password)
-    const source = data?.source || 'local'
-    pushStep(`Connexion validée [source: ${source}] ✓`, 'ok')
-    verdict.value = '✓ Connecté — ouverture de votre espace…'
+    await auth.login(mail, form.password)
+    pendingOutcome = 'success'
+    stopCountdown()
     success.value = true
+    verdict.value = 'Connecté — ouverture de votre espace…'
     showWelcome.value = true
-    // Redirection automatique fluide après 1.6s ou clic direct
-    setTimeout(() => {
-      proceedToApp()
-    }, 1700)
+    // Laisse le temps de lire le message de bienvenue, puis ouvre l'app.
+    setTimeout(() => { proceedToApp() }, 1700)
   } catch (e: any) {
-    const msg = e?.message || e?.error || "Identifiants incorrects"
-    failStep(msg)
-    verdict.value = msg
+    pendingOutcome = 'fail'
+    pendingError = friendlyError(e)
+    stopCountdown()
     success.value = false
+    verdict.value = pendingError
   } finally {
     loginPending.value = false
   }
 }
+
+// Sécurité : jamais de minuteur qui survit à l'écran.
+onBeforeUnmount(stopCountdown)
 
 </script>

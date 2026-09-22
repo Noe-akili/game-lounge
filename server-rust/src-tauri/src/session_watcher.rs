@@ -2,7 +2,11 @@
 // a dépassé son temps ALLOUÉ (duree_allouee). Si oui :
 //   1. la session est finalisée automatiquement (facture + jetons de fidélité),
 //   2. une VRAIE notification Android est envoyée sur l'appareil
-//      ("Temps écoulé — Session terminée"), via tauri-plugin-notification.
+//      ("Temps écoulé" + qui jouait, sur quel poste, et le montant à payer),
+//      via tauri-plugin-notification.
+//   3. tant qu'une session tourne et qu'il reste moins de 30 minutes, une
+//      notification COMPTE À REBOURS se met à jour toute seule ("Il reste
+//      12 min") : silencieuse, persistante, et remplacée par le message final.
 //
 // Pourquoi un watcher côté Rust : l'app peut être en arrière-plan (WebView
 // suspendu, timers JS gelés) — seul un thread/process natif reste fiable pour
@@ -44,12 +48,15 @@ pub fn start(app: tauri::AppHandle, db: std::sync::Arc<Db>) {
 /// Idempotent : une session déjà 'terminee' n'est jamais retouchée.
 fn check_expired_sessions(app: &tauri::AppHandle, db: &Db) {
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let expired = {
+    let (expired, restantes) = {
         let conn = match db.0.lock() {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(), // Mutex empoisonné : on récupère
         };
         let mut expired = Vec::new();
+        // Sessions encore en cours : (id, secondes restantes) — servent au
+        // compte à rebours affiché dans la barre de notifications.
+        let mut restantes: Vec<(i64, i64)> = Vec::new();
         // TOUTES les sessions en cours sont évaluées, pas seulement la plus
         // ancienne : une session de 5 min démarrée après une session de 3 h doit
         // expirer la première. (Avant, la boucle s'arrêtait dès que la session la
@@ -69,6 +76,9 @@ fn check_expired_sessions(app: &tauri::AppHandle, db: &Db) {
                 i64::MAX
             };
             if reste_s > 0 {
+                if reste_s != i64::MAX {
+                    restantes.push((id, reste_s));
+                }
                 continue; // cette session a encore du temps -> on passe à la suivante
             }
             // Durée EXACTE à facturer, À LA SECONDE : allocation entière +
@@ -84,8 +94,11 @@ fn check_expired_sessions(app: &tauri::AppHandle, db: &Db) {
                 [id],
             );
         }
-        expired
+        (expired, restantes)
     };
+    // Compte à rebours : une notification qui se met à jour toute seule pour
+    // chaque session bientôt terminée (voir plus bas).
+    rafraichir_comptes_a_rebours(app, db, &restantes);
 
     for (id, duree_imposee) in expired {
         // Récupère la ligne (re-marquée en_cours si un pull cloud l'a déjà
@@ -120,7 +133,7 @@ fn check_expired_sessions(app: &tauri::AppHandle, db: &Db) {
                             id, montant
                         );
                         // Notification Android réelle (vibration + son système).
-                        send_ended_notification(app, id, montant);
+                        notifier_fin(app, db, id, montant);
                     }
                     Err(e) => {
                         eprintln!(
@@ -136,34 +149,128 @@ fn check_expired_sessions(app: &tauri::AppHandle, db: &Db) {
     }
 }
 
-/// Envoie la notification native "Session terminée" (Android 13+ = runtime
-/// permission demandée automatiquement par le plugin au premier envoi).
-fn send_ended_notification(app: &tauri::AppHandle, session_id: i64, montant: i64) {
-    use tauri_plugin_notification::{NotificationExt, PermissionState};
-    let title = "⏱ Temps écoulé — Session terminée";
-    let body = format!(
-        "La session #{} est terminée automatiquement. Montant : {} FC.",
-        session_id, montant
+/// Identifiant de notification réservé au compte à rebours d'une session.
+/// Même identifiant = la notification est REMPLACÉE au lieu de s'empiler.
+fn id_notif(session_id: i64) -> i32 {
+    900_000 + (session_id.rem_euclid(50_000) as i32)
+}
+
+/// Dernier texte affiché pour chaque session : évite de renvoyer la même
+/// notification dix fois par minute (le watcher passe toutes les 10 s).
+fn dernier_texte() -> &'static std::sync::Mutex<std::collections::HashMap<i64, String>> {
+    static ETAT: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<i64, String>>> =
+        std::sync::OnceLock::new();
+    ETAT.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// « Jean sur PlayStation 5 (poste 3) » — phrase lisible décrivant la session.
+/// Retourne une phrase générique si les noms manquent, JAMAIS un identifiant.
+fn qui_joue(db: &Db, session_id: i64) -> String {
+    let conn = match db.0.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    let ligne = conn.query_row(
+        "SELECT COALESCE(j.nom, ''), COALESCE(c.nom, ''), COALESCE(c.poste_numero, 0) \
+         FROM sessions_jeu s \
+         LEFT JOIN joueurs j ON j.id = s.joueur_id \
+         LEFT JOIN consoles c ON c.id = s.console_id \
+         WHERE s.id = ?1",
+        [session_id],
+        |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
+        },
     );
-    let notification = app.notification();
-    // Permission : sur Android 13+ elle peut être refusée/absente — on la
-    // demande au besoin, mais on n'échoue jamais bruyamment (best effort).
-    match notification.permission_state() {
-        Ok(PermissionState::Granted) => {}
-        Ok(_) => {
-            if let Ok(state) = notification.request_permission() {
-                if state != PermissionState::Granted {
-                    eprintln!("[session-watcher] permission notification refusée");
-                    return;
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("[session-watcher] permission state failed: {e}");
-            return;
+    drop(conn);
+    let (joueur, console, poste) = match ligne {
+        Ok(v) => v,
+        Err(_) => (String::new(), String::new(), 0),
+    };
+    let mut ou = console.trim().to_string();
+    if poste > 0 {
+        if ou.is_empty() {
+            ou = format!("poste {poste}");
+        } else {
+            ou = format!("{ou} (poste {poste})");
         }
     }
-    if let Err(e) = notification.builder().title(title).body(body).show() {
-        eprintln!("[session-watcher] notification failed: {e}");
+    match (joueur.trim().is_empty(), ou.is_empty()) {
+        (false, false) => format!("{} sur {}", joueur.trim(), ou),
+        (false, true) => joueur.trim().to_string(),
+        (true, false) => format!("Le joueur sur {ou}"),
+        (true, true) => "La partie en cours".to_string(),
+    }
+}
+
+/// Compte à rebours : met à jour (ou crée) une notification par session dont
+/// il reste moins de 30 minutes. Silencieuse et persistante : elle informe
+/// sans faire sonner le téléphone à chaque minute.
+fn rafraichir_comptes_a_rebours(app: &tauri::AppHandle, db: &Db, restantes: &[(i64, i64)]) {
+    /// Au-delà, on n'encombre pas la barre de notifications.
+    const SEUIL_S: i64 = 30 * 60;
+    let encore: std::collections::HashSet<i64> = restantes.iter().map(|(id, _)| *id).collect();
+    // Oublie les sessions terminées / disparues pour ne pas garder de mémoire inutile.
+    if let Ok(mut map) = dernier_texte().lock() {
+        map.retain(|id, _| encore.contains(id));
+    }
+    for (id, reste_s) in restantes.iter().copied() {
+        if reste_s > SEUIL_S {
+            continue;
+        }
+        // Dernière minute : on descend à la seconde pour que ce soit utile.
+        let texte = if reste_s >= 60 {
+            format!("Il reste {}", crate::notify::duree_lisible(reste_s))
+        } else {
+            format!("Il reste {reste_s} secondes")
+        };
+        // Même texte que la dernière fois -> rien à renvoyer.
+        let deja = dernier_texte()
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&id).cloned())
+            .unwrap_or_default();
+        if deja == texte {
+            continue;
+        }
+        let corps = format!(
+            "{} — le temps de jeu se termine bientôt.",
+            qui_joue(db, id)
+        );
+        crate::notify::envoyer(
+            app,
+            &texte,
+            &corps,
+            crate::notify::Options {
+                id: Some(id_notif(id)),
+                silencieuse: true,
+                persistante: true,
+            },
+        );
+        if let Ok(mut map) = dernier_texte().lock() {
+            map.insert(id, texte);
+        }
+    }
+}
+
+/// Notification finale : remplace le compte à rebours de la même session par
+/// le résultat, avec son et vibration cette fois (c'est l'information utile).
+fn notifier_fin(app: &tauri::AppHandle, db: &Db, session_id: i64, montant: i64) {
+    let corps = format!(
+        "{} : le temps est terminé, la session a été fermée. À payer : {}.",
+        qui_joue(db, session_id),
+        crate::notify::montant_fc(montant)
+    );
+    crate::notify::envoyer(
+        app,
+        "Temps écoulé",
+        &corps,
+        crate::notify::Options::remplace(id_notif(session_id)),
+    );
+    if let Ok(mut map) = dernier_texte().lock() {
+        map.remove(&session_id);
     }
 }

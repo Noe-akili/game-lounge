@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use tauri::State;
 
 use crate::auth as auth_core;
-use crate::commands::{admin_only, claims, db, user_public};
+use crate::commands::{claims, db, user_public};
 use crate::error::{ApiError, ApiResult};
 use crate::AppState;
 
@@ -209,101 +209,6 @@ pub fn auth_local_wipe(state: State<'_, AppState>) -> ApiResult<Value> {
     let _ = database.set_setting("session_user", "");
     state.session_authenticated.store(false, std::sync::atomic::Ordering::Relaxed);
     Ok(json!({ "wiped": true }))
-}
-
-#[tauri::command]
-pub fn auth_test_supabase(state: State<'_, AppState>) -> ApiResult<Value> {
-    #[cfg(feature = "supabase-sync")]
-    {
-        let pool_opt = state.supabase_pool.lock().ok().and_then(|g| g.clone());
-        let Some(pool) = pool_opt else {
-            return Ok(json!({
-                "connected": false,
-                "message": "Supabase n'est pas connecté (hors-ligne ou non initialisé)"
-            }));
-        };
-        let res = tauri::async_runtime::block_on(async {
-            tokio::time::timeout(
-                std::time::Duration::from_millis(3000),
-                crate::supabase::ping(&pool),
-            ).await
-        });
-        match res {
-            Ok(Ok(_)) => Ok(json!({
-                "connected": true,
-                "message": "Connexion Supabase active et joignable"
-            })),
-            Ok(Err(err)) => Ok(json!({
-                "connected": false,
-                "message": format!("Supabase a répondu avec une erreur : {}", err)
-            })),
-            Err(_) => Ok(json!({
-                "connected": false,
-                "message": "Délai dépassé (>3s) avec Supabase"
-            })),
-        }
-    }
-    #[cfg(not(feature = "supabase-sync"))]
-    {
-        Ok(json!({
-            "connected": false,
-            "message": "Supabase désactivé dans cette version"
-        }))
-    }
-}
-
-#[tauri::command]
-pub fn auth_debug_info(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
-    let user = claims(&state, &token)?;
-    admin_only(&user)?;
-    let users = db(&state).query_all("users")?;
-    let list: Vec<Value> = users.iter().map(|u| {
-        let hash = u.get("password_hash").and_then(Value::as_str).unwrap_or("");
-        json!({
-            "id": u.get("id"),
-            "email": u.get("email"),
-            "role": u.get("role"),
-            "nom": u.get("nom"),
-            "hash_algo": hash_algo(hash),
-            "hash_len": hash.len(),
-        })
-    }).collect();
-    let failures = state.login_attempts.lock().map(|m| m.get("local").cloned().unwrap_or_default().len()).unwrap_or(0);
-    Ok(json!({ "users": list, "login_failures_recent": failures }))
-}
-
-/// Diagnostic : liste les users côté Supabase (email + algo de hash uniquement)
-#[cfg(feature = "supabase-sync")]
-#[tauri::command(async)]
-pub async fn auth_debug_supabase_users(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
-    let user = claims(&state, &token)?;
-    admin_only(&user)?;
-    let pool_opt = { state.supabase_pool.lock().ok().and_then(|g| g.clone()) };
-    let Some(pool) = pool_opt else { return Ok(json!({ "users": [], "online": false })) };
-    match crate::supabase::supabase_query(&pool, "SELECT id, email, password_hash, role, nom FROM users ORDER BY id", &[]).await {
-        Ok(rows) => {
-            let list: Vec<Value> = rows.iter().map(|r| {
-                let hash = crate::supabase::pg_col_to_string_pub(r, 2).unwrap_or_default();
-                json!({
-                    "id": r.try_get::<_, i64>(0).unwrap_or(0),
-                    "email": crate::supabase::pg_col_to_string_pub(r, 1).unwrap_or_default(),
-                    "role": crate::supabase::pg_col_to_string_pub(r, 3).unwrap_or_default(),
-                    "nom": crate::supabase::pg_col_to_string_pub(r, 4).unwrap_or_default(),
-                    "hash_algo": hash_algo(&hash),
-                    "hash_len": hash.len(),
-                })
-            }).collect();
-            Ok(json!({ "users": list, "online": true }))
-        }
-        Err(e) => Err(ApiError::internal(format!("Supabase users query: {}", e))),
-    }
-}
-#[cfg(not(feature = "supabase-sync"))]
-#[tauri::command(async)]
-pub async fn auth_debug_supabase_users(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
-    let user = claims(&state, &token)?;
-    admin_only(&user)?;
-    Ok(json!({ "users": [], "online": false }))
 }
 
 /// RÈGLE ABSOLUE (démarrage) : lève le verrou des processus métier.

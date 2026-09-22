@@ -5,6 +5,7 @@ pub mod db;
 pub mod db_notify;
 pub mod error;
 pub mod logger;
+pub mod notify;
 pub mod supabase;
 pub mod pdf;
 pub mod session_watcher;
@@ -279,9 +280,6 @@ pub fn run() {
             commands::auth_business_suspend,
             commands::auth_me,
             commands::auth_refresh,
-            commands::auth_debug_info,
-            commands::auth_debug_supabase_users,
-            commands::auth_test_supabase,
             commands::auth_session_save,
             commands::auth_session_load,
             commands::auth_session_clear,

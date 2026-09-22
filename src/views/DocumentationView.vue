@@ -91,7 +91,7 @@ import { ref, computed } from 'vue'
 import {
   BookOpen, Search, ChevronDown, Monitor, PlayCircle, Users, Coins,
   Receipt, DollarSign, Cloud, Shield, Settings, MessageSquare, Info, Zap,
-  UserCheck, CheckCheck
+  UserCheck, CheckCheck, Bell
 } from 'lucide-vue-next'
 
 const searchQuery = ref('')
@@ -409,6 +409,32 @@ const docs = [
       },
       {
         tip: 'Se déconnecter volontairement ramène aussi tout de suite à l\'écran de connexion. Les données du lounge restent alors sur l\'appareil : seule la session est fermée.'
+      }
+    ]
+  },
+  {
+    id: 'notifications',
+    category: 'general',
+    title: 'Les notifications sur le téléphone',
+    subtitle: 'Ce que l\'application vous annonce, même fermée',
+    icon: Bell,
+    iconBg: 'bg-neon-yellow/20',
+    iconColor: 'text-neon-yellow',
+    sections: [
+      {
+        heading: 'Des phrases claires, pas des codes',
+        content: 'Chaque notification dit qui, quoi et combien, en français simple : « Nouvelle facture — Facture FA-0042 créée — 12 500 FC ». Plus aucun numéro technique ni abréviation.'
+      },
+      {
+        heading: 'Compte à rebours avant la fin du temps',
+        content: 'Quand il reste moins de 30 minutes à une partie, une notification apparaît et se met à jour toute seule : « Il reste 12 min », puis « Il reste 40 secondes ». Elle ne fait pas sonner le téléphone à chaque changement et reste visible tant que la partie tourne.',
+        bullets: [
+          { title: 'À la fin', desc: 'La même notification se transforme en « Temps écoulé », avec le joueur, le poste et le montant à payer. Cette fois, le téléphone vibre.' },
+          { title: 'Application fermée', desc: 'Cela fonctionne même si l\'application est en arrière-plan : c\'est le moteur interne qui surveille le temps.' }
+        ]
+      },
+      {
+        tip: 'Si vous ne recevez aucune notification, autorisez-les pour l\'application dans les réglages Android (Applications > Game Lounge > Notifications).'
       }
     ]
   },

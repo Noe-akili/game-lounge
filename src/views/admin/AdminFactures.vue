@@ -112,12 +112,11 @@
             <h3 class="font-gaming text-xl font-bold truncate">Facture {{ selected.numero_facture }}</h3>
             <span class="badge shrink-0" :class="statusBadge(selected.statut)">{{ statusLabel(selected.statut) }}</span>
           </div>
-          <div class="flex items-center gap-1 shrink-0">
+          <!-- Un SEUL bouton de fermeture : la croix est déjà fournie par la
+               fenêtre elle-même (Modal.vue), en haut à droite. Ici : Modifier. -->
+          <div class="flex items-center gap-1 shrink-0 mr-10">
             <button @click="editFacture(selected); showDetail = false" class="p-2 rounded-lg hover:bg-bg-hover text-txt-dim" title="Modifier">
               <Pencil class="w-4 h-4" />
-            </button>
-            <button @click="showDetail = false" class="p-2 rounded-lg hover:bg-bg-hover text-txt-dim" title="Fermer">
-              <X class="w-5 h-5" />
             </button>
           </div>
         </div>
@@ -129,7 +128,7 @@
             <div class="flex flex-col sm:flex-row sm:justify-between gap-1 min-w-0"><span class="text-txt-dim shrink-0">Joueur</span><span class="truncate min-w-0">{{ selected.joueur_nom }}</span></div>
             <div class="flex flex-col sm:flex-row sm:justify-between gap-1 min-w-0"><span class="text-txt-dim shrink-0">Date</span><span class="truncate min-w-0">{{ formatDate(selected.created_at) }}</span></div>
             <div class="flex flex-col sm:flex-row sm:justify-between gap-1 min-w-0"><span class="text-txt-dim shrink-0">Paiement</span><span class="truncate min-w-0">{{ selected.mode_paiement || 'N/A' }}</span></div>
-            <div class="flex flex-col sm:flex-row sm:justify-between gap-1 min-w-0"><span class="text-txt-dim shrink-0">Session</span><span class="truncate min-w-0">#{{ selected.session_id }}</span></div>
+            <div class="flex flex-col sm:flex-row sm:justify-between gap-1 min-w-0"><span class="text-txt-dim shrink-0">Session</span><span class="truncate min-w-0">n° {{ selected.session_id }}</span></div>
           </div>
           <div class="space-y-3 min-w-0 overflow-hidden">
             <div class="flex flex-col sm:flex-row sm:justify-between gap-1 min-w-0"><span class="text-txt-dim shrink-0">Montant HT</span><span class="truncate shrink-0">{{ formatCurrency(selected.montant_ht) }}</span></div>
@@ -300,7 +299,7 @@ import { getFacturePdfBlob, saveFacturePdf } from '@/lib/clientPdf'
 import { formatCurrency, formatDate } from '@/utils/helpers'
 import { toast } from 'vue-sonner'
 import Modal from '@/components/ui/Modal.vue'
-import { Receipt, Eye, Download, Printer, XCircle, Plus, Pencil, Trash2, X, RotateCcw, Coins, Check } from 'lucide-vue-next'
+import { Receipt, Eye, Download, Printer, XCircle, Plus, Pencil, Trash2, RotateCcw, Coins, Check } from 'lucide-vue-next'
 import SelectionBar from '@/components/ui/SelectionBar.vue'
 import { useMultiSelect } from '@/composables/useMultiSelect'
 import Loader from '@/components/ui/Loader.vue'

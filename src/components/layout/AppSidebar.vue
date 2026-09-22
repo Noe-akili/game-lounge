@@ -87,13 +87,6 @@
        <UserCog class="w-4 h-4" />
        <span>Utilisateurs</span>
       </router-link>
-      <template v-if="isDebug">
-        <span class="px-4 py-2 mt-4 text-[10px] font-semibold text-amber-400 uppercase tracking-widest">Développeur</span>
-        <router-link to="/admin/developpeur" class="sidebar-link border border-amber-500/20 bg-amber-500/5" active-class="sidebar-link-active" @click="$emit('close')">
-         <Bug class="w-4 h-4 text-amber-400" />
-         <span class="text-amber-400">Développeur</span>
-        </router-link>
-      </template>
      </template>
 
     <template v-else>
@@ -168,7 +161,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
 import {
  Gamepad2, LayoutDashboard, Monitor, Joystick, Users, DollarSign, Coins,
- Receipt, BarChart3, Settings, UserCog, LogOut, PlayCircle, CreditCard, MessageSquare, X, Moon, Sun, Bug, BookOpen
+ Receipt, BarChart3, Settings, UserCog, LogOut, PlayCircle, CreditCard, MessageSquare, X, Moon, Sun, BookOpen
 } from 'lucide-vue-next'
 
 const props = defineProps({ open: Boolean })
@@ -179,7 +172,6 @@ const router = useRouter()
 const settings = useSettingsStore()
 
 const isAdmin = computed(() => auth.user?.role === 'admin')
-const isDebug = computed(() => auth.isAuthenticated && auth.isAdmin)
 const userInitials = computed(() => {
  const nom = auth.user?.nom || ''
  return nom.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
