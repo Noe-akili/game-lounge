@@ -2,7 +2,7 @@
   "name": "game-lounge-android",
   "version": "1.0.0",
   "private": true,
-  "description": "Game Lounge - backend Rust/Tauri pour application Android l\u00e9g\u00e8re (frontend Vue r\u00e9el)",
+  "description": "Game Lounge - backend Rust/Tauri pour application Android légère (frontend Vue réel)",
   "type": "module",
   "scripts": {
     "tauri": "tauri",
@@ -11,7 +11,10 @@
     "build:frontend": "npm --prefix .. run build:mobile",
     "android:init": "tauri android init",
     "android:dev": "tauri android dev",
-    "android:build": "tauri android build --apk"
+    "android:build": "tauri android build --apk --target aarch64",
+    "android:build:universel": "tauri android build --apk",
+    "android:build:split": "tauri android build --apk --target aarch64 --target armv7 --split-per-abi",
+    "android:build:aab": "tauri android build --aab --target aarch64"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

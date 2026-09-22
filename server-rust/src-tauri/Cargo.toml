@@ -55,3 +55,16 @@ codegen-units = 1
 lto = true
 opt-level = "z"
 strip = true
+# Pas de compilation incrémentale en release : elle grossit la bibliothèque
+# native embarquée dans l'APK sans rien apporter pour une livraison.
+incremental = false
+# Les dépendances (rusqlite/SQLite, tokio, rustls…) représentent l'essentiel de
+# la taille : on les optimise aussi pour la taille, pas pour la vitesse brute.
+[profile.release.package."*"]
+opt-level = "z"
+codegen-units = 1
+# Les scripts de build (build.rs) ne partent pas dans l'APK : on les compile
+# vite et sans optimisation, cela raccourcit la compilation.
+[profile.release.build-override]
+opt-level = 0
+codegen-units = 16
