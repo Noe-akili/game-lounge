@@ -473,7 +473,13 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
             let dl = crate::supabase::SyncProgress::new("delta", "Réception des nouveaux changements", "downloading");
             crate::supabase::emit_progress(app, &dl.with_counts(0, delta_total, 0), None);
         }
+        let mut batch_count = 0;
         loop {
+            batch_count += 1;
+            if batch_count > 10 {
+                eprintln!("[sync] limite de lots delta atteinte (10 lots), fin du cycle");
+                break;
+            }
             let batch = crate::supabase::pull_delta(&pool, cursor, 500).await.unwrap_or_default();
             if batch.is_empty() {
                 break;
