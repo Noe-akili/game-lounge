@@ -188,7 +188,7 @@ pub fn run() {
             // SEED du compte par défaut (noeakili@gmail.com) : garantit qu'il
             // existe localement AVANT tout login (vérifié en priorité par le
             // fallback offline). Idempotent : ne fait rien s'il existe déjà.
-            commands::auth::ensure_default_admin(&db);
+            // Tous les utilisateurs proviennent exclusivement de Supabase.
             // Charge .env avant de lire JWT_SECRET (desktop/diagnostic).
             #[cfg(feature = "supabase-sync")]
             let _ = dotenvy::dotenv();
