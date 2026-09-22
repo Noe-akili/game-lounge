@@ -1,5 +1,7 @@
 <template>
-  <div id="game-lounge-app" class="h-full overflow-hidden bg-bg">
+  <div id="game-lounge-app" class="h-full overflow-hidden bg-bg relative">
+    <!-- Fond d'écran interactif et adaptatif au thème (étoiles / photo personnalisée) -->
+    <AppBackground />
     <!-- Barre de progression de chargement d'onglet : SOUS le header (safe-top
          = barre de statut Android + h-20 du header), et après la sidebar
          desktop (lg:left-64) -->
@@ -38,6 +40,7 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted, computed } from 'vue'
+import AppBackground from '@/components/layout/AppBackground.vue'
 import { useRouter } from 'vue-router'
 import { motion } from 'motion-v'
 import { Toaster, toast } from 'vue-sonner'

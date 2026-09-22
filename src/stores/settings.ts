@@ -7,6 +7,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const fontMode = ref(localStorage.getItem('gl_font') || 'gaming')
   const themeMode = ref(localStorage.getItem('gl_theme') || 'dark')
   const appName = ref(localStorage.getItem('gl_app_name') || 'Game Lounge')
+  const bgMode = ref(localStorage.getItem('gl_bg_mode') || 'default') // 'default' | 'stars' | 'custom'
+  const bgCustomImage = ref(localStorage.getItem('gl_bg_custom') || '')
 
   function setFont(mode: string) {
     fontMode.value = mode
@@ -87,6 +89,30 @@ export const useSettingsStore = defineStore('settings', () => {
           })
         } catch {}
       }
+    }
+  }
+
+
+  function setBgMode(mode: string) {
+    bgMode.value = mode
+    localStorage.setItem('gl_bg_mode', mode)
+  }
+
+  function setCustomBg(dataUrl: string) {
+    bgCustomImage.value = dataUrl
+    try {
+      localStorage.setItem('gl_bg_custom', dataUrl)
+    } catch (e) {
+      console.warn('[settings] Quota localStorage dépassé pour le fond:', e)
+    }
+    setBgMode('custom')
+  }
+
+  function removeCustomBg() {
+    bgCustomImage.value = ''
+    localStorage.removeItem('gl_bg_custom')
+    if (bgMode.value === 'custom') {
+      setBgMode('default')
     }
   }
 

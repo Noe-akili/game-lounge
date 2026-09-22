@@ -15,22 +15,23 @@ fn is_deleted(v: Option<&Value>) -> bool {
 
 /// GET /api/tarifs
 #[tauri::command]
-pub fn tarifs_list(
+pub async fn tarifs_list(
     state: State<'_, AppState>,
     token: Option<String>,
     include_deleted: Option<bool>,
 ) -> ApiResult<Value> {
     claims(&state, &token)?;
-    // include_deleted=true doit REELLEMENT remonter les archives : query_all()
-    // applique deja "WHERE deleted = 0" en SQL, il faut donc query_all_all().
-    let mut rows = if include_deleted.unwrap_or(false) {
-        db(&state).query_all_all("tarifs")?
+    let include_del = include_deleted.unwrap_or(false);
+    let rows = if include_del {
+        let pool = crate::supabase::get_supabase_pool(&state).await
+            .map_err(|_| ApiError::network("Connexion Internet requise : les archives sont stockées exclusivement sur Supabase."))?;
+        crate::supabase::pull_table_all(&pool, "tarifs").await
+            .map_err(|e| ApiError::network(format!("Connexion Internet requise pour charger les archives : {e}")))?
     } else {
-        db(&state).query_all("tarifs")?
+        let mut r = db(&state).query_all("tarifs")?;
+        r.retain(|x| !is_deleted(x.get("deleted")));
+        r
     };
-    if !include_deleted.unwrap_or(false) {
-        rows.retain(|r| !is_deleted(r.get("deleted")));
-    }
     Ok(Value::Array(rows))
 }
 

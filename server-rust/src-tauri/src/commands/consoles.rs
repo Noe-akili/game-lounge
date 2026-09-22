@@ -60,14 +60,11 @@ pub async fn consoles_list(state: State<'_, AppState>, token: Option<String>, in
     let db = db(&state);
     let include_del = include_deleted.unwrap_or(false);
     let consoles = if include_del {
-        let mut cloud_rows = None;
-        if let Ok(pool) = crate::supabase::get_supabase_pool(&state).await {
-            cloud_rows = crate::supabase::pull_table_all(&pool, "consoles").await.ok();
-        }
-        match cloud_rows {
-            Some(rows) if !rows.is_empty() => rows,
-            _ => db.query_all_all("consoles")?,
-        }
+        // Exiger obligatoirement la connexion Internet et Supabase
+        let pool = crate::supabase::get_supabase_pool(&state).await
+            .map_err(|_| ApiError::network("Connexion Internet requise : les archives sont stockées exclusivement sur Supabase."))?;
+        crate::supabase::pull_table_all(&pool, "consoles").await
+            .map_err(|e| ApiError::network(format!("Connexion Internet requise pour charger les archives : {e}")))?
     } else {
         db.query_all("consoles")?
     };

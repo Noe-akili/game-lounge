@@ -5,6 +5,48 @@
       <Loader variant="neon" size="lg" text="Chargement..." />
     </div>
     <div v-else class="space-y-4">
+            <!-- AFFICHAGE & PERSONNALISATION -->
+      <div class="card">
+        <h4 class="font-gaming font-bold mb-4 flex items-center gap-2">
+          <Palette class="w-5 h-5 text-neon-blue" />
+          Affichage & Thème
+        </h4>
+
+        <div class="space-y-4">
+          <div>
+            <label class="text-xs text-txt-dim mb-2 block">Thème</label>
+            <div class="grid grid-cols-2 gap-2">
+              <button @click="settings.setTheme('dark')" class="p-3 rounded-xl border text-left text-xs transition-all flex items-center gap-2" :class="settings.themeMode === 'dark' ? 'border-neon-violet bg-neon-violet/10' : 'border-white/10'">
+                <Moon class="w-4 h-4 text-neon-violet" /> Sombre
+              </button>
+              <button @click="settings.setTheme('light')" class="p-3 rounded-xl border text-left text-xs transition-all flex items-center gap-2" :class="settings.themeMode === 'light' ? 'border-neon-violet bg-neon-violet/10' : 'border-white/10'">
+                <Sun class="w-4 h-4 text-neon-yellow" /> Clair
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label class="text-xs text-txt-dim mb-2 block">Fond d'écran</label>
+            <div class="grid grid-cols-3 gap-2">
+              <button @click="settings.setBgMode('default')" class="p-2.5 rounded-xl border text-center text-xs transition-all" :class="settings.bgMode === 'default' ? 'border-neon-violet bg-neon-violet/10' : 'border-white/10'">
+                Classique
+              </button>
+              <button @click="settings.setBgMode('stars')" class="p-2.5 rounded-xl border text-center text-xs transition-all" :class="settings.bgMode === 'stars' ? 'border-neon-violet bg-neon-violet/10' : 'border-white/10'">
+                Étoiles ✨
+              </button>
+              <button @click="fileInputRef?.click()" class="p-2.5 rounded-xl border text-center text-xs transition-all" :class="settings.bgMode === 'custom' ? 'border-neon-violet bg-neon-violet/10' : 'border-white/10'">
+                Photo 🖼️
+              </button>
+            </div>
+            <div v-if="settings.bgCustomImage" class="mt-2 flex items-center justify-between text-xs text-txt-dim">
+              <span>Photo personnalisée active</span>
+              <button @click="settings.removeCustomBg()" class="text-neon-red hover:underline">Retirer</button>
+            </div>
+            <input ref="fileInputRef" type="file" accept="image/*" class="hidden" @change="onPhotoSelected" />
+          </div>
+        </div>
+      </div>
+
       <div class="card">
         <h4 class="font-gaming font-bold mb-4 flex items-center gap-2">
           <RefreshCw class="w-5 h-5 text-neon-blue" :class="{ 'animate-spin': syncing }" />
@@ -93,6 +135,47 @@ const prefs = reactive({ notifications: true, sounds: true })
 
 const syncing = ref(false)
 const savingPassword = ref(false)
+
+const settings = useSettingsStore()
+const fileInputRef = ref<HTMLInputElement | null>(null)
+
+function onPhotoSelected(e: Event) {
+  const target = e.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = (event) => {
+    const rawData = event.target?.result as string
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      let width = img.width
+      let height = img.height
+      const maxDim = 1600
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width)
+          width = maxDim
+        } else {
+          width = Math.round((width * maxDim) / height)
+          height = maxDim
+        }
+      }
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, width, height)
+        settings.setCustomBg(canvas.toDataURL('image/jpeg', 0.82))
+        toast.success('Photo personnalisée appliquée')
+      }
+    }
+    img.src = rawData
+  }
+  reader.readAsDataURL(file)
+  target.value = ''
+}
+
 const newPassword = ref('')
 const confirmPassword = ref('')
 

@@ -33,14 +33,10 @@ pub async fn jeux_list(
     let db = db(&state);
     let include_del = include_deleted.unwrap_or(false);
     let mut jeux = if include_del {
-        let mut cloud_rows = None;
-        if let Ok(pool) = crate::supabase::get_supabase_pool(&state).await {
-            cloud_rows = crate::supabase::pull_table_all(&pool, "jeux").await.ok();
-        }
-        match cloud_rows {
-            Some(rows) if !rows.is_empty() => rows,
-            _ => db.query_all_all("jeux")?,
-        }
+        let pool = crate::supabase::get_supabase_pool(&state).await
+            .map_err(|_| ApiError::network("Connexion Internet requise : les archives sont stockées exclusivement sur Supabase."))?;
+        crate::supabase::pull_table_all(&pool, "jeux").await
+            .map_err(|e| ApiError::network(format!("Connexion Internet requise pour charger les archives : {e}")))?
     } else {
         db.query_all("jeux")?
     };

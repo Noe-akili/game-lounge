@@ -235,6 +235,72 @@ function changeFont(mode: string) {
   toast.success(`Police: ${mode === 'gaming' ? 'Montserrat' : 'Inter'}`)
 }
 
+
+const fileInputRef = ref<HTMLInputElement | null>(null)
+
+function changeBgMode(mode: 'default' | 'stars' | 'custom') {
+  if (mode === 'custom' && !settings.bgCustomImage) {
+    triggerPhotoUpload()
+    return
+  }
+  settings.setBgMode(mode)
+  toast.success(`Fond: ${mode === 'stars' ? 'Étoiles animées' : mode === 'custom' ? 'Photo personnalisée' : 'Classique'}`)
+}
+
+function triggerPhotoUpload() {
+  fileInputRef.value?.click()
+}
+
+function deleteCustomBg() {
+  settings.removeCustomBg()
+  toast.info('Photo personnalisée retirée')
+}
+
+function onPhotoSelected(e: Event) {
+  const target = e.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+
+  if (file.size > 10 * 1024 * 1024) {
+    toast.error('Image trop volumineuse (max 10 Mo)')
+    return
+  }
+
+  const reader = new FileReader()
+  reader.onload = (event) => {
+    const rawData = event.target?.result as string
+    const img = new Image()
+    img.onload = () => {
+      // Redimensionnement optimisé pour fluidité mobile et stockage
+      const canvas = document.createElement('canvas')
+      let width = img.width
+      let height = img.height
+      const maxDim = 1600
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width)
+          width = maxDim
+        } else {
+          width = Math.round((width * maxDim) / height)
+          height = maxDim
+        }
+      }
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, width, height)
+        const optimized = canvas.toDataURL('image/jpeg', 0.82)
+        settings.setCustomBg(optimized)
+        toast.success('Photo personnalisée appliquée avec adaptation thématique')
+      }
+    }
+    img.src = rawData
+  }
+  reader.readAsDataURL(file)
+  target.value = ''
+}
+
 function changeTheme(mode: string) {
   settings.setTheme(mode)
   toast.success(`Thème: ${mode === 'dark' ? 'Sombre' : 'Clair'}`)
