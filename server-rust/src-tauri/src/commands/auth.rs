@@ -115,7 +115,7 @@ fn compare_direct(password: &str, stored: &str) -> bool {
 
 /// Vérifie que le hash stocké est dans un algo supporté (scrypt/argon2/bcrypt).
 /// Seed lisible depuis l'extérieur du module (lib.rs au boot).
-pub fn ensure_default_admin(db: &crate::db::Db) { seed_impl(db) }
+pub fn ensure_default_admin(_db: &crate::db::Db) { /* Aucun utilisateur codé en dur : tous proviennent de Supabase */ }
 
 fn hash_algo(stored: &str) -> &'static str {
     if stored.starts_with("scrypt$v1") { "scrypt" }
