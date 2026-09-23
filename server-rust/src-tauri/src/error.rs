@@ -86,3 +86,15 @@ pub fn to_string(v: &serde_json::Value) -> Option<String> {
         _ => None,
     }
 }
+
+impl From<String> for ApiError {
+    fn from(message: String) -> Self {
+        ApiError::internal(message)
+    }
+}
+
+impl From<&str> for ApiError {
+    fn from(message: &str) -> Self {
+        ApiError::internal(message.to_string())
+    }
+}
