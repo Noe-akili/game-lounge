@@ -116,5 +116,5 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  return { fontMode, themeMode, appName, setFont, setTheme, setAppName, saveAppName, fetchRemoteAppName, init }
+  return { fontMode, themeMode, appName, bgMode, bgCustomImage, setFont, setTheme, setAppName, saveAppName, fetchRemoteAppName, init, setBgMode, setCustomBg, removeCustomBg }
 })
