@@ -1,0 +1,16 @@
+--- a/server-rust/src-tauri/src/commands/sync.rs
++++ b/server-rust/src-tauri/src/commands/sync.rs
+@@ -647,7 +647,7 @@
+ pub async fn sync_data(state: State<'_, AppState>) -> Result<(), String> {
+-    let conn = db(&state).conn();
++    let conn = db(&state).pool.get().map_err(|e| e.to_string())?;
+ 
+@@ -674,7 +674,7 @@
+ pub async fn sync_push(state: State<'_, AppState>) -> Result<(), String> {
+-    let conn = db(&state).conn();
++    let conn = db(&state).pool.get().map_err(|e| e.to_string())?;
+ 
+@@ -695,7 +695,7 @@
+ pub async fn sync_pull(state: State<'_, AppState>) -> Result<(), String> {
+-    let conn = db(&state).conn();
++    let conn = db(&state).pool.get().map_err(|e| e.to_string())?;

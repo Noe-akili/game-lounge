@@ -647,7 +647,7 @@ pub fn sync_poll(state: State<'_, AppState>, token: Option<String>) -> ApiResult
 pub fn sync_outbox_stats(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
     admin_only(&user)?;
-    let conn = db(&state).conn();
+    let conn = db(&state).pool.get().map_err(|e| e.to_string())?;
     let total: i64 = conn.query_row("SELECT COUNT(*) FROM sync_outbox", [], |r| r.get(0)).unwrap_or(0);
     let pending: i64 = conn.query_row("SELECT COUNT(*) FROM sync_outbox WHERE status = 'PENDING'", [], |r| r.get(0)).unwrap_or(0);
     let acked: i64 = conn.query_row("SELECT COUNT(*) FROM sync_outbox WHERE status = 'ACKED'", [], |r| r.get(0)).unwrap_or(0);
@@ -674,7 +674,7 @@ pub fn sync_purge_outbox(
 ) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
     admin_only(&user)?;
-    let conn = db(&state).conn();
+    let conn = db(&state).pool.get().map_err(|e| e.to_string())?;
     let m = mode.as_deref().unwrap_or("acked");
     let deleted_count = match m {
         "all" => {
@@ -695,7 +695,7 @@ pub fn sync_purge_outbox(
 pub fn sync_clear_conflicts(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
     admin_only(&user)?;
-    let conn = db(&state).conn();
+    let conn = db(&state).pool.get().map_err(|e| e.to_string())?;
     let deleted_count = conn.execute("DELETE FROM sync_conflicts", []).map_err(|e| ApiError::internal(format!("clear conflicts: {e}")))?;
     Ok(json!({ "deleted": deleted_count }))
 }
@@ -705,7 +705,7 @@ pub fn sync_clear_conflicts(state: State<'_, AppState>, token: Option<String>) -
 pub fn sync_reset_cursors(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
     admin_only(&user)?;
-    let conn = db(&state).conn();
+    let conn = db(&state).pool.get().map_err(|e| e.to_string())?;
     conn.execute_batch(
         "UPDATE sync_state SET device_sequence = 0, last_uploaded = NULL, last_received = '0', last_sync_at = NULL;"
     ).map_err(|e| ApiError::internal(format!("reset cursors: {e}")))?;
