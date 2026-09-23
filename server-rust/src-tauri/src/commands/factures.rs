@@ -542,7 +542,9 @@ pub async fn factures_permanent_delete(
         return Err(ApiError::bad_request("ID invalide"));
     }
     if let Ok(pool) = crate::supabase::get_supabase_pool(&state).await {
-        let sql = format!("DELETE FROM lignes_facture WHERE facture_id = {}; DELETE FROM factures WHERE id = {};", id, id);
+        let sql = format!(
+            "DELETE FROM lignes_facture WHERE facture_id = {id};              DELETE FROM jetons_transactions WHERE facture_id = {id};              DELETE FROM factures WHERE id = {id};"
+        );
         let _ = crate::supabase::supabase_batch_execute(&pool, &sql).await;
     }
     db(&state).permanent_delete("factures", id)?;

@@ -641,3 +641,73 @@ pub fn sync_poll(state: State<'_, AppState>, token: Option<String>) -> ApiResult
         "last_sync": last_sync
     }))
 }
+
+/// GET /api/sync/outbox/stats - Statistiques de la file d'attente locale
+#[tauri::command]
+pub fn sync_outbox_stats(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    let conn = db(&state).conn();
+    let total: i64 = conn.query_row("SELECT COUNT(*) FROM sync_outbox", [], |r| r.get(0)).unwrap_or(0);
+    let pending: i64 = conn.query_row("SELECT COUNT(*) FROM sync_outbox WHERE status = 'PENDING'", [], |r| r.get(0)).unwrap_or(0);
+    let acked: i64 = conn.query_row("SELECT COUNT(*) FROM sync_outbox WHERE status = 'ACKED'", [], |r| r.get(0)).unwrap_or(0);
+    let failed: i64 = conn.query_row("SELECT COUNT(*) FROM sync_outbox WHERE status = 'FAILED'", [], |r| r.get(0)).unwrap_or(0);
+    let conflicts: i64 = conn.query_row("SELECT COUNT(*) FROM sync_conflicts", [], |r| r.get(0)).unwrap_or(0);
+    let cursor = db(&state).sync_cursor_get().unwrap_or(0);
+
+    Ok(json!({
+        "total": total,
+        "pending": pending,
+        "acked": acked,
+        "failed": failed,
+        "conflicts": conflicts,
+        "cursor": cursor,
+    }))
+}
+
+/// POST /api/sync/outbox/purge - Nettoyer la file d'attente outbox
+#[tauri::command]
+pub fn sync_purge_outbox(
+    state: State<'_, AppState>,
+    token: Option<String>,
+    mode: Option<String>,
+) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    let conn = db(&state).conn();
+    let m = mode.as_deref().unwrap_or("acked");
+    let deleted_count = match m {
+        "all" => {
+            conn.execute("DELETE FROM sync_outbox", []).map_err(|e| ApiError::internal(format!("purge all outbox: {e}")))?
+        }
+        "failed" => {
+            conn.execute("DELETE FROM sync_outbox WHERE status = 'FAILED'", []).map_err(|e| ApiError::internal(format!("purge failed outbox: {e}")))?
+        }
+        _ => {
+            conn.execute("DELETE FROM sync_outbox WHERE status = 'ACKED'", []).map_err(|e| ApiError::internal(format!("purge acked outbox: {e}")))?
+        }
+    };
+    Ok(json!({ "mode": m, "deleted": deleted_count }))
+}
+
+/// POST /api/sync/conflicts/clear - Vider les conflits
+#[tauri::command]
+pub fn sync_clear_conflicts(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    let conn = db(&state).conn();
+    let deleted_count = conn.execute("DELETE FROM sync_conflicts", []).map_err(|e| ApiError::internal(format!("clear conflicts: {e}")))?;
+    Ok(json!({ "deleted": deleted_count }))
+}
+
+/// POST /api/sync/cursors/reset - Réinitialiser les curseurs de synchronisation
+#[tauri::command]
+pub fn sync_reset_cursors(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    let conn = db(&state).conn();
+    conn.execute_batch(
+        "UPDATE sync_state SET device_sequence = 0, last_uploaded = NULL, last_received = '0', last_sync_at = NULL;"
+    ).map_err(|e| ApiError::internal(format!("reset cursors: {e}")))?;
+    Ok(json!({ "reset": true }))
+}

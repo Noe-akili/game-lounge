@@ -689,8 +689,38 @@ fn build_change_script(
         escape_sql(payload_str),
     );
     if operation == "DELETE" {
-        out.push_str(&format!("UPDATE \"{}\" SET deleted=1 WHERE id={};", entity, record_id));
-        return Some(out);
+        let is_perm = serde_json::from_str::<Value>(payload_str)
+            .ok()
+            .and_then(|v| v.get("permanent_delete").and_then(Value::as_bool))
+            .unwrap_or(false);
+        if is_perm {
+            let cascade = match entity {
+                "factures" => format!(
+                    "DELETE FROM lignes_facture WHERE facture_id = {record_id};                      DELETE FROM jetons_transactions WHERE facture_id = {record_id};                      DELETE FROM factures WHERE id = {record_id};"
+                ),
+                "tarifs" => format!(
+                    "UPDATE sessions_jeu SET tarif_id = NULL WHERE tarif_id = {record_id};                      DELETE FROM tarifs WHERE id = {record_id};"
+                ),
+                "consoles" => format!(
+                    "UPDATE sessions_jeu SET console_id = NULL WHERE console_id = {record_id};                      UPDATE jeux SET console_id = NULL WHERE console_id = {record_id};                      DELETE FROM consoles WHERE id = {record_id};"
+                ),
+                "jeux" => format!(
+                    "UPDATE sessions_jeu SET jeu_id = NULL WHERE jeu_id = {record_id};                      DELETE FROM jeux WHERE id = {record_id};"
+                ),
+                "joueurs" => format!(
+                    "DELETE FROM jetons_transactions WHERE joueur_id = {record_id};                      UPDATE factures SET joueur_id = NULL WHERE joueur_id = {record_id};                      UPDATE sessions_jeu SET joueur_id = NULL WHERE joueur_id = {record_id};                      DELETE FROM joueurs WHERE id = {record_id};"
+                ),
+                "sessions_jeu" => format!(
+                    "DELETE FROM lignes_facture WHERE facture_id IN (SELECT id FROM factures WHERE session_id = {record_id});                      DELETE FROM factures WHERE session_id = {record_id};                      DELETE FROM jetons_transactions WHERE session_id = {record_id};                      DELETE FROM sessions_jeu WHERE id = {record_id};"
+                ),
+                _ => format!("DELETE FROM \"{}\" WHERE id={};", entity, record_id),
+            };
+            out.push_str(&cascade);
+            return Some(out);
+        } else {
+            out.push_str(&format!("UPDATE \"{}\" SET deleted=1 WHERE id={};", entity, record_id));
+            return Some(out);
+        }
     }
     let Some(payload) = serde_json::from_str::<Value>(payload_str).ok() else { return None };
     let Some(pmap) = payload.as_object() else { return None };

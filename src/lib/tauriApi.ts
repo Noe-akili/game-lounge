@@ -197,7 +197,11 @@ const ROUTES: RouteDef[] = [
   { m: 'DELETE', p: '/users/:id/permanent', f: ({ token, segs }) => ({ cmd: 'users_permanent_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== SYNC =====
-  { m: 'GET', p: '/sync/status', f: ({ token }) => ({ cmd: 'sync_status', args: { token } }) },
+    { m: 'GET', p: '/sync/outbox/stats', f: ({ token }) => ({ cmd: 'sync_outbox_stats', args: { token } }) },
+  { m: 'POST', p: '/sync/outbox/purge', f: ({ token, body }) => ({ cmd: 'sync_purge_outbox', args: { token, mode: body?.mode } }) },
+  { m: 'POST', p: '/sync/conflicts/clear', f: ({ token }) => ({ cmd: 'sync_clear_conflicts', args: { token } }) },
+  { m: 'POST', p: '/sync/cursors/reset', f: ({ token }) => ({ cmd: 'sync_reset_cursors', args: { token } }) },
+{ m: 'GET', p: '/sync/status', f: ({ token }) => ({ cmd: 'sync_status', args: { token } }) },
   { m: 'POST', p: '/sync/toggle', f: ({ token, body }) => ({ cmd: 'sync_toggle', args: { token, enabled: !!val(body, 'enabled') } }) },
   { m: 'POST', p: '/sync/run', f: ({ token }) => ({ cmd: 'sync_run', args: { token } }) },
   { m: 'GET', p: '/sync/poll', f: ({ token }) => ({ cmd: 'sync_poll', args: { token } }) },

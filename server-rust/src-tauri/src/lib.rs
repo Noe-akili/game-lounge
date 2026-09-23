@@ -379,6 +379,10 @@ pub fn run() {
             commands::sync_toggle,
             commands::sync_run,
             commands::sync_poll,
+            commands::sync::sync_outbox_stats,
+            commands::sync::sync_purge_outbox,
+            commands::sync::sync_clear_conflicts,
+            commands::sync::sync_reset_cursors,
             commands::sync::sync_initial_status,
             commands::sync::sync_initial_skip,
         ])

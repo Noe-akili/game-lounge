@@ -578,3 +578,52 @@
     opacity: 1;
   }
 }
+
+
+/* === Transparence & Glassmorphism avec fond étoilé ou photo === */
+html.has-custom-bg body::before,
+html.has-custom-bg body::after {
+  opacity: 0.15 !important;
+}
+
+html.has-custom-bg .bg-bg-card {
+  background-color: rgba(18, 18, 26, 0.72) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+html.has-custom-bg .bg-bg-surface {
+  background-color: rgba(26, 26, 46, 0.72) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+html.has-custom-bg .bg-bg-hover {
+  background-color: rgba(34, 34, 58, 0.75) !important;
+}
+
+html.has-custom-bg .card {
+  background-color: rgba(18, 18, 26, 0.70) !important;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+html.has-custom-bg.light .bg-bg-card {
+  background-color: rgba(255, 255, 255, 0.78) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+html.has-custom-bg.light .bg-bg-surface {
+  background-color: rgba(241, 245, 249, 0.78) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+html.has-custom-bg.light .card {
+  background-color: rgba(255, 255, 255, 0.75) !important;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-color: rgba(0, 0, 0, 0.1) !important;
+}
