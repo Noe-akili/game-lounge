@@ -5,7 +5,7 @@ use tauri::State;
 
 use crate::commands::{admin_only, claims, db};
 use crate::db::now_iso;
-use crate::error::ApiResult;
+use crate::error::{ApiError, ApiResult};
 use crate::AppState;
 
 fn now_ms() -> i64 { chrono::Utc::now().timestamp_millis() }
