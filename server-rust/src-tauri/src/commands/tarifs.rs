@@ -179,12 +179,16 @@ pub fn tarifs_restore(
 
 /// DELETE /api/tarifs/:id/permanent
 #[tauri::command]
-pub fn tarifs_permanent_delete(
+pub async fn tarifs_permanent_delete(
     state: State<'_, AppState>, token: Option<String>, id: i64,
 ) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
     admin_only(&user)?;
     if !validators::is_valid_id(id) { return Err(ApiError::bad_request("ID invalide")); }
+    if let Ok(pool) = crate::supabase::get_supabase_pool(&state).await {
+        let sql = format!("DELETE FROM tarifs WHERE id = {};", id);
+        let _ = crate::supabase::supabase_batch_execute(&pool, &sql).await;
+    }
     db(&state).permanent_delete("tarifs", id)?;
     Ok(json!({ "id": id, "permanently_deleted": true }))
 }

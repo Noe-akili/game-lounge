@@ -250,7 +250,7 @@ import { api } from '@/utils/api'
 import { toast } from 'vue-sonner'
 import Loader from '@/components/ui/Loader.vue'
 import Modal from '@/components/ui/Modal.vue'
-import { Plus, Pencil, Trash2, Settings, Moon, Sun, Cloud, CloudOff, RefreshCw, Sparkles, Image, Monitor } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2, Settings, Moon, Sun, Cloud, CloudOff, RefreshCw, Sparkles, Image as ImageIcon, Monitor } from 'lucide-vue-next'
 import { isValidRegleType, isValidSeuil, isValidJetonsAttribues } from '@/utils/validators'
 import { useSettingsStore } from '@/stores/settings'
 import { formatDate, formatCurrency } from '@/utils/helpers'
@@ -307,7 +307,7 @@ function onPhotoSelected(e: Event) {
   const reader = new FileReader()
   reader.onload = (event) => {
     const rawData = event.target?.result as string
-    const img = new Image()
+    const img = new window.Image()
     img.onload = () => {
       // Redimensionnement optimisé pour fluidité mobile et stockage
       const canvas = document.createElement('canvas')

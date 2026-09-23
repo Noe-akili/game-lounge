@@ -531,7 +531,7 @@ pub fn factures_restore(
 
 /// DELETE /api/factures/:id/permanent - Suppression définitive d'une facture
 #[tauri::command]
-pub fn factures_permanent_delete(
+pub async fn factures_permanent_delete(
     state: State<'_, AppState>,
     token: Option<String>,
     id: i64,
@@ -540,6 +540,10 @@ pub fn factures_permanent_delete(
     admin_only(&user)?;
     if !validators::is_valid_id(id) {
         return Err(ApiError::bad_request("ID invalide"));
+    }
+    if let Ok(pool) = crate::supabase::get_supabase_pool(&state).await {
+        let sql = format!("DELETE FROM lignes_facture WHERE facture_id = {}; DELETE FROM factures WHERE id = {};", id, id);
+        let _ = crate::supabase::supabase_batch_execute(&pool, &sql).await;
     }
     db(&state).permanent_delete("factures", id)?;
     Ok(json!({ "id": id, "permanently_deleted": true }))

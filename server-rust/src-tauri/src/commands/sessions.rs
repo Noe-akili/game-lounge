@@ -782,7 +782,7 @@ pub fn sessions_restore(
 
 /// DELETE /api/sessions/:id/permanent - Suppression définitive d'une session
 #[tauri::command]
-pub fn sessions_permanent_delete(
+pub async fn sessions_permanent_delete(
     state: State<'_, AppState>,
     token: Option<String>,
     id: i64,
@@ -791,6 +791,10 @@ pub fn sessions_permanent_delete(
     admin_only(&user)?;
     if !validators::is_valid_id(id) {
         return Err(ApiError::bad_request("ID invalide"));
+    }
+    if let Ok(pool) = crate::supabase::get_supabase_pool(&state).await {
+        let sql = format!("DELETE FROM sessions_jeu WHERE id = {};", id);
+        let _ = crate::supabase::supabase_batch_execute(&pool, &sql).await;
     }
     db(&state).permanent_delete("sessions_jeu", id)?;
     Ok(json!({ "id": id, "permanently_deleted": true }))

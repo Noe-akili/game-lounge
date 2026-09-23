@@ -124,7 +124,8 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import Loader from '@/components/ui/Loader.vue'
-import { RefreshCw, KeyRound, Check, LogOut } from 'lucide-vue-next'
+import { RefreshCw, KeyRound, Check, LogOut, Palette, Moon, Sun } from 'lucide-vue-next'
+import { useSettingsStore } from '@/stores/settings'
 import { api } from '@/utils/api'
 import { toast } from 'vue-sonner'
 
@@ -146,7 +147,7 @@ function onPhotoSelected(e: Event) {
   const reader = new FileReader()
   reader.onload = (event) => {
     const rawData = event.target?.result as string
-    const img = new Image()
+    const img = new window.Image()
     img.onload = () => {
       const canvas = document.createElement('canvas')
       let width = img.width

@@ -2,14 +2,15 @@
   <div class="fixed inset-0 pointer-events-none z-0 overflow-hidden transition-all duration-500" aria-hidden="true">
     <!-- 1. Mode Étoiles Animées -->
     <template v-if="settings.bgMode === 'stars'">
-      <canvas ref="canvasRef" class="absolute inset-0 w-full h-full opacity-90"></canvas>
-      <!-- Voile adapté au thème pour garantir le contraste parfait -->
+      <!-- Voile de contraste sous les étoiles -->
       <div
         class="absolute inset-0 transition-colors duration-500"
         :class="settings.themeMode === 'light'
-          ? 'bg-gradient-to-b from-sky-50/70 via-indigo-50/50 to-purple-50/80 backdrop-blur-[0.5px]'
-          : 'bg-gradient-to-b from-[#080811]/85 via-[#0d0d1b]/80 to-[#120f26]/90 backdrop-blur-[0.5px]'"
+          ? 'bg-gradient-to-b from-sky-50/60 via-indigo-50/40 to-purple-50/60'
+          : 'bg-gradient-to-b from-[#06060c] via-[#090915] to-[#0f0c22]'"
       ></div>
+      <!-- Toile d'étoiles lumineuses bien visible au-dessus du voile -->
+      <canvas ref="canvasRef" class="absolute inset-0 w-full h-full z-10 pointer-events-none"></canvas>
     </template>
 
     <!-- 2. Mode Photo Personnalisée -->
@@ -37,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 
 const settings = useSettingsStore()
@@ -139,9 +140,11 @@ watch(
       cleanup = undefined
     }
     if (mode === 'stars') {
-      setTimeout(() => {
-        cleanup = initStars()
-      }, 50)
+      nextTick(() => {
+        setTimeout(() => {
+          cleanup = initStars()
+        }, 50)
+      })
     }
   },
   { immediate: true }
