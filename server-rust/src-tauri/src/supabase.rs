@@ -826,18 +826,30 @@ pub async fn push_outbox_batch(
         }
     }
     if scripts.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
+        let failed = changes
+            .iter()
+            .filter_map(|c| c.get("change_id").and_then(Value::as_str).map(str::to_string))
+            .collect::<Vec<_>>();
+        return Ok((Vec::new(), failed));
     }
-    let all_ack = changes
+    let valid_ids = changes
         .iter()
-        .map(|c| c.get("change_id").and_then(Value::as_str).unwrap_or_default().to_string())
+        .filter_map(|c| {
+            build_change_script(c, &cols_cache)?;
+            c.get("change_id").and_then(Value::as_str).map(str::to_string)
+        })
+        .collect::<Vec<_>>();
+    let failed_invalid = changes
+        .iter()
+        .filter(|c| build_change_script(c, &cols_cache).is_none())
+        .filter_map(|c| c.get("change_id").and_then(Value::as_str).map(str::to_string))
         .collect::<Vec<_>>();
     match supabase_batch_execute(pool, &scripts.join("\n")).await {
-        Ok(_) => Ok((all_ack, Vec::new())),
+        Ok(_) => Ok((valid_ids, failed_invalid)),
         Err(_) => {
             // Échec global : retry un par un pour isoler les erreurs applicatives
             let mut acked: Vec<String> = Vec::new();
-            let mut failed: Vec<String> = Vec::new();
+            let mut failed: Vec<String> = failed_invalid;
             for change in changes {
                 let Some(script) = build_change_script(change, &cols_cache) else { continue };
                 match supabase_batch_execute(pool, &script).await {

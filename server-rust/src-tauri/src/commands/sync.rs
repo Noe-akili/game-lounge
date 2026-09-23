@@ -474,7 +474,34 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
         // SYNC DELTA : boucle de batches de 500 changements.
         set_step(state, "pull", "Réception des nouveaux changements...");
         // Progression delta : total = changements restants dans le journal cloud.
-        let delta_total = crate::supabase::sync_changes_count_after(&pool, cursor).await.unwrap_or(0).max(0) as u64;
+        let delta_total = match crate::supabase::sync_changes_count_after(&pool, cursor).await {
+            Ok(n) => n.max(0) as u64,
+            Err(e) => {
+                let msg = format!("Réception impossible depuis Supabase: {}", e);
+                eprintln!("[sync] delta count failed: {}", e);
+                crate::logger::log_sync(&msg);
+                set_sync_state(state, json!({
+                    "running": false,
+                    "step": "erreur",
+                    "success": false,
+                    "message": msg,
+                    "cursor": cursor,
+                    "pulled_total": 0,
+                    "pushed_total": uploaded,
+                    "timestamp": now_iso()
+                }));
+                crate::supabase::schedule_reconnect(app);
+                return Ok(json!({
+                    "success": false,
+                    "step": "erreur",
+                    "message": msg,
+                    "cursor": cursor,
+                    "pulled_total": 0,
+                    "pushed_total": uploaded,
+                    "timestamp": now_iso()
+                }));
+            }
+        };
         if delta_total > 0 {
             let dl = crate::supabase::SyncProgress::new("delta", "Réception des nouveaux changements", "downloading");
             crate::supabase::emit_progress(app, &dl.with_counts(0, delta_total, 0), None);
@@ -486,7 +513,34 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
                 eprintln!("[sync] limite de lots delta atteinte (10 lots), fin du cycle");
                 break;
             }
-            let batch = crate::supabase::pull_delta(&pool, cursor, 500).await.unwrap_or_default();
+            let batch = match crate::supabase::pull_delta(&pool, cursor, 500).await {
+                Ok(batch) => batch,
+                Err(e) => {
+                    let msg = format!("Réception delta impossible depuis Supabase: {}", e);
+                    eprintln!("[sync] pull_delta failed at cursor {}: {}", cursor, e);
+                    crate::logger::log_sync(&msg);
+                    set_sync_state(state, json!({
+                        "running": false,
+                        "step": "erreur",
+                        "success": false,
+                        "message": msg,
+                        "cursor": cursor,
+                        "pulled_total": downloaded,
+                        "pushed_total": uploaded,
+                        "timestamp": now_iso()
+                    }));
+                    crate::supabase::schedule_reconnect(app);
+                    return Ok(json!({
+                        "success": false,
+                        "step": "erreur",
+                        "message": msg,
+                        "cursor": cursor,
+                        "pulled_total": downloaded,
+                        "pushed_total": uploaded,
+                        "timestamp": now_iso()
+                    }));
+                }
+            };
             if batch.is_empty() {
                 break;
             }
@@ -520,6 +574,7 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
             // lente et des à-coups dans l'interface.
             let mut lot: Vec<(&str, i64, &serde_json::Map<String, Value>, &str, &str)> = Vec::new();
             let mut metas: Vec<(&str, i64, &str, &str)> = Vec::new();
+            let mut malformed_seq: Option<i64> = None;
             for change in &batch {
                 let seq = change.get("sequence").and_then(Value::as_i64).unwrap_or(0);
                 let entity = change.get("entity").and_then(Value::as_str).unwrap_or_default();
@@ -528,14 +583,73 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
                 let origin_device = change.get("device_id").and_then(Value::as_str).unwrap_or_default();
                 let created_at = change.get("created_at").and_then(Value::as_str).unwrap_or_default();
                 let payload_opt = change.get("payload").and_then(Value::as_object);
-                last_seq = seq.max(last_seq);
-                if entity.is_empty() || record_id == 0 || payload_opt.is_none() {
-                    continue;
+                if seq <= cursor
+                    || entity.is_empty()
+                    || record_id == 0
+                    || change_id.is_empty()
+                    || payload_opt.is_none()
+                {
+                    malformed_seq = Some(seq);
+                    break;
                 }
+                last_seq = seq.max(last_seq);
                 lot.push((entity, record_id, payload_opt.unwrap(), change_id, created_at));
                 metas.push((entity, record_id, change_id, origin_device));
             }
+            if let Some(seq) = malformed_seq {
+                let msg = format!("Changement cloud invalide à la séquence {} (curseur conservé à {})", seq, cursor);
+                eprintln!("[sync] {}", msg);
+                crate::logger::log_sync(&msg);
+                set_sync_state(state, json!({
+                    "running": false,
+                    "step": "erreur",
+                    "success": false,
+                    "message": msg,
+                    "cursor": cursor,
+                    "pulled_total": downloaded,
+                    "pushed_total": uploaded,
+                    "timestamp": now_iso()
+                }));
+                return Ok(json!({
+                    "success": false,
+                    "step": "erreur",
+                    "message": msg,
+                    "cursor": cursor,
+                    "pulled_total": downloaded,
+                    "pushed_total": uploaded,
+                    "timestamp": now_iso()
+                }));
+            }
             let statuts = db(state).apply_remote_changes(&lot);
+            let apply_errors = statuts.iter().filter(|s| **s == "error").count();
+            if apply_errors > 0 {
+                let msg = format!(
+                    "{} changement(s) distant(s) n'ont pas pu être appliqué(s); curseur conservé à {}",
+                    apply_errors, cursor
+                );
+                eprintln!("[sync] {} (lot {}..{})", msg, cursor + 1, last_seq);
+                crate::logger::log_sync(&msg);
+                set_sync_state(state, json!({
+                    "running": false,
+                    "step": "erreur",
+                    "success": false,
+                    "message": msg,
+                    "cursor": cursor,
+                    "pulled_total": downloaded,
+                    "pushed_total": uploaded,
+                    "timestamp": now_iso()
+                }));
+                crate::supabase::schedule_reconnect(app);
+                return Ok(json!({
+                    "success": false,
+                    "step": "erreur",
+                    "message": msg,
+                    "cursor": cursor,
+                    "pulled_total": downloaded,
+                    "pushed_total": uploaded,
+                    "timestamp": now_iso()
+                }));
+            }
             // Notifications APRÈS écriture confirmée : la cloche ne sonne jamais
             // pour un changement qui n'a pas été enregistré.
             for (statut, (entity, record_id, change_id, origin_device)) in statuts.iter().zip(metas.iter()) {
