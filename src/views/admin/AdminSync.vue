@@ -193,15 +193,14 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { api } from '@/lib/api'
-import { useToast } from '@/composables/useToast'
+import { api } from '@/utils/api'
+import { toast } from 'vue-sonner'
 import {
   RefreshCw, RotateCw, Zap, Clock, CheckCircle2,
   AlertTriangle, ShieldAlert, Trash2, Sparkles,
   RotateCcw, AlertOctagon
 } from 'lucide-vue-next'
 
-const toast = useToast()
 
 const stats = ref({
   total: 0,
