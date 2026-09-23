@@ -140,6 +140,44 @@
           </div>
         </div>
 
+        <div>
+          <label class="text-sm text-txt-muted mb-3 block">Fond d'écran</label>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <button @click="changeBgMode('default')"
+              class="p-4 rounded-xl border-2 transition-all text-left"
+              :class="settings.bgMode === 'default' ? 'border-neon-violet bg-neon-violet/10' : 'border-white/10 hover:border-white/20'">
+              <div class="flex items-center gap-2">
+                <Monitor class="w-5 h-5 text-txt-dim" />
+                <p class="font-bold text-sm">Classique</p>
+              </div>
+              <p class="text-xs text-txt-dim mt-1">Fond épuré d'origine</p>
+            </button>
+            <button @click="changeBgMode('stars')"
+              class="p-4 rounded-xl border-2 transition-all text-left"
+              :class="settings.bgMode === 'stars' ? 'border-neon-violet bg-neon-violet/10' : 'border-white/10 hover:border-white/20'">
+              <div class="flex items-center gap-2">
+                <Sparkles class="w-5 h-5 text-neon-yellow" />
+                <p class="font-bold text-sm">Étoiles</p>
+              </div>
+              <p class="text-xs text-txt-dim mt-1">Particules animées réactives</p>
+            </button>
+            <button @click="changeBgMode('custom')"
+              class="p-4 rounded-xl border-2 transition-all text-left"
+              :class="settings.bgMode === 'custom' ? 'border-neon-violet bg-neon-violet/10' : 'border-white/10 hover:border-white/20'">
+              <div class="flex items-center gap-2">
+                <Image class="w-5 h-5 text-neon-green" />
+                <p class="font-bold text-sm">Photo</p>
+              </div>
+              <p class="text-xs text-txt-dim mt-1">{{ settings.bgCustomImage ? "Changer l'image" : "Importer une image" }}</p>
+            </button>
+          </div>
+          <div v-if="settings.bgCustomImage" class="mt-3 p-3 bg-bg-surface rounded-xl flex items-center justify-between border border-white/5">
+            <span class="text-xs text-txt-muted">Photo personnalisée active (adaptée au thème)</span>
+            <button @click="deleteCustomBg" class="text-xs text-neon-red hover:underline">Retirer l'image</button>
+          </div>
+          <input ref="fileInputRef" type="file" accept="image/*" class="hidden" @change="onPhotoSelected" />
+        </div>
+
       </div>
     </div>
 
@@ -212,7 +250,7 @@ import { api } from '@/utils/api'
 import { toast } from 'vue-sonner'
 import Loader from '@/components/ui/Loader.vue'
 import Modal from '@/components/ui/Modal.vue'
-import { Plus, Pencil, Trash2, Settings, Moon, Sun, Cloud, CloudOff, RefreshCw } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2, Settings, Moon, Sun, Cloud, CloudOff, RefreshCw, Sparkles, Image, Monitor } from 'lucide-vue-next'
 import { isValidRegleType, isValidSeuil, isValidJetonsAttribues } from '@/utils/validators'
 import { useSettingsStore } from '@/stores/settings'
 import { formatDate, formatCurrency } from '@/utils/helpers'
