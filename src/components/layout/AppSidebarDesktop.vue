@@ -63,11 +63,7 @@
           <span>Documentation</span>
         </router-link>
         <span class="px-4 py-2 mt-4 text-[10px] font-semibold text-txt-dim uppercase tracking-widest">Paramètres</span>
-                <router-link to="/admin/synchronisation" class="sidebar-link" active-class="sidebar-link-active">
-          <RefreshCw class="w-5 h-5 shrink-0" />
-          <span>Synchronisation</span>
-        </router-link>
-<router-link to="/admin/parametres" class="sidebar-link" active-class="sidebar-link-active">
+        <router-link to="/admin/parametres" class="sidebar-link" active-class="sidebar-link-active">
           <Settings class="w-4 h-4" />
           <span>Paramètres</span>
         </router-link>
@@ -147,7 +143,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
 import {
   Gamepad2, LayoutDashboard, Monitor, Joystick, Users, DollarSign, Coins,
-  Receipt, BarChart3, Settings, RefreshCw, UserCog, LogOut, PlayCircle, CreditCard, MessageSquare, Moon, Sun, BookOpen
+  Receipt, BarChart3, Settings, UserCog, LogOut, PlayCircle, CreditCard, MessageSquare, Moon, Sun, BookOpen
 } from 'lucide-vue-next'
 
 const auth = useAuthStore()

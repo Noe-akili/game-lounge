@@ -80,7 +80,7 @@ const sel = useMultiSelect({
   nomSingulier: 'message',
   nomPluriel: 'messages',
   liste: () => messages.value,
-  supprimer: (m: any) => api.delete(`/messages/${m.id}`),
+  supprimer: (m: any) => api.delete(`/messages/${m.id}/permanent`),
   apres: fetchData,
 })
 
@@ -143,7 +143,7 @@ function editMessage(m: any) {
 async function deleteMessage(id: number) {
   if (!confirm('Supprimer ce message ?')) return
   try {
-    await api.delete(`/messages/${id}`)
+    await api.delete(`/messages/${id}/permanent`)
     messages.value = messages.value.filter((m: any) => m.id !== id)
     saveLocal()
     toast.success('Message supprimé')

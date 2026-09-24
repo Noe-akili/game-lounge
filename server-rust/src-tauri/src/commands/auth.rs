@@ -216,9 +216,15 @@ pub fn auth_local_wipe(state: State<'_, AppState>) -> ApiResult<Value> {
 /// (login réussi ou session restaurée) : à partir de là seulement, la sync
 /// automatique, le watcher de sessions et les notifications s'activent.
 #[tauri::command]
-pub fn auth_business_ready(state: State<'_, AppState>) -> ApiResult<Value> {
+pub fn auth_business_ready(app: tauri::AppHandle, state: State<'_, AppState>) -> ApiResult<Value> {
     state.session_authenticated.store(true, std::sync::atomic::Ordering::Relaxed);
     crate::logger::log("session", "business processes ENABLED (accueil affiché)");
+    // RÉCUPÉRATION IMMÉDIATE : dès l'affichage de l'accueil (session restaurée à
+    // l'ouverture, ou connexion), on récupère tout de suite les changements des
+    // autres appareils si Internet est disponible — sans attendre le cycle
+    // périodique de 60 s.
+    #[cfg(feature = "supabase-sync")]
+    crate::commands::sync::sync_demarrage(app);
     Ok(json!({ "business_ready": true }))
 }
 

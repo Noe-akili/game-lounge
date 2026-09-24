@@ -382,6 +382,26 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
 
     // 1) Reprise : les événements SENDING sans ACK (coupure/crash) repassent PENDING.
     db(state).outbox_reset_stale().ok();
+    // 1 bis) Reprise UNIQUE des échecs historiques : avant ce correctif, un simple
+    // échec réseau marquait le changement FAILED et il n'était plus jamais renvoyé
+    // (c'est ce qui faisait qu'une suppression définitive faite hors ligne
+    // n'arrivait jamais sur Supabase). On les remet en file une seule fois.
+    let deja_repare = db(state)
+        .get_setting("outbox_failed_recovered_v1")
+        .ok()
+        .and_then(|o| o)
+        .unwrap_or_default();
+    if deja_repare != "1" {
+        match db(state).outbox_requeue_failed() {
+            Ok(n) => {
+                if n > 0 {
+                    crate::logger::log_sync(&format!("outbox: {n} changement(s) en échec remis en file"));
+                }
+                let _ = db(state).set_setting("outbox_failed_recovered_v1", "1");
+            }
+            Err(e) => crate::logger::log_sync(&format!("outbox: reprise des échecs impossible: {}", e.message)),
+        }
+    }
 
     // 2) UPLOAD delta : batches de 100 PENDING -> Supabase -> ACK.
     //    Si le réseau coupe au milieu, les non-ACKés restent PENDING : le prochain
@@ -749,30 +769,16 @@ pub fn sync_poll(state: State<'_, AppState>, token: Option<String>) -> ApiResult
     }))
 }
 
-/// GET /api/sync/outbox/stats - Statistiques de la file d'attente locale
-#[tauri::command]
-pub fn sync_outbox_stats(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
-    let user = claims(&state, &token)?;
-    admin_only(&user)?;
-    let conn = db(&state).0.lock().map_err(|e| e.to_string())?;
-    let total: i64 = conn.query_row("SELECT COUNT(*) FROM sync_outbox", [], |r| r.get(0)).unwrap_or(0);
-    let pending: i64 = conn.query_row("SELECT COUNT(*) FROM sync_outbox WHERE status = 'PENDING'", [], |r| r.get(0)).unwrap_or(0);
-    let acked: i64 = conn.query_row("SELECT COUNT(*) FROM sync_outbox WHERE status = 'ACKED'", [], |r| r.get(0)).unwrap_or(0);
-    let failed: i64 = conn.query_row("SELECT COUNT(*) FROM sync_outbox WHERE status = 'FAILED'", [], |r| r.get(0)).unwrap_or(0);
-    let conflicts: i64 = conn.query_row("SELECT COUNT(*) FROM sync_conflicts", [], |r| r.get(0)).unwrap_or(0);
-    let cursor = db(&state).sync_cursor_get().unwrap_or(0);
-
-    Ok(json!({
-        "total": total,
-        "pending": pending,
-        "acked": acked,
-        "failed": failed,
-        "conflicts": conflicts,
-        "cursor": cursor,
-    }))
-}
-
-/// POST /api/sync/outbox/purge - Nettoyer la file d'attente outbox
+/// POST /api/sync/outbox/purge - Nettoyer l'historique de synchronisation local.
+///
+/// Modes :
+/// - "keep1000" (bouton des Paramètres) : ne garde que les 1000 entrées les plus
+///   récentes déjà traitées (ACKED/FAILED) et supprime tout le reste. Les
+///   changements PENDING (pas encore envoyés) ne sont JAMAIS touchés : aucune
+///   donnée métier ne peut être perdue.
+/// - "acked" : purge uniquement les entrées déjà confirmées par Supabase.
+/// - "failed" : purge les entrées rejetées définitivement.
+/// - "all" : vide entièrement la file (action de secours, destructive).
 #[tauri::command]
 pub fn sync_purge_outbox(
     state: State<'_, AppState>,
@@ -782,7 +788,7 @@ pub fn sync_purge_outbox(
     let user = claims(&state, &token)?;
     admin_only(&user)?;
     let conn = db(&state).0.lock().map_err(|e| e.to_string())?;
-    let m = mode.as_deref().unwrap_or("acked");
+    let m = mode.as_deref().unwrap_or("keep1000");
     let deleted_count = match m {
         "all" => {
             conn.execute("DELETE FROM sync_outbox", []).map_err(|e| ApiError::internal(format!("purge all outbox: {e}")))?
@@ -790,31 +796,64 @@ pub fn sync_purge_outbox(
         "failed" => {
             conn.execute("DELETE FROM sync_outbox WHERE status = 'FAILED'", []).map_err(|e| ApiError::internal(format!("purge failed outbox: {e}")))?
         }
-        _ => {
+        "acked" => {
             conn.execute("DELETE FROM sync_outbox WHERE status = 'ACKED'", []).map_err(|e| ApiError::internal(format!("purge acked outbox: {e}")))?
         }
+        _ => {
+            conn.execute(
+                "DELETE FROM sync_outbox WHERE status <> 'PENDING' AND change_id NOT IN (SELECT change_id FROM sync_outbox WHERE status <> 'PENDING' ORDER BY device_sequence DESC LIMIT 1000)",
+                [],
+            )
+            .map_err(|e| ApiError::internal(format!("purge keep1000 outbox: {e}")))?
+        }
     };
-    Ok(json!({ "mode": m, "deleted": deleted_count }))
+    let restant: i64 = conn
+        .query_row("SELECT COUNT(*) FROM sync_outbox", [], |r| r.get(0))
+        .unwrap_or(0);
+    Ok(json!({ "mode": m, "deleted": deleted_count, "remaining": restant }))
 }
 
-/// POST /api/sync/conflicts/clear - Vider les conflits
-#[tauri::command]
-pub fn sync_clear_conflicts(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
-    let user = claims(&state, &token)?;
-    admin_only(&user)?;
-    let conn = db(&state).0.lock().map_err(|e| e.to_string())?;
-    let deleted_count = conn.execute("DELETE FROM sync_conflicts", []).map_err(|e| ApiError::internal(format!("clear conflicts: {e}")))?;
-    Ok(json!({ "deleted": deleted_count }))
-}
-
-/// POST /api/sync/cursors/reset - Réinitialiser les curseurs de synchronisation
-#[tauri::command]
-pub fn sync_reset_cursors(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
-    let user = claims(&state, &token)?;
-    admin_only(&user)?;
-    let conn = db(&state).0.lock().map_err(|e| e.to_string())?;
-    conn.execute_batch(
-        "UPDATE sync_state SET device_sequence = 0, last_uploaded = NULL, last_received = '0', last_sync_at = NULL;"
-    ).map_err(|e| ApiError::internal(format!("reset cursors: {e}")))?;
-    Ok(json!({ "reset": true }))
+/// SYNC DE DÉMARRAGE : à l'ouverture de l'application (session restaurée) ou
+/// juste après la connexion, on récupère IMMÉDIATEMENT les changements des
+/// autres appareils si Internet est disponible — sans attendre le cycle
+/// périodique de 60 s (mission « offline-first » : la donnée fraîche dès
+/// l'affichage de l'accueil).
+///
+/// Le pool cloud se connecte en arrière-plan (~1,5 s après le boot) : on lui
+/// laisse quelques tentatives. Si la sync est désactivée ou déjà en cours, on ne
+/// fait rien (le worker automatique s'en charge).
+#[cfg(feature = "supabase-sync")]
+pub fn sync_demarrage(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        for _ in 0..12 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(750)).await;
+            let Some(state) = app.try_state::<AppState>() else { return };
+            let enabled = state.db.get_setting("sync_enabled").ok().and_then(|o| o).unwrap_or_default() == "1";
+            if !enabled {
+                return;
+            }
+            let running = state
+                .sync_state
+                .lock()
+                .ok()
+                .and_then(|g| g.clone())
+                .and_then(|v| v.get("running").and_then(Value::as_bool))
+                .unwrap_or(false);
+            if running {
+                return;
+            }
+            let pool_pret = state
+                .supabase_pool
+                .lock()
+                .ok()
+                .map(|g| g.is_some())
+                .unwrap_or(false);
+            if !pool_pret {
+                continue; // réseau/pool pas encore prêt : on réessaie
+            }
+            crate::logger::log_sync("sync de démarrage : réception immédiate des changements distants");
+            let _ = run_sync_impl(&app, &state).await;
+            return;
+        }
+    });
 }

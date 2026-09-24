@@ -747,6 +747,22 @@ impl Db {
         Ok(())
     }
 
+    /// Reprise UNIQUE des échecs HISTORIQUES : les versions précédentes
+    /// marquaient FAILED au moindre échec réseau et l'outbox n'était relue qu'en
+    /// PENDING — un changement (dont une suppression définitive) pouvait donc ne
+    /// JAMAIS repartir. On les remet en file une seule fois, sous flag, pour ne
+    /// pas boucler indéfiniment sur un vrai changement invalide.
+    pub fn outbox_requeue_failed(&self) -> ApiResult<usize> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let n = conn
+            .execute("UPDATE sync_outbox SET status='PENDING' WHERE status='FAILED'", [])
+            .map_err(|e| ApiError::internal(format!("outbox requeue failed: {e}")))?;
+        Ok(n)
+    }
+
     /// Marque des événements comme ACKED (confirmés par Supabase) ou FAILED.
     pub fn outbox_mark(&self, ids: &Vec<String>, status: &str) -> ApiResult<()> {
         if ids.is_empty() {
@@ -1084,6 +1100,18 @@ impl Db {
         }
         // 2) TOMBSTONE : suppression distante (spec §8)
         if payload.get("deleted").map(is_deleted_value).unwrap_or(false) {
+            // Suppression DÉFINITIVE distante : la ligne disparaît réellement ici
+            // aussi (suppression physique, comme sur le cloud), sinon elle
+            // resterait archivée en local et pourrait être restaurée par erreur.
+            if payload
+                .get("permanent_delete")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                conn.execute(&format!("DELETE FROM \"{entity}\" WHERE id=?"), [record_id])
+                    .map_err(|e| ApiError::internal(format!("permanent delete {entity}: {e}")))?;
+                return Ok("tombstone");
+            }
             let touched = conn
                 .execute(&format!("UPDATE \"{entity}\" SET deleted=1 WHERE id=?"), [record_id])
                 .map_err(|e| ApiError::internal(format!("tombstone {entity}: {e}")))?;

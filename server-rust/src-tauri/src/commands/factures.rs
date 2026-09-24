@@ -545,7 +545,11 @@ pub async fn factures_permanent_delete(
         let sql = format!(
             "DELETE FROM lignes_facture WHERE facture_id = {id};              DELETE FROM jetons_transactions WHERE facture_id = {id};              DELETE FROM factures WHERE id = {id};"
         );
-        let _ = crate::supabase::supabase_batch_execute(&pool, &sql).await;
+        // Best effort : si le réseau manque, la suppression part quand même par
+        // l'outbox (permanent_delete ci-dessous) et sera rejouée jusqu'à l'ACK.
+        if let Err(e) = crate::supabase::supabase_batch_execute(&pool, &sql).await {
+            crate::logger::log_cloud(&format!("factures: suppression definitive cloud #{id} echouee (reprise par l'outbox): {e}"));
+        }
     }
     db(&state).permanent_delete("factures", id)?;
     Ok(json!({ "id": id, "permanently_deleted": true }))

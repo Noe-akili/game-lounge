@@ -95,3 +95,31 @@ pub fn messages_delete(
     db(&state).remove("messages", id)?;
     Ok(json!({ "success": true }))
 }
+
+/// DELETE /api/messages/:id/permanent - Suppression DEFINITIVE d'un message.
+///
+/// Les messages n'ont pas de corbeille : la suppression depuis l'interface est
+/// donc definitive. On efface donc la ligne sur Supabase (et non un simple
+/// marquage `deleted=1`), puis localement via `Db::permanent_delete`, qui
+/// journalise un evenement DELETE `permanent_delete=true` : les autres appareils
+/// la suppriment aussi chez eux au prochain cycle.
+#[tauri::command(async)]
+pub async fn messages_permanent_delete(
+    state: State<'_, AppState>,
+    token: Option<String>,
+    id: i64,
+) -> ApiResult<Value> {
+    claims(&state, &token)?;
+    if !validators::is_valid_id(id) {
+        return Err(ApiError::bad_request("ID invalide"));
+    }
+    // Cloud d'abord (best effort : si hors ligne, l'outbox s'en charge).
+    if let Ok(pool) = crate::supabase::get_supabase_pool(&state).await {
+        let sql = format!("DELETE FROM messages WHERE id = {id};");
+        if let Err(e) = crate::supabase::supabase_batch_execute(&pool, &sql).await {
+            crate::logger::log_cloud(&format!("messages: suppression definitive cloud #{id} echouee: {e}"));
+        }
+    }
+    db(&state).permanent_delete("messages", id)?;
+    Ok(json!({ "id": id, "permanently_deleted": true }))
+}

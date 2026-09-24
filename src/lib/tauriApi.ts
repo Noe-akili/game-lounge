@@ -173,6 +173,9 @@ const ROUTES: RouteDef[] = [
   { m: 'POST', p: '/messages', f: ({ token, body }) => ({ cmd: 'messages_create', args: { token, titre: val(body, 'titre'), contenu: val(body, 'contenu') } }) },
   { m: 'PUT', p: '/messages/:id', f: ({ token, segs, body }) => ({ cmd: 'messages_update', args: { token, id: num(segs.id), titre: val(body, 'titre'), contenu: val(body, 'contenu') } }) },
   { m: 'DELETE', p: '/messages/:id', f: ({ token, segs }) => ({ cmd: 'messages_delete', args: { token, id: num(segs.id) } }) },
+  // Suppression DÉFINITIVE (les messages n'ont pas de corbeille) : efface aussi
+  // la ligne sur Supabase, et propage la suppression aux autres appareils.
+  { m: 'DELETE', p: '/messages/:id/permanent', f: ({ token, segs }) => ({ cmd: 'messages_permanent_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== PARAMÈTRES FIDÉLITÉ =====
   { m: 'GET', p: '/parametres/app/:key', f: ({ token, segs }) => ({ cmd: 'app_settings_get', args: { token, key: segs.key } }) },
@@ -197,10 +200,10 @@ const ROUTES: RouteDef[] = [
   { m: 'DELETE', p: '/users/:id/permanent', f: ({ token, segs }) => ({ cmd: 'users_permanent_delete', args: { token, id: num(segs.id) } }) },
 
   // ===== SYNC =====
-    { m: 'GET', p: '/sync/outbox/stats', f: ({ token }) => ({ cmd: 'sync_outbox_stats', args: { token } }) },
+  // Nettoyage de l'historique de synchronisation (Paramètres) : garde les 1000
+  // entrées les plus récentes déjà traitées, ne touche jamais aux changements
+  // en attente.
   { m: 'POST', p: '/sync/outbox/purge', f: ({ token, body }) => ({ cmd: 'sync_purge_outbox', args: { token, mode: body?.mode } }) },
-  { m: 'POST', p: '/sync/conflicts/clear', f: ({ token }) => ({ cmd: 'sync_clear_conflicts', args: { token } }) },
-  { m: 'POST', p: '/sync/cursors/reset', f: ({ token }) => ({ cmd: 'sync_reset_cursors', args: { token } }) },
 { m: 'GET', p: '/sync/status', f: ({ token }) => ({ cmd: 'sync_status', args: { token } }) },
   { m: 'POST', p: '/sync/toggle', f: ({ token, body }) => ({ cmd: 'sync_toggle', args: { token, enabled: !!val(body, 'enabled') } }) },
   { m: 'POST', p: '/sync/run', f: ({ token }) => ({ cmd: 'sync_run', args: { token } }) },

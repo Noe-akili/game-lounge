@@ -95,6 +95,26 @@
     </div>
 
     <div class="card w-full max-w-full min-w-0 overflow-hidden">
+      <div class="flex items-center gap-3 mb-2">
+        <Trash2 class="w-5 h-5 text-neon-red shrink-0" />
+        <h4 class="font-gaming font-bold truncate">Historique de synchronisation</h4>
+      </div>
+      <p class="text-xs text-txt-muted mb-4">
+        Supprime l'historique local des changements déjà synchronisés et ne conserve que les
+        <strong>1000 entrées les plus récentes</strong>. Les changements pas encore envoyés à
+        Supabase ne sont jamais touchés : aucune donnée n'est perdue.
+      </p>
+      <button
+        @click="purgerHistorique"
+        :disabled="purging"
+        class="btn bg-neon-red/20 hover:bg-neon-red/30 text-neon-red border border-neon-red/30 w-full sm:w-auto flex items-center justify-center gap-2"
+      >
+        <Trash2 class="w-4 h-4" :class="{ 'animate-spin': purging }" />
+        {{ purging ? 'Nettoyage...' : 'Nettoyer les synchronisations (garder 1000)' }}
+      </button>
+    </div>
+
+    <div class="card w-full max-w-full min-w-0 overflow-hidden">
       <h4 class="font-gaming font-bold mb-4 truncate">Affichage</h4>
       <div class="space-y-6 w-full max-w-full min-w-0 overflow-hidden">
 
@@ -267,6 +287,7 @@ const config = reactive({ taux_tva: 20 })
 const appNameDraft = ref(settings.appName)
 const syncStatus = ref({ enabled: false, supabaseEnabled: false, lastSync: null, syncing: false })
 const syncing = ref(false)
+const purging = ref(false)
 
 function changeFont(mode: string) {
   settings.setFont(mode)
@@ -424,6 +445,22 @@ async function toggleSync() {
     syncStatus.value = { ...syncStatus.value, enabled: res.enabled }
     toast.success(res.enabled ? 'Sync activée' : 'Sync désactivée')
   } catch (e: any) { toast.error(e.message) }
+}
+
+/// Nettoyage de l'historique de synchronisation (bouton Paramètres) : ne garde
+/// que les 1000 entrées les plus récentes déjà traitées. Les entrées PENDING
+/// (pas encore envoyées) sont conservées par le moteur Rust.
+async function purgerHistorique() {
+  if (!confirm('Supprimer l\'historique de synchronisation et ne garder que les 1000 entrées les plus récentes ?')) return
+  purging.value = true
+  try {
+    const res = await api.post('/sync/outbox/purge', { mode: 'keep1000' })
+    toast.success(`Historique nettoyé : ${res.deleted || 0} entrée(s) supprimée(s), ${res.remaining ?? 0} conservée(s).`)
+  } catch (e: any) {
+    toast.error('Erreur lors du nettoyage : ' + (e.message || e))
+  } finally {
+    purging.value = false
+  }
 }
 
 async function runSync() {

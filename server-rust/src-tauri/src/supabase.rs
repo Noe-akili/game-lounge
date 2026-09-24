@@ -788,9 +788,13 @@ fn build_change_script(
 
 /// Push d'un batch d'événements outbox vers Supabase : le script complet part
 /// en UN seul aller-retour (protocole simple, atomique). Si un événement est
-/// invalide (colonne inconnue...), retry événement par événement pour isoler :
-/// les OK partent en ACKED, les erreurs applicatives en FAILED.
-/// Retourne (change_ids ACKed, change_ids en erreur).
+/// invalide (colonne inconnue...), retry événement par événement pour isoler.
+/// Retourne (change_ids ACKed, change_ids en échec DÉFINITIF).
+///
+/// IMPORTANT : seuls les changements réellement invalides (script
+/// non constructible avec un schéma cloud connu) sont renvoyés en échec
+/// définitif. Tout échec d'exécution (réseau, timeout, contrainte momentanée)
+/// laisse le changement PENDING : il sera rejoué, jamais perdu.
 #[cfg(feature = "supabase-sync")]
 static CLOUD_COLS: std::sync::OnceLock<
     std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
@@ -849,10 +853,35 @@ pub async fn push_outbox_batch(
             scripts.push(s);
         }
     }
+    // Un changement n'est DÉFINITIVEMENT rejeté (FAILED) que si son script est
+    // invalide ALORS QUE les colonnes cloud de sa table ont bien été lues. Si le
+    // schéma n'a pas pu être lu (réseau coupé, table pas encore migrée), l'échec
+    // est TRANSITOIRE : on laisse PENDING pour réessayer.
+    //
+    // C'est LA correction du bug « suppression définitive appliquée en local mais
+    // jamais sur Supabase » : auparavant, le moindre échec réseau marquait les
+    // changements FAILED, et l'outbox n'étant relu qu'en PENDING, ils étaient
+    // perdus à jamais (jamais renvoyés).
+    let invalide_definitif = |c: &Value| -> bool {
+        if build_change_script(c, &cols_cache).is_some() {
+            return false;
+        }
+        let entity = c.get("table_name").and_then(Value::as_str).unwrap_or_default();
+        cols_cache
+            .get(entity)
+            .map(|cols| !cols.is_empty())
+            .unwrap_or(false)
+    };
+    let change_id_of = |c: &Value| -> Option<String> {
+        c.get("change_id").and_then(Value::as_str).map(str::to_string)
+    };
     if scripts.is_empty() {
+        // Aucun script constructible : on ne condamne que les vrais invalides,
+        // les autres restent PENDING (rejoués au prochain cycle).
         let failed = changes
             .iter()
-            .filter_map(|c| c.get("change_id").and_then(Value::as_str).map(str::to_string))
+            .filter(|c| invalide_definitif(c))
+            .filter_map(change_id_of)
             .collect::<Vec<_>>();
         return Ok((Vec::new(), failed));
     }
@@ -865,23 +894,24 @@ pub async fn push_outbox_batch(
         .collect::<Vec<_>>();
     let failed_invalid = changes
         .iter()
-        .filter(|c| build_change_script(c, &cols_cache).is_none())
-        .filter_map(|c| c.get("change_id").and_then(Value::as_str).map(str::to_string))
+        .filter(|c| invalide_definitif(c))
+        .filter_map(change_id_of)
         .collect::<Vec<_>>();
     match supabase_batch_execute(pool, &scripts.join("\n")).await {
         Ok(_) => Ok((valid_ids, failed_invalid)),
         Err(_) => {
-            // Échec global : retry un par un pour isoler les erreurs applicatives
+            // Échec global : retry un par un pour isoler les erreurs applicatives.
+            // Un échec d'EXÉCUTION n'est jamais définitif : le changement reste
+            // PENDING (rejoué plus tard), sinon une coupure réseau ferait
+            // disparaître définitivement la donnée ou la suppression.
             let mut acked: Vec<String> = Vec::new();
-            let mut failed: Vec<String> = failed_invalid;
             for change in changes {
                 let Some(script) = build_change_script(change, &cols_cache) else { continue };
-                match supabase_batch_execute(pool, &script).await {
-                    Ok(_) => acked.push(change.get("change_id").and_then(Value::as_str).unwrap_or_default().to_string()),
-                    Err(_) => failed.push(change.get("change_id").and_then(Value::as_str).unwrap_or_default().to_string()),
+                if supabase_batch_execute(pool, &script).await.is_ok() {
+                    acked.push(change.get("change_id").and_then(Value::as_str).unwrap_or_default().to_string());
                 }
             }
-            Ok((acked, failed))
+            Ok((acked, failed_invalid))
         }
     }
 }
