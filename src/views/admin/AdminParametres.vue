@@ -107,10 +107,31 @@
       <button
         @click="purgerHistorique"
         :disabled="purging"
-        class="btn bg-neon-red/20 hover:bg-neon-red/30 text-neon-red border border-neon-red/30 w-full sm:w-auto flex items-center justify-center gap-2"
+        class="btn rounded-xl bg-neon-red/20 hover:bg-neon-red/30 text-neon-red border border-neon-red/30 w-full sm:w-auto flex items-center justify-center gap-2"
       >
         <Trash2 class="w-4 h-4" :class="{ 'animate-spin': purging }" />
         {{ purging ? 'Nettoyage...' : 'Nettoyer les synchronisations (garder 1000)' }}
+      </button>
+    </div>
+
+    <div class="card w-full max-w-full min-w-0 overflow-hidden">
+      <div class="flex items-center gap-3 mb-2">
+        <Cloud class="w-5 h-5 text-neon-red shrink-0" />
+        <h4 class="font-gaming font-bold truncate">Historique de synchronisation (Supabase)</h4>
+      </div>
+      <p class="text-xs text-txt-muted mb-4">
+        Supprime sur Supabase les anciennes entrées du journal de synchronisation
+        (<strong>sync_changes</strong>) et ne conserve que les
+        <strong>1000 plus récentes</strong> afin de ne pas surcharger la base cloud.
+        Nécessite Internet.
+      </p>
+      <button
+        @click="purgerCloud"
+        :disabled="purgingCloud"
+        class="btn rounded-xl bg-neon-red/20 hover:bg-neon-red/30 text-neon-red border border-neon-red/30 w-full sm:w-auto flex items-center justify-center gap-2"
+      >
+        <Cloud class="w-4 h-4" :class="{ 'animate-spin': purgingCloud }" />
+        {{ purgingCloud ? 'Purge en cours...' : 'Purger le journal Supabase (garder 1000)' }}
       </button>
     </div>
 
@@ -288,6 +309,7 @@ const appNameDraft = ref(settings.appName)
 const syncStatus = ref({ enabled: false, supabaseEnabled: false, lastSync: null, syncing: false })
 const syncing = ref(false)
 const purging = ref(false)
+const purgingCloud = ref(false)
 
 function changeFont(mode: string) {
   settings.setFont(mode)
@@ -460,6 +482,21 @@ async function purgerHistorique() {
     toast.error('Erreur lors du nettoyage : ' + (e.message || e))
   } finally {
     purging.value = false
+  }
+}
+
+/// Purge du journal cloud (sync_changes) côté Supabase : ne garde que les
+/// 1000 entrées les plus récentes. Admin uniquement.
+async function purgerCloud() {
+  if (!confirm('Supprimer sur Supabase les anciennes entrées du journal de synchronisation (garder les 1000 plus récentes) ?')) return
+  purgingCloud.value = true
+  try {
+    const res = await api.post('/sync/cloud/purge', { keep: 1000 })
+    toast.success(`Journal Supabase purgé : ${res.deleted || 0} entrée(s) supprimée(s), ${res.remaining ?? 0} conservée(s).`)
+  } catch (e: any) {
+    toast.error('Erreur lors de la purge Supabase : ' + (e.message || e))
+  } finally {
+    purgingCloud.value = false
   }
 }
 

@@ -813,6 +813,51 @@ pub fn sync_purge_outbox(
     Ok(json!({ "mode": m, "deleted": deleted_count, "remaining": restant }))
 }
 
+/// POST /api/sync/cloud/purge - Nettoyer les sync_changes sur Supabase en ne gardant que les plus récentes
+#[tauri::command(async)]
+pub async fn sync_purge_cloud(
+    state: State<'_, AppState>,
+    token: Option<String>,
+    keep: Option<i64>,
+) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    #[cfg(feature = "supabase-sync")]
+    {
+        let pool = crate::supabase::get_supabase_pool(&state).await?;
+        let keep_count = keep.unwrap_or(1000).max(100);
+        let count_before: i64 = match crate::supabase::supabase_query(&pool, "SELECT COUNT(*) FROM sync_changes", &[]).await {
+            Ok(rows) => rows.first().and_then(|r| crate::supabase::pg_col_to_i64(r, 0)).unwrap_or(0),
+            Err(e) => return Err(ApiError::internal(format!("Lecture sync_changes impossible: {e}"))),
+        };
+        if count_before == 0 {
+            return Ok(json!({ "deleted": 0, "remaining": 0, "keep": keep_count }));
+        }
+        let sql = format!(
+            "DELETE FROM sync_changes WHERE sequence <= COALESCE((SELECT sequence FROM sync_changes ORDER BY sequence DESC OFFSET {keep_count} LIMIT 1), 0);"
+        );
+        if let Err(e) = crate::supabase::supabase_batch_execute(&pool, &sql).await {
+            return Err(ApiError::internal(format!("Échec de purge sur Supabase: {e}")));
+        }
+        let count_after: i64 = match crate::supabase::supabase_query(&pool, "SELECT COUNT(*) FROM sync_changes", &[]).await {
+            Ok(rows) => rows.first().and_then(|r| crate::supabase::pg_col_to_i64(r, 0)).unwrap_or(0),
+            Err(_) => count_before,
+        };
+        let deleted = (count_before - count_after).max(0);
+        crate::logger::log_cloud(&format!("purge cloud: {deleted} changements supprimés sur Supabase, {count_after} restants"));
+        Ok(json!({
+            "success": true,
+            "deleted": deleted,
+            "remaining": count_after,
+            "keep": keep_count
+        }))
+    }
+    #[cfg(not(feature = "supabase-sync"))]
+    {
+        Err(ApiError::service_unavailable("Version sans cloud"))
+    }
+}
+
 /// SYNC DE DÉMARRAGE : à l'ouverture de l'application (session restaurée) ou
 /// juste après la connexion, on récupère IMMÉDIATEMENT les changements des
 /// autres appareils si Internet est disponible — sans attendre le cycle

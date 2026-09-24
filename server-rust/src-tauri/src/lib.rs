@@ -381,6 +381,7 @@ pub fn run() {
             commands::sync_run,
             commands::sync_poll,
             commands::sync::sync_purge_outbox,
+            commands::sync::sync_purge_cloud,
             commands::sync::sync_initial_status,
             commands::sync::sync_initial_skip,
         ])

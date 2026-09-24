@@ -204,6 +204,8 @@ const ROUTES: RouteDef[] = [
   // entrées les plus récentes déjà traitées, ne touche jamais aux changements
   // en attente.
   { m: 'POST', p: '/sync/outbox/purge', f: ({ token, body }) => ({ cmd: 'sync_purge_outbox', args: { token, mode: body?.mode } }) },
+  // Purge côté Supabase : supprime les anciennes entrées du journal cloud sync_changes
+  { m: 'POST', p: '/sync/cloud/purge', f: ({ token, body }) => ({ cmd: 'sync_purge_cloud', args: { token, keep: body?.keep } }) },
 { m: 'GET', p: '/sync/status', f: ({ token }) => ({ cmd: 'sync_status', args: { token } }) },
   { m: 'POST', p: '/sync/toggle', f: ({ token, body }) => ({ cmd: 'sync_toggle', args: { token, enabled: !!val(body, 'enabled') } }) },
   { m: 'POST', p: '/sync/run', f: ({ token }) => ({ cmd: 'sync_run', args: { token } }) },
