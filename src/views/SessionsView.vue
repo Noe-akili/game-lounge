@@ -351,12 +351,27 @@ async function endSession(s) {
 onMounted(() => {
   fetchData(); fetchRefs()
   window.addEventListener('sync-poll', onSyncPoll)
+  window.addEventListener('sync-completed', refreshAll)
+  window.addEventListener('app-data-refresh', onDataRefresh as EventListener)
   window.addEventListener('session-started', onSessionStarted as EventListener)
 })
 onUnmounted(() => {
   window.removeEventListener('sync-poll', onSyncPoll)
+  window.removeEventListener('sync-completed', refreshAll)
+  window.removeEventListener('app-data-refresh', onDataRefresh as EventListener)
   window.removeEventListener('session-started', onSessionStarted as EventListener)
 })
+
+function refreshAll() {
+  fetchData(); fetchRefs()
+}
+
+function onDataRefresh(e: CustomEvent) {
+  const d = e.detail
+  if (!d || d.all || d.sessions_jeu || d.consoles || d.jeux || d.joueurs) {
+    refreshAll()
+  }
+}
 function onSessionStarted(e: Event) {
   const session = (e as CustomEvent).detail
   if (!session?.id) return fetchData()

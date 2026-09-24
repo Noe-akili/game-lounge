@@ -403,6 +403,19 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
         }
     }
 
+    // 1 bis) Synchronisation des paramètres partagés (TVA, nom de l'application)
+    if let Ok(shared_settings) = crate::supabase::pull_app_settings(&pool).await {
+        for (k, v) in shared_settings {
+            if k == "app_name" || k == "taux_tva" {
+                let old_v = db(state).get_setting(&k).ok().flatten();
+                if old_v.as_deref() != Some(&v) {
+                    let _ = db(state).set_setting(&k, &v);
+                    let _ = app.emit("app-setting-changed", serde_json::json!({ "key": k, "value": v }));
+                }
+            }
+        }
+    }
+
     // 2) UPLOAD delta : batches de 100 PENDING -> Supabase -> ACK.
     //    Si le réseau coupe au milieu, les non-ACKés restent PENDING : le prochain
     //    cycle reprend exactement où il s'est arrêté (spec §6) et l'upsert cloud est
@@ -669,6 +682,9 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
                 match *statut {
                     "applied" | "tombstone" => {
                         downloaded += 1;
+                        if let Ok(mut pending) = state.pending_ui_changes.lock() {
+                            *pending.entry((*entity).to_string()).or_insert(0) += 1;
+                        }
                         db(state).notify_remote_change(
                             entity,
                             if *statut == "tombstone" { "DELETE" } else { "UPDATE" },
@@ -733,6 +749,14 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
     }));
     // Événement final (delta sync discret : le dashboard affiche "Synchronisation..."
     // pendant running=true, puis un toast peut réagir à sync-completed).
+    // Émission de l'événement Tauri pour rafraîchir tout le front immédiatement
+    let _ = app.emit("sync-completed", serde_json::json!({
+        "downloaded": downloaded,
+        "uploaded": uploaded,
+        "pending": pending,
+        "timestamp": now_iso()
+    }));
+
     if !was_initial_sync {
         let fin = crate::supabase::SyncProgress::new("terminé", &msg, "completed");
         crate::supabase::emit_progress(app, &fin.with_counts(downloaded as u64, (downloaded + uploaded).max(1) as u64, (downloaded + uploaded) as u64), Some("sync-completed"));
@@ -759,8 +783,13 @@ pub fn sync_poll(state: State<'_, AppState>, token: Option<String>) -> ApiResult
     #[cfg(not(feature = "supabase-sync"))]
     let supabase_enabled = false;
     let last_sync = state.sync_state.lock().ok().and_then(|g| g.clone()).unwrap_or(Value::Null);
+
+    let changes = state.pending_ui_changes.lock()
+        .map(|mut g| std::mem::take(&mut *g))
+        .unwrap_or_default();
+
     Ok(json!({
-        "changes": {},
+        "changes": changes,
         "timestamp": now_iso(),
         "supabase": {
             "enabled": supabase_enabled

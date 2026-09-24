@@ -304,7 +304,7 @@ const showDetail = ref(false)
 const selected = ref(null)
 const editingId = ref(null)
 const form = reactive({ regle_type: 'temps', seuil: 60, jetons_attribues: 1, valeur_jeton: 100, actif: true })
-const config = reactive({ taux_tva: 20 })
+const config = reactive({ taux_tva: settings.tauxTva || 20 })
 const appNameDraft = ref(settings.appName)
 const syncStatus = ref({ enabled: false, supabaseEnabled: false, lastSync: null, syncing: false })
 const syncing = ref(false)
@@ -391,7 +391,10 @@ async function saveGeneral() {
   if (!appNameDraft.value.trim()) return toast.error("Le nom de l'application est requis")
   await settings.saveAppName(appNameDraft.value)
   appNameDraft.value = settings.appName
-  toast.success("Nom de l'application mis à jour et synchronisé avec Supabase !")
+  if (config.taux_tva != null && !isNaN(Number(config.taux_tva))) {
+    await settings.saveTva(Number(config.taux_tva))
+  }
+  toast.success("Paramètres généraux (nom & TVA) enregistrés et synchronisés !")
 }
 
 async function fetchData() {
@@ -528,5 +531,5 @@ async function runSync() {
   finally { syncing.value = false }
 }
 
-onMounted(() => { fetchData(); fetchSyncStatus() })
+onMounted(() => { fetchData(); fetchSyncStatus(); config.taux_tva = settings.tauxTva; window.addEventListener('sync-completed', () => { config.taux_tva = settings.tauxTva }); window.addEventListener('app-data-refresh', () => { config.taux_tva = settings.tauxTva; fetchData() }) })
 </script>

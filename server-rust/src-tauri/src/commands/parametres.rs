@@ -203,7 +203,11 @@ pub async fn app_settings_get(
         }
     }
 
-    let default_val = if k == "app_name" { "Game Lounge" } else { "" };
+    let default_val = match k.as_str() {
+        "app_name" => "Game Lounge",
+        "taux_tva" => "20",
+        _ => "",
+    };
     let final_val = val.unwrap_or_else(|| default_val.to_string());
     Ok(json!({ "key": k, "value": final_val }))
 }

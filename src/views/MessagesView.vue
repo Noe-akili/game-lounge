@@ -154,18 +154,38 @@ async function deleteMessage(id: number) {
 
 onMounted(() => {
   fetchData()
-  // Auto-refresh when sync poll detects new messages
   window.addEventListener('sync-poll', onSyncPoll)
+  window.addEventListener('sync-completed', onSyncRefresh)
+  window.addEventListener('app-data-refresh', onDataRefresh as EventListener)
+  window.addEventListener('db-change', onDbChange as EventListener)
 })
-onUnmounted(() => window.removeEventListener('sync-poll', onSyncPoll))
+onUnmounted(() => {
+  window.removeEventListener('sync-poll', onSyncPoll)
+  window.removeEventListener('sync-completed', onSyncRefresh)
+  window.removeEventListener('app-data-refresh', onDataRefresh as EventListener)
+  window.removeEventListener('db-change', onDbChange as EventListener)
+})
 
 function onSyncPoll(e: Event) {
   const detail = (e as CustomEvent).detail
-  if (detail?.changes?.messages) {
-    // Refresh messages from server
-    api.get('/messages').then(data => {
-      if (Array.isArray(data)) messages.value = data
-    }).catch(() => {})
+  if (detail?.changes?.messages || detail?.changes?.all) {
+    fetchData()
+  }
+}
+
+function onSyncRefresh() {
+  fetchData()
+}
+
+function onDataRefresh(e: CustomEvent) {
+  if (!e.detail || e.detail.messages || e.detail.all) {
+    fetchData()
+  }
+}
+
+function onDbChange(e: CustomEvent) {
+  if (e.detail?.table === 'messages') {
+    fetchData()
   }
 }
 </script>

@@ -32,6 +32,8 @@ pub struct AppState {
     /// État/progression de la dernière sync (sync_run tourne en arrière-plan :
     /// le frontend suit via /sync/poll pour éviter le Timeout IPC Android WebView)
     pub sync_state: Mutex<Option<serde_json::Value>>,
+    /// File des changements UI en attente de collecte par /sync/poll (tables modifiées)
+    pub pending_ui_changes: Mutex<std::collections::HashMap<String, u32>>,
     /// Anti brute-force login : horodatages des ÉCHECS par clé (email).
     /// Seuls les échecs comptent — un login qui finit par réussir n'est pas bloqué.
     pub login_attempts: Mutex<std::collections::HashMap<String, Vec<i64>>>,
@@ -207,6 +209,7 @@ pub fn run() {
                 supabase_pool: Mutex::new(None),
                 supabase_reconnecting: std::sync::atomic::AtomicBool::new(false),
                 sync_state: Mutex::new(None),
+                pending_ui_changes: Mutex::new(std::collections::HashMap::new()),
                 login_attempts: Mutex::new(std::collections::HashMap::new()),
                 session_authenticated: std::sync::atomic::AtomicBool::new(false),
             });
@@ -396,8 +399,10 @@ pub fn run() {
 #[cfg(feature = "supabase-sync")]
 fn auto_sync_loop(handle: tauri::AppHandle, mut wake_rx: tokio::sync::mpsc::UnboundedReceiver<()>) {
     tauri::async_runtime::spawn(async move {
-        // Premier tir ~10s après le boot (le pool cloud se connecte en arrière-plan)
-        let mut periodic = tokio::time::interval(tokio::time::Duration::from_secs(60));
+        // Filet périodique : vérification toutes les 12 secondes (au lieu de 60s)
+        // pour que les messages et changements distants soient tirés rapidement
+        // sur les appareils passifs/inactifs.
+        let mut periodic = tokio::time::interval(tokio::time::Duration::from_secs(12));
         periodic.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         periodic.reset();
         let mut first = true;
@@ -405,20 +410,17 @@ fn auto_sync_loop(handle: tauri::AppHandle, mut wake_rx: tokio::sync::mpsc::Unbo
             tokio::select! {
                 _ = wake_rx.recv() => {
                     // Réveil instantané : une donnée locale vient d'être écrite.
-                    // Débounce RÉEL de 1,5 s : une action de l'employé (démarrer une
-                    // session = plusieurs écritures) déclenchait autant de cycles de
-                    // synchronisation complets qu'il y avait d'écritures. On laisse
-                    // la rafale se terminer, puis UN seul cycle part avec tout.
+                    // Débounce de 1,5 s.
                     tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
                     while wake_rx.try_recv().is_ok() {}
                 }
                 _ = periodic.tick() => {
-                    // Filet périodique : réception des changements des autres appareils
-                    // + nettoyages. Inutile de forcer la 1re tick (immédiate) : on la saute.
                     if first { first = false; continue; }
                 }
             }
             let Some(state) = handle.try_state::<AppState>() else { continue };
+            let auth = state.session_authenticated.load(std::sync::atomic::Ordering::Relaxed);
+            if !auth { continue; }
             let enabled = state.db.get_setting("sync_enabled").ok().and_then(|o| o).unwrap_or_default() == "1";
             let running = state.sync_state.lock().ok()
                 .and_then(|g| g.clone())

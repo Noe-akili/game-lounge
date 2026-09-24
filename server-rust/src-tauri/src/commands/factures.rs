@@ -342,7 +342,13 @@ pub fn factures_create(
     row.insert("session_id".into(), json!(session_id));
     row.insert("joueur_id".into(), json!(joueur_id));
     row.insert("montant_ht".into(), json!(montant_ht.unwrap_or(0.0)));
-    row.insert("taux_tva".into(), json!(taux_tva.unwrap_or(20.0)));
+    let default_tva = db(&state)
+        .get_setting("taux_tva")
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(20.0);
+    row.insert("taux_tva".into(), json!(taux_tva.unwrap_or(default_tva)));
     row.insert("montant_tva".into(), json!(montant_tva.unwrap_or(0.0)));
     row.insert("montant_ttc".into(), json!(montant_ttc));
     row.insert(

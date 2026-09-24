@@ -62,6 +62,9 @@ async function pollForChanges() {
     const result = await api.get('/sync/poll')
     if (result && result.changes) {
       window.dispatchEvent(new CustomEvent('sync-poll', { detail: result }))
+      if (Object.keys(result.changes).length > 0) {
+        window.dispatchEvent(new CustomEvent('app-data-refresh', { detail: result.changes }))
+      }
     }
   } catch {}
 }
@@ -89,6 +92,30 @@ onMounted(() => {
     if (showSessionModal.value) { showSessionModal.value = false; return }
   }
   window.addEventListener('android-back-pressed', onAndroidBack as any)
+
+  // Écouteurs Tauri pour synchroniser tout le frontend en temps réel
+  if (typeof window !== 'undefined') {
+    const tauri = (window as any).__TAURI__?.event || (window as any).__TAURI_INTERNALS__?.event
+    if (tauri && typeof tauri.listen === 'function') {
+      try {
+        tauri.listen('sync-completed', (event: any) => {
+          window.dispatchEvent(new CustomEvent('sync-completed', { detail: event?.payload }))
+          window.dispatchEvent(new CustomEvent('app-data-refresh', { detail: { all: true } }))
+        })
+        tauri.listen('db-change', (event: any) => {
+          window.dispatchEvent(new CustomEvent('db-change', { detail: event?.payload }))
+          if (event?.payload?.table) {
+            window.dispatchEvent(new CustomEvent('app-data-refresh', { detail: { [event.payload.table]: 1 } }))
+          }
+        })
+        tauri.listen('app-setting-changed', (event: any) => {
+          window.dispatchEvent(new CustomEvent('app-setting-changed', { detail: event?.payload }))
+        })
+      } catch (err) {
+        console.warn('[AppLayout] Tauri event listener setup:', err)
+      }
+    }
+  }
   // Poll sync moins agressif sur Android (économise batterie, évite ANR sur low-end)
   const intervalMs = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent) ? 15000 : 10000
   pollInterval = setInterval(() => {
