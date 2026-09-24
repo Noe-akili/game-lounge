@@ -22,7 +22,7 @@
         >
           <AlertTriangle class="w-5 h-5 text-amber-400 shrink-0" />
           <div class="flex-1 min-w-0">
-            <p class="text-sm font-medium text-amber-300">Synchronisation en attente</p>
+            <p class="text-sm font-medium text-amber-300">{{ syncAlertTitle }}</p>
             <p class="text-xs text-amber-200/80">
               {{ syncAlertText }}
             </p>
@@ -73,10 +73,20 @@ const syncAlert = ref<any>(null)
 const retryingSync = ref(false)
 let syncAlertInterval: ReturnType<typeof setInterval> | null = null
 
+const syncAlertTitle = computed(() =>
+  syncAlert.value?.cloudConfigured === false ? 'Adresse cloud non configurée' : 'Synchronisation en attente'
+)
+
 const syncAlertText = computed(() => {
   const a = syncAlert.value
   if (!a) return ''
   const n = a.pendingCount ?? 0
+  // Cas le plus grave : aucune adresse cloud sur l'appareil -> rien ne peut
+  // partir, même avec Internet. Message spécifique pour ne pas envoyer
+  // l'utilisateur vérifier son WiFi inutilement.
+  if (a.cloudConfigured === false) {
+    return `${n} changement(s) ne peuvent pas être envoyés : aucune adresse cloud n'est configurée sur cet appareil. Demandez à l'administrateur de la renseigner (Paramètres → Synchronisation).`
+  }
   const h = a.pendingHours ?? 0
   const jours = Math.floor(h / 24)
   const quand = jours >= 1 ? `depuis ${jours} jour(s)` : `depuis ${h} h`

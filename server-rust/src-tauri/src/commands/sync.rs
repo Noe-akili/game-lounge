@@ -940,6 +940,10 @@ pub fn sync_state_read(state: State<'_, AppState>, token: Option<String>) -> Api
     claims(&state, &token)?;
     let d = db(&state);
     let enabled = sync_enabled(d);
+    // Une sync « active » sans aucune adresse cloud ne peut rien envoyer : on le
+    // signale explicitement pour que l'alerte apparaisse tout de suite (et pas
+    // seulement au bout de 24 h de changements en attente).
+    let cloud_configured = crate::supabase::resolve_cloud_url(Some(d)).is_some();
     let pending = d.outbox_pending_count().unwrap_or(0);
     let oldest = d.outbox_oldest_pending().ok().flatten();
     let pending_hours = oldest.as_deref().map(age_hours).unwrap_or(0);
@@ -976,7 +980,9 @@ pub fn sync_state_read(state: State<'_, AppState>, token: Option<String>) -> Api
         "pendingHours": pending_hours,
         "pendingOldest": oldest,
         "deviceId": device_id,
-        "stuck": enabled && pending > 0 && pending_hours >= 24,
+        "cloudConfigured": cloud_configured,
+        "stuck": (enabled && pending > 0 && pending_hours >= 24)
+            || (enabled && !cloud_configured && pending > 0),
     }))
 }
 

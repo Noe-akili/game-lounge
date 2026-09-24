@@ -38,20 +38,40 @@ jobs:
         uses: actions/checkout@v5
 
       # Garde-fou v1.1 : le backend Rust embarque l'URL cloud à la COMPILATION
-      # (option_env!("DATABASE_URL")). Un secret absent ou non tourné produit un
-      # APK qui ne synchronise pas : on le signale tout de suite, et on n'affiche
-      # jamais le secret (mot de passe masqué).
+      # (option_env!("DATABASE_URL")). Sans ce secret, l'APK ne connaît AUCUNE
+      # adresse cloud : la synchronisation resterait muette jusqu'à une saisie
+      # manuelle dans Admin > Paramètres > Synchronisation. On distingue donc :
+      #   - push de branche  -> avertissement, l'APK est publié en artefact
+      #     (utile pour la recette : l'URL peut être saisie dans l'app) ;
+      #   - tag vX.Y.Z       -> échec, on refuse de publier une Release qui ne
+      #     pourrait pas synchroniser.
+      # Secret à créer : gh secret set DATABASE_URL (URL du pooler Supabase,
+      # mot de passe tourné). Le secret JWT_SECRET n'est plus utilisé (secret
+      # unique par appareil).
       - name: Vérifier le secret cloud (masqué)
         run: |
           if [ -z "$DATABASE_URL" ]; then
-            echo "::error::Secret DATABASE_URL absent : l'APK ne pourra pas se connecter au cloud."
-            exit 1
+            {
+              echo "### Avertissement : APK construit sans URL cloud"
+              echo ""
+              echo "Le secret GitHub DATABASE_URL est absent, donc aucune adresse cloud n'est"
+              echo "embarquée dans le binaire. Sur un appareil, la synchronisation restera inactive"
+              echo "tant que l'URL n'aura pas été saisie dans Admin > Paramètres > Synchronisation."
+              echo ""
+              echo "Correction : gh secret set DATABASE_URL -b \"postgresql://app_lounge:...@...pooler.supabase.com:5432/postgres\""
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+              echo "::error::Release refusée : secret DATABASE_URL absent, l'APK publié ne pourrait se connecter à aucun cloud."
+              exit 1
+            fi
+            echo "::warning::APK construit sans URL cloud (secret DATABASE_URL absent) : synchronisation à configurer dans Admin > Paramètres > Synchronisation."
+          else
+            echo "URL cloud utilisée au build : $(printf '%s' "$DATABASE_URL" | sed -E 's#://[^@]*@#://***@#')"
+            case "$DATABASE_URL" in
+              *pooler.supabase.com*) echo "✅ Hôte Supabase (pooler) détecté." ;;
+              *) echo "::warning::L'URL cloud ne ressemble pas à un hôte pooler Supabase : vérifiez la rotation du secret." ;;
+            esac
           fi
-          echo "URL cloud utilisée au build : $(printf '%s' "$DATABASE_URL" | sed -E 's#://[^@]*@#://***@#')"
-          case "$DATABASE_URL" in
-            *pooler.supabase.com*) echo "✅ Hôte Supabase (pooler) détecté." ;;
-            *) echo "::warning::L'URL cloud ne ressemble pas à un hôte pooler Supabase : vérifiez la rotation du secret." ;;
-          esac
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v5

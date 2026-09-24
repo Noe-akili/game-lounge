@@ -68,6 +68,10 @@
             <span class="text-txt-dim">En attente d'envoi</span>
             <span class="font-medium" :class="syncState.stuck ? 'text-amber-400' : 'text-txt'">{{ syncState.pendingCount }} changement(s)</span>
           </div>
+          <div v-if="syncState.cloudConfigured === false" class="flex items-center justify-between gap-2 p-2.5 bg-bg-surface rounded-xl">
+            <span class="text-txt-dim">Adresse cloud</span>
+            <span class="font-medium text-amber-400">Non configurée</span>
+          </div>
           <div v-if="syncState.lastSyncAt" class="flex items-center justify-between gap-2 p-2.5 bg-bg-surface rounded-xl">
             <span class="text-txt-dim">Dernière synchronisation</span>
             <span class="font-medium text-txt">{{ formatDate(syncState.lastSyncAt) }}</span>
@@ -77,6 +81,10 @@
         <p v-if="!syncState.enabled" class="text-xs text-amber-400 mb-3">
           La synchronisation est en pause : vos ventes ne sont pas envoyées vers le cloud.
           Demandez à un administrateur de la réactiver (Paramètres → Synchronisation).
+        </p>
+        <p v-if="syncState.cloudConfigured === false" class="text-xs text-amber-400 mb-3">
+          Aucune adresse cloud n'est configurée sur cet appareil : rien ne peut être envoyé.
+          Un administrateur doit la renseigner (Paramètres → Synchronisation → Configuration cloud).
         </p>
         <p v-else-if="syncState.stuck" class="text-xs text-amber-400 mb-3">
           {{ syncState.pendingCount }} changement(s) attendent depuis plus de 24 h. Utilisez le bouton
@@ -177,6 +185,7 @@ const syncState = ref<any>({
   pendingHours: 0,
   lastSyncAt: null,
   stuck: false,
+  cloudConfigured: true,
 })
 
 let syncStateInterval: ReturnType<typeof setInterval> | null = null
