@@ -361,6 +361,28 @@ fn apply_pragmas(conn: &Connection) {
          CREATE INDEX IF NOT EXISTS idx_lignes_facture ON lignes_facture(facture_id);
          CREATE INDEX IF NOT EXISTS idx_jeux_console ON jeux(console_id);",
     );
+    // Index sur les DATES : les rapports filtrent désormais par bornes de date
+    // (>= jour, < jour+1) au lieu de `date(colonne) = ?`. Sans ces index, chaque
+    // borne imposait un balayage complet de la table sur téléphone.
+    let _ = conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_factures_statut_date ON factures(statut, date_paiement);
+         CREATE INDEX IF NOT EXISTS idx_factures_date ON factures(date_paiement);
+         CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions_jeu(created_at);
+         CREATE INDEX IF NOT EXISTS idx_sessions_created_statut ON sessions_jeu(created_at, statut);
+         CREATE INDEX IF NOT EXISTS idx_jetons_created ON jetons_transactions(created_at);
+         CREATE INDEX IF NOT EXISTS idx_joueurs_visite ON joueurs(derniere_visite);
+         CREATE INDEX IF NOT EXISTS idx_outbox_created ON sync_outbox(created_at);",
+    );
+    // SYNCHRONISATION ACTIVE PAR DÉFAUT (v1.1).
+    // Avant : la clé `sync_enabled` absente était lue comme "désactivée" — un
+    // appareil neuf (ou tenu par un employé, sans accès au toggle admin) ne
+    // poussait donc JAMAIS ses données vers Supabase : ventes non remontées,
+    // rapports faux, risque de perte si le téléphone cassait.
+    // INSERT OR IGNORE : si un administrateur a explicitement mis "0" (pause),
+    // son choix est respecté et n'est jamais écrasé.
+    let _ = conn.execute_batch(
+        "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('sync_enabled', '1');",
+    );
 }
 
 impl Db {
@@ -510,6 +532,75 @@ impl Db {
     /// propager les suppressions vers Supabase (tombstones).
     pub fn query_all_all(&self, table: &str) -> ApiResult<Vec<Value>> {
         self.query_all_impl(table, "")
+    }
+
+    /// Requête SQL BRUTE en lecture : agrégats (SUM/COUNT), jointures, GROUP BY.
+    ///
+    /// Pourquoi : les rapports chargeaient les tables entières avec `query_all`
+    /// puis calculaient dans Rust — au-delà de 5 000 lignes l'écran tronquait les
+    /// données (chiffre d'affaires FAUX) et risquait l'OOM sur Android 1 Go.
+    /// Ici le calcul est fait par SQLite, qui peut utiliser les index.
+    pub fn query_rows(&self, sql: &str, params: &[&dyn rusqlite::ToSql]) -> ApiResult<Vec<Value>> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| ApiError::internal(format!("Préparation requête: {e}")))?;
+        let rows = stmt
+            .query_map(params, row_to_value)
+            .map_err(|e| ApiError::internal(format!("Requête: {e}")))?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| ApiError::internal(format!("Lecture: {e}")))?;
+        Ok(rows)
+    }
+
+    /// Valeur numérique unique (SUM/COUNT) — 0 si la requête ne renvoie aucune ligne.
+    pub fn query_scalar_f64(&self, sql: &str, params: &[&dyn rusqlite::ToSql]) -> ApiResult<f64> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| ApiError::internal(format!("Préparation requête: {e}")))?;
+        let v = stmt
+            .query_row(params, |r| r.get::<_, Option<f64>>(0))
+            .map_err(|e| ApiError::internal(format!("Requête scalaire: {e}")))?;
+        Ok(v.unwrap_or(0.0))
+    }
+
+    /// Valeur entière unique (COUNT) — 0 si la requête ne renvoie aucune ligne.
+    pub fn query_scalar_i64(&self, sql: &str, params: &[&dyn rusqlite::ToSql]) -> ApiResult<i64> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| ApiError::internal(format!("Préparation requête: {e}")))?;
+        let v = stmt
+            .query_row(params, |r| r.get::<_, Option<i64>>(0))
+            .map_err(|e| ApiError::internal(format!("Requête scalaire: {e}")))?;
+        Ok(v.unwrap_or(0))
+    }
+
+    /// Date de création (ISO) du plus ancien changement ENCORE en attente d'envoi.
+    /// Sert d'alarme : si la file n'est pas vide depuis plus de 24 h, la
+    /// synchronisation est en panne silencieuse (l'utilisateur doit le voir).
+    pub fn outbox_oldest_pending(&self) -> ApiResult<Option<String>> {
+        let conn = match self.0.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let mut stmt = conn
+            .prepare("SELECT MIN(created_at) FROM sync_outbox WHERE status = 'PENDING'")
+            .map_err(|e| ApiError::internal(format!("outbox oldest: {e}")))?;
+        let v = stmt
+            .query_row([], |r| r.get::<_, Option<String>>(0))
+            .map_err(|e| ApiError::internal(format!("outbox oldest: {e}")))?;
+        Ok(v)
     }
 
     /// Colonnes de la table locale (PRAGMA table_info) pour filtrer les données venues

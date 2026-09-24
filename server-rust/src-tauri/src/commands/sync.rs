@@ -18,19 +18,35 @@ fn set_sync_state<'a>(state: &'a State<'_, AppState>, v: Value) {
     }
 }
 
+/// La synchronisation est-elle ACTIVE sur cet appareil ?
+///
+/// v1.1 : la clé absente vaut désormais **activée** (auparavant « désactivée »).
+/// Un appareil neuf, ou tenu par un employé qui n'a pas accès au réglage admin,
+/// ne poussait donc JAMAIS ses données : ventes non remontées, rapports faux,
+/// perte des données si le téléphone cassait. Seul un « 0 » EXPLICITE (mis par
+/// un administrateur) met la synchronisation en pause.
+pub fn sync_enabled(db: &crate::db::Db) -> bool {
+    match db.get_setting("sync_enabled") {
+        Ok(Some(v)) => v.trim() != "0",
+        _ => true,
+    }
+}
+
 fn local_status(state: &State<'_, AppState>) -> ApiResult<Value> {
     // Données d'exploitation présentes ? (la table `users` n'est plus un
     // indicateur : les comptes ne sont plus stockés localement)
     let has_local = !db(state).query_all("consoles")?.is_empty();
     // Toggle PERSISTÉ en SQLite : reste activé après sortie des paramètres / redémarrage
-    let sync_enabled = db(state).get_setting("sync_enabled").ok().and_then(|o| o).unwrap_or_default() == "1";
+    // (v1.1 : actif par défaut — voir sync_enabled)
+    let sync_enabled = sync_enabled(db(state));
     #[cfg(feature = "supabase-sync")]
     let (supabase_enabled, supabase_available) = {
         let pool_opt = state.supabase_pool.lock().ok().and_then(|g| g.clone());
-        // Fallback URL hardcodé assure Supabase toujours enabled (même sans .env)
-        let enabled = true;
+        // Une URL cloud est-elle configurée (réglages de l'app, environnement ou
+        // secret injecté au build) ? Aucun identifiant n'est écrit dans le code.
+        let configured = crate::supabase::resolve_cloud_url(Some(&state.db)).is_some();
+        let enabled = configured;
         let available = pool_opt.is_some();
-        let _ = std::env::var("DATABASE_URL").is_ok(); // garde compat
         (enabled, available)
     };
     #[cfg(not(feature = "supabase-sync"))]
@@ -899,6 +915,182 @@ pub async fn sync_purge_cloud(
     }
 }
 
+/// Ancienneté (en heures) d'un horodatage ISO — 0 si illisible.
+/// Sert à alerter quand des données attendent depuis trop longtemps.
+fn age_hours(iso: &str) -> i64 {
+    chrono::DateTime::parse_from_rfc3339(iso)
+        .map(|d| (chrono::Utc::now() - d.with_timezone(&chrono::Utc)).num_hours())
+        .unwrap_or(0)
+}
+
+/// GET /api/sync/state — ÉTAT DE LA SYNCHRONISATION, ouvert à TOUS les rôles
+/// authentifiés (lecture seule, aucune donnée métier exposée).
+///
+/// Pourquoi : `/sync/status` est réservé aux administrateurs. Un employé ne
+/// pouvait donc pas savoir si ses ventes étaient bien remontées au cloud — le
+/// pire cas étant une synchronisation en panne pendant des jours sans que
+/// personne ne s'en aperçoive, puis un téléphone perdu avec les données.
+///
+/// `stuck` = vrai si la synchronisation est ACTIVE et que des changements
+/// attendent depuis plus de 24 h : c'est la définition d'une panne silencieuse
+/// (réseau coupé, URL cloud fausse, identifiants refusés). L'interface affiche
+/// alors un bandeau d'alerte explicite.
+#[tauri::command]
+pub fn sync_state_read(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    claims(&state, &token)?;
+    let d = db(&state);
+    let enabled = sync_enabled(d);
+    let pending = d.outbox_pending_count().unwrap_or(0);
+    let oldest = d.outbox_oldest_pending().ok().flatten();
+    let pending_hours = oldest.as_deref().map(age_hours).unwrap_or(0);
+    // Dernier passage de la sync : écrit par le moteur après chaque cycle.
+    let last_sync_at = d
+        .query_rows("SELECT last_sync_at FROM sync_state LIMIT 1", &[])
+        .ok()
+        .and_then(|rows| {
+            rows.first()
+                .and_then(|r| r.get("last_sync_at").and_then(Value::as_str))
+                .map(|s| s.to_string())
+        })
+        .filter(|s| !s.is_empty());
+    let device_id = d
+        .device_identity()
+        .ok()
+        .and_then(|v| v.get("device_id").and_then(Value::as_str).map(|s| s.to_string()))
+        .unwrap_or_default();
+    let last = state.sync_state.lock().ok().and_then(|g| g.clone());
+    let running = last
+        .as_ref()
+        .and_then(|v| v.get("running").and_then(Value::as_bool))
+        .unwrap_or(false);
+    let last_message = last
+        .as_ref()
+        .and_then(|v| v.get("message").and_then(Value::as_str))
+        .map(|s| s.to_string());
+    Ok(json!({
+        "enabled": enabled,
+        "running": running,
+        "lastSyncAt": last_sync_at,
+        "lastMessage": last_message,
+        "pendingCount": pending,
+        "pendingHours": pending_hours,
+        "pendingOldest": oldest,
+        "deviceId": device_id,
+        "stuck": enabled && pending > 0 && pending_hours >= 24,
+    }))
+}
+
+/// GET /api/sync/cloud/config — Configuration cloud de CET appareil (ADMIN).
+/// Ne renvoie JAMAIS le mot de passe : seulement l'hôte et la provenance de
+/// l'URL (réglage local, environnement ou secret injecté au build).
+#[tauri::command]
+pub fn cloud_config_get(state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    #[cfg(feature = "supabase-sync")]
+    {
+        let d = db(&state);
+        let stored = d
+            .get_setting(crate::supabase::CLOUD_URL_SETTING)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let from_device = !stored.trim().is_empty();
+        let resolved = crate::supabase::resolve_cloud_url(Some(d));
+        let env_present =
+            std::env::var("DATABASE_URL").is_ok() || std::env::var("SUPABASE_DATABASE_URL").is_ok();
+        let source = if from_device {
+            "appareil"
+        } else if env_present {
+            "environnement"
+        } else if resolved.is_some() {
+            "build"
+        } else {
+            "aucune"
+        };
+        let pool_ready = state.supabase_pool.lock().ok().map(|g| g.is_some()).unwrap_or(false);
+        Ok(json!({
+            "configured": resolved.is_some(),
+            "source": source,
+            "host": resolved.as_deref().map(crate::supabase::cloud_host_label).unwrap_or_default(),
+            "fromDevice": from_device,
+            "poolReady": pool_ready,
+        }))
+    }
+    #[cfg(not(feature = "supabase-sync"))]
+    {
+        Ok(json!({ "configured": false, "source": "aucune", "host": "", "fromDevice": false, "poolReady": false }))
+    }
+}
+
+/// POST /api/sync/cloud/config — Enregistre l'URL de la base cloud DANS
+/// l'application (ADMIN).
+///
+/// Pourquoi : après une rotation du mot de passe de la base, il ne doit PAS
+/// falloir reconstruire l'APK ni réinstaller chaque téléphone. L'administrateur
+/// colle la nouvelle URL ici, elle est stockée dans SQLite et le pool se
+/// reconnecte immédiatement. Aucun identifiant ne reste dans le code source.
+///
+/// `url` vide = effacement du réglage local (retour à l'URL du build).
+#[tauri::command(async)]
+pub async fn cloud_config_set(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    token: Option<String>,
+    url: Option<String>,
+) -> ApiResult<Value> {
+    let user = claims(&state, &token)?;
+    admin_only(&user)?;
+    #[cfg(feature = "supabase-sync")]
+    {
+        let d = db(&state);
+        let value = url.unwrap_or_default().trim().to_string();
+        if value.is_empty() {
+            let _ = d.set_setting(crate::supabase::CLOUD_URL_SETTING, "");
+            crate::logger::log_cloud("configuration cloud effacée (retour à l'URL du build)");
+        } else {
+            if !value.starts_with("postgresql://") && !value.starts_with("postgres://") {
+                return Err(ApiError::bad_request(
+                    "URL invalide : elle doit commencer par postgresql://",
+                ));
+            }
+            // Adresse DIRECTE Supabase : IPv6 uniquement, ne répond jamais depuis
+            // Android (l'app restait hors ligne sans message clair). On refuse
+            // l'enregistrement pour éviter une panne silencieuse.
+            let host = crate::supabase::cloud_host_label(&value);
+            let host_name = host.split(':').next().unwrap_or("").to_string();
+            if host_name.starts_with("db.") && host_name.ends_with(".supabase.co") {
+                return Err(ApiError::bad_request(
+                    "Utilisez l'URL du SESSION POOLER (…pooler.supabase.com:5432) : l'adresse directe db.xxx.supabase.co est IPv6-only et ne fonctionne pas sur Android.",
+                ));
+            }
+            let _ = d.set_setting(crate::supabase::CLOUD_URL_SETTING, &value);
+            crate::logger::log_cloud(&format!(
+                "configuration cloud mise à jour par {} : {}",
+                user.email, host
+            ));
+        }
+        // Le pool en mémoire pointait peut-être vers l'ancienne base : on le jette
+        // et on en reconstruit un avec la nouvelle URL.
+        if let Ok(mut guard) = state.supabase_pool.lock() {
+            *guard = None;
+        }
+        crate::supabase::schedule_reconnect(&app);
+        let resolved = crate::supabase::resolve_cloud_url(Some(d));
+        Ok(json!({
+            "success": true,
+            "message": "Configuration cloud enregistrée — reconnexion en cours",
+            "configured": resolved.is_some(),
+            "host": resolved.as_deref().map(crate::supabase::cloud_host_label).unwrap_or_default(),
+        }))
+    }
+    #[cfg(not(feature = "supabase-sync"))]
+    {
+        let _ = (app, url);
+        Err(ApiError::service_unavailable("Version sans cloud"))
+    }
+}
+
 /// SYNC DE DÉMARRAGE : à l'ouverture de l'application (session restaurée) ou
 /// juste après la connexion, on récupère IMMÉDIATEMENT les changements des
 /// autres appareils si Internet est disponible — sans attendre le cycle
@@ -914,7 +1106,7 @@ pub fn sync_demarrage(app: tauri::AppHandle) {
         for _ in 0..12 {
             tokio::time::sleep(tokio::time::Duration::from_millis(750)).await;
             let Some(state) = app.try_state::<AppState>() else { return };
-            let enabled = state.db.get_setting("sync_enabled").ok().and_then(|o| o).unwrap_or_default() == "1";
+            let enabled = sync_enabled(&state.db);
             if !enabled {
                 return;
             }

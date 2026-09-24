@@ -11,6 +11,31 @@
     <div class="flex-1 flex flex-col min-h-0 min-w-0 w-full max-w-full overflow-hidden">
       <AppHeader :sidebar-open="isSidebarOpen" @toggle-sidebar="isSidebarOpen = !isSidebarOpen" class="flex-shrink-0" />
       <main class="flex-1 overflow-y-auto overflow-x-hidden p-4 lg:p-6 pb-20 lg:pb-6 w-full max-w-full min-w-0 relative">
+        <!-- ALERTE SYNCHRONISATION (S3) : si la sync est active mais que des
+             changements attendent depuis plus de 24 h, c'est une panne
+             silencieuse (réseau, URL cloud, identifiants). Sans ce bandeau,
+             l'utilisateur croit que tout est sauvegardé alors que rien ne
+             quitte le téléphone. Visible par TOUS les rôles. -->
+        <div
+          v-if="syncAlert"
+          class="mb-4 rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 flex flex-col sm:flex-row sm:items-center gap-3"
+        >
+          <AlertTriangle class="w-5 h-5 text-amber-400 shrink-0" />
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium text-amber-300">Synchronisation en attente</p>
+            <p class="text-xs text-amber-200/80">
+              {{ syncAlertText }}
+            </p>
+          </div>
+          <button
+            @click="retrySync"
+            :disabled="retryingSync"
+            class="btn-neon-outline shrink-0 flex items-center justify-center gap-2 text-xs"
+          >
+            <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': retryingSync }" />
+            {{ retryingSync ? 'Envoi...' : 'Réessayer' }}
+          </button>
+        </div>
         <router-view v-slot="{ Component }">
           <transition name="slide-inner" mode="default">
             <component :is="Component" :key="$route.path" />
@@ -25,7 +50,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import AppSidebarDesktop from '@/components/layout/AppSidebarDesktop.vue'
@@ -33,11 +58,62 @@ import AppHeader from '@/components/layout/AppHeader.vue'
 import BottomNav from '@/components/layout/BottomNav.vue'
 import StartSessionModal from '@/components/ui/StartSessionModal.vue'
 import { useSettingsStore } from '@/stores/settings'
+import { AlertTriangle, RefreshCw } from 'lucide-vue-next'
 
 const isSidebarOpen = ref(false)
 const showSessionModal = ref(false)
 const router = useRouter()
 const settings = useSettingsStore()
+
+// --- Alerte de synchronisation en panne (v1.1) ---
+// `stuck` est calculé par le backend : sync active + changements en attente
+// depuis plus de 24 h. On évite ainsi l'écran « tout va bien » alors que les
+// ventes ne remontent pas.
+const syncAlert = ref<any>(null)
+const retryingSync = ref(false)
+let syncAlertInterval: ReturnType<typeof setInterval> | null = null
+
+const syncAlertText = computed(() => {
+  const a = syncAlert.value
+  if (!a) return ''
+  const n = a.pendingCount ?? 0
+  const h = a.pendingHours ?? 0
+  const jours = Math.floor(h / 24)
+  const quand = jours >= 1 ? `depuis ${jours} jour(s)` : `depuis ${h} h`
+  return `${n} changement(s) ne sont pas encore envoyés vers le cloud ${quand}. Vérifiez la connexion Internet ; si le problème persiste, demandez à l'administrateur de vérifier la configuration cloud.`
+})
+
+async function checkSyncState() {
+  try {
+    const { api } = await import('@/utils/api')
+    const token = (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('gl_token') : null) || localStorage.getItem('gl_token')
+    if (!token) { syncAlert.value = null; return }
+    const state: any = await api.get('/sync/state')
+    syncAlert.value = state?.stuck ? state : null
+  } catch {
+    // Hors ligne ou non authentifié : on n'affiche pas d'alerte (l'utilisateur
+    // n'a pas forcément d'Internet, ce n'est pas une anomalie en soi).
+  }
+}
+
+async function retrySync() {
+  retryingSync.value = true
+  try {
+    const { api } = await import('@/utils/api')
+    const res: any = await api.post('/sync/run')
+    if (res?.started === false) {
+      const { toast } = await import('vue-sonner')
+      toast.info('Synchronisation déjà en cours...')
+    }
+    // Laisse le temps au moteur de travailler avant de réévaluer l'alerte.
+    setTimeout(checkSyncState, 6000)
+  } catch (e: any) {
+    const { toast } = await import('vue-sonner')
+    toast.error('Synchronisation impossible : ' + (e?.message || 'réseau indisponible'))
+  } finally {
+    retryingSync.value = false
+  }
+}
 
 const isDesktop = ref(typeof window !== 'undefined' ? window.innerWidth >= 1024 : false)
 let pollInterval: ReturnType<typeof setInterval> | null = null
@@ -126,10 +202,19 @@ onMounted(() => {
   }, intervalMs)
   // Nettoyage sur unmount
   ;(window as any).__gl_cleanup_back = () => window.removeEventListener('android-back-pressed', onAndroidBack as any)
+
+  // Surveillance de la synchronisation : première vérification après
+  // l'affichage (laisse le temps au pool cloud de se connecter), puis toutes
+  // les 5 minutes. Vérifie aussi après chaque cycle de sync terminé.
+  setTimeout(checkSyncState, 8000)
+  syncAlertInterval = setInterval(checkSyncState, 5 * 60 * 1000)
+  window.addEventListener('sync-completed', checkSyncState)
 })
 onUnmounted(() => {
   window.removeEventListener('resize', onResize)
+  window.removeEventListener('sync-completed', checkSyncState)
   if (pollInterval) clearInterval(pollInterval)
+  if (syncAlertInterval) clearInterval(syncAlertInterval)
   try { (window as any).__gl_cleanup_back?.() } catch {}
 })
 </script>

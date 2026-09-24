@@ -1,6 +1,6 @@
 [package]
 name = "game-lounge-rust"
-version = "1.0.0"
+version = "1.1.0"
 description = "Game Lounge - backend en Rust pour Tauri (application Android légère)"
 authors = ["Game Lounge"]
 edition = "2021"

@@ -215,6 +215,14 @@ const ROUTES: RouteDef[] = [
   // BYPASS écran d'initialisation (hors ligne) : marque l'init comme faite,
   // travaille en local ; la reprise cloud se fera au retour du réseau.
   { m: 'POST', p: '/sync/initial-skip', f: ({ token }) => ({ cmd: 'sync_initial_skip', args: { token } }) },
+  // ÉTAT DE SYNC lisible par TOUS les rôles (contrairement à /sync/status qui est
+  // admin-only) : permet à un employé de voir si ses ventes sont bien remontées,
+  // et d'afficher un bandeau si la synchronisation est en panne depuis > 24 h.
+  { m: 'GET', p: '/sync/state', f: ({ token }) => ({ cmd: 'sync_state_read', args: { token } }) },
+  // CONFIGURATION CLOUD de l'appareil (admin) : renvoie l'hôte SANS mot de passe.
+  { m: 'GET', p: '/sync/cloud/config', f: ({ token }) => ({ cmd: 'cloud_config_get', args: { token } }) },
+  // Rotation du mot de passe de la base SANS reconstruire l'APK.
+  { m: 'POST', p: '/sync/cloud/config', f: ({ token, body }) => ({ cmd: 'cloud_config_set', args: { token, url: body?.url } }) },
 ]
 
 function compile(pattern: string): RegExp {

@@ -1,6 +1,6 @@
 {
   "name": "game-lounge",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "Game Lounge - Application Tauri Android (Rust SQLite)",
   "scripts": {
@@ -9,6 +9,7 @@
     "build:mobile": "vite build --config vite.config.mobile.ts",
     "preview": "vite preview",
     "type-check": "tsc --noEmit",
+    "version:bump": "node scripts/bump-version.mjs",
     "clean": "rm -rf dist server-rust/dist node_modules/.cache"
   },
   "dependencies": {

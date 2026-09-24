@@ -3,6 +3,7 @@ name: Build Android APK (Tauri / Rust backend)
 on:
   push:
     branches: [main]
+    tags: ['v*']
     paths:
       - 'src/**'
       - 'server-rust/**'
@@ -35,6 +36,22 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      # Garde-fou v1.1 : le backend Rust embarque l'URL cloud à la COMPILATION
+      # (option_env!("DATABASE_URL")). Un secret absent ou non tourné produit un
+      # APK qui ne synchronise pas : on le signale tout de suite, et on n'affiche
+      # jamais le secret (mot de passe masqué).
+      - name: Vérifier le secret cloud (masqué)
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Secret DATABASE_URL absent : l'APK ne pourra pas se connecter au cloud."
+            exit 1
+          fi
+          echo "URL cloud utilisée au build : $(printf '%s' "$DATABASE_URL" | sed -E 's#://[^@]*@#://***@#')"
+          case "$DATABASE_URL" in
+            *pooler.supabase.com*) echo "✅ Hôte Supabase (pooler) détecté." ;;
+            *) echo "::warning::L'URL cloud ne ressemble pas à un hôte pooler Supabase : vérifiez la rotation du secret." ;;
+          esac
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v5
@@ -159,3 +176,40 @@ jobs:
           path: server-rust/src-tauri/gen/android/app/build/outputs/apk/universal/release/game-lounge.apk
           retention-days: 30
           if-no-files-found: error
+
+      # Publication permanente (les artefacts expirent au bout de 30 jours).
+      # Déclenchée par un tag vX.Y.Z : `git push origin v1.1.0`.
+      - name: Publier la Release GitHub (tag vX.Y.Z)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          APK="server-rust/src-tauri/gen/android/app/build/outputs/apk/universal/release/game-lounge.apk"
+          APP_VERSION=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\)".*/\1/p' server-rust/src-tauri/tauri.conf.json | head -1)
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+
+          if [ "$APP_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} incohérent : l'app est en $APP_VERSION. Utilisez scripts/bump-version.mjs avant de tagger."
+            exit 1
+          fi
+
+          # Section du CHANGELOG correspondant à cette version (entre deux « ## [ »).
+          NOTES=$(awk -v v="## [${TAG_VERSION}]" '
+            index($0, v) == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md 2>/dev/null || true)
+
+          ASSET="game-lounge-${GITHUB_REF_NAME}.apk"
+          cp "$APK" "$ASSET"
+          echo "Asset : $ASSET ($(stat -c %s "$ASSET") octets)"
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$ASSET" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$ASSET" \
+              --title "Game Lounge ${GITHUB_REF_NAME}" \
+              --notes "${NOTES:-APK signé, installable par-dessus la version précédente.}"
+          fi
+          echo "✅ Release ${GITHUB_REF_NAME} publiée."

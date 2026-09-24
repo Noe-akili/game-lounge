@@ -62,27 +62,62 @@
         <Cloud class="w-5 h-5 text-neon-blue shrink-0" />
         <h4 class="font-gaming font-bold truncate">Synchronisation cloud (Supabase)</h4>
       </div>
-      <div v-if="!syncStatus.supabaseEnabled" class="text-center py-6">
-        <CloudOff class="w-10 h-10 text-txt-dim mx-auto mb-2" />
-        <p class="text-txt-dim text-sm">Cloud Supabase non configuré</p>
-        <p class="text-xs text-txt-dim mt-1">Vérifiez la connexion internet</p>
+      <!-- AUCUNE URL CLOUD : l'administrateur la saisit ici (aucun identifiant
+           n'est écrit dans le code de l'application). -->
+      <div v-if="!syncStatus.supabaseEnabled" class="space-y-3 w-full max-w-full min-w-0">
+        <div class="text-center py-4">
+          <CloudOff class="w-10 h-10 text-amber-400 mx-auto mb-2" />
+          <p class="text-amber-400 text-sm font-medium">Aucune base cloud configurée</p>
+          <p class="text-xs text-txt-dim mt-1">
+            L'application fonctionne hors ligne ; les données ne quittent pas ce téléphone.
+          </p>
+        </div>
+        <div class="p-3 rounded-xl bg-amber-400/10 border border-amber-400/30">
+          <p class="text-xs text-amber-200">
+            Collez l'URL du <strong>Session Pooler</strong> Supabase
+            (…<span class="font-mono">pooler.supabase.com:5432</span>). À faire une seule fois par appareil.
+          </p>
+        </div>
+        <textarea
+          v-model="cloudUrlDraft"
+          rows="3"
+          spellcheck="false"
+          class="input-field w-full max-w-full min-w-0 font-mono text-xs"
+          placeholder="postgresql://utilisateur:motdepasse@aws-1-….pooler.supabase.com:5432/postgres?sslmode=require"
+        ></textarea>
+        <button
+          @click="saveCloudConfig"
+          :disabled="savingCloud || !cloudUrlDraft.trim()"
+          class="btn-neon-violet w-full flex items-center justify-center gap-2"
+        >
+          <Cloud class="w-4 h-4" />
+          {{ savingCloud ? 'Enregistrement...' : 'Enregistrer et connecter' }}
+        </button>
       </div>
       <div v-else-if="!syncStatus.supabaseAvailable" class="text-center py-6">
         <CloudOff class="w-10 h-10 text-amber-400 mx-auto mb-2" />
-        <p class="text-amber-400 text-sm">Supabase configuré (offline)</p>
-        <p class="text-xs text-txt-dim mt-1">Données locales synchronisées à la reconnexion — {{ syncStatus.mode }}</p>
-        <button @click="runSync" class="btn-neon-violet mt-3">Tester connexion</button>
+        <p class="text-amber-400 text-sm">Base cloud configurée (hors ligne)</p>
+        <p class="text-xs text-txt-dim mt-1">
+          {{ cloudConfig.host || 'hôte inconnu' }} — données locales envoyées à la reconnexion
+        </p>
+        <button @click="runSync" class="btn-neon-violet mt-3">Tester la connexion</button>
       </div>
       <div v-else class="space-y-4 w-full max-w-full min-w-0 overflow-hidden">
         <div class="flex items-center justify-between p-3 bg-bg-surface rounded-xl">
           <div class="flex items-center gap-3">
             <div class="w-3 h-3 rounded-full" :class="syncStatus.enabled ? 'bg-neon-green animate-pulse' : 'bg-txt-dim'"></div>
-            <span class="font-medium text-sm">{{ syncStatus.enabled ? 'Sync active' : 'Sync désactivée' }}</span>
+            <!-- v1.1 : la sync est ACTIVE PAR DÉFAUT. Ce bouton met en PAUSE
+                 (l'état « désactivée » n'existe plus par défaut : c'était la
+                 cause de ventes jamais remontées au cloud). -->
+            <span class="font-medium text-sm">{{ syncStatus.enabled ? 'Sync active' : 'Sync en pause' }}</span>
           </div>
           <button @click="toggleSync" class="relative w-12 h-6 rounded-full transition-colors" :class="syncStatus.enabled ? 'bg-neon-green' : 'bg-bg-hover'">
             <div class="absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform" :class="syncStatus.enabled ? 'translate-x-6' : 'translate-x-0.5'"></div>
           </button>
         </div>
+        <p v-if="!syncStatus.enabled" class="text-xs text-amber-400 px-1">
+          En pause : les ventes de cet appareil ne partent PAS vers le cloud. À réactiver dès que possible.
+        </p>
         <div v-if="syncStatus.lastSync" class="text-xs text-txt-dim px-1">
           Dernière sync : {{ formatDate(syncStatus.lastSync) }}
         </div>
@@ -90,7 +125,37 @@
           <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': syncing }" />
           {{ syncing ? 'Synchronisation en cours...' : 'Synchroniser maintenant' }}
         </button>
-        <p class="text-xs text-txt-dim text-center">Compare et fusionne les données locales SQLite ↔ Supabase cloud</p>
+        <p class="text-xs text-txt-dim text-center">Compare et fusionne les données locales SQLite ↔ base cloud</p>
+      </div>
+
+      <!-- CONFIGURATION CLOUD (hôte seul affiché — jamais le mot de passe) -->
+      <div class="mt-4 pt-4 border-t border-white/10 space-y-3 w-full max-w-full min-w-0">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <p class="text-xs text-txt-muted">
+            Base cloud :
+            <span class="font-mono text-txt">{{ cloudConfig.host || 'non configurée' }}</span>
+            <span class="text-txt-dim"> ({{ cloudSourceLabel }}{{ cloudConfig.poolReady ? ' · connectée' : ' · hors ligne' }})</span>
+          </p>
+          <button @click="showCloudForm = !showCloudForm" class="text-xs text-neon-blue hover:underline">
+            {{ showCloudForm ? 'Annuler' : 'Modifier l\'URL cloud' }}
+          </button>
+        </div>
+        <div v-if="showCloudForm" class="space-y-2">
+          <textarea
+            v-model="cloudUrlDraft"
+            rows="3"
+            spellcheck="false"
+            class="input-field w-full max-w-full min-w-0 font-mono text-xs"
+            placeholder="postgresql://utilisateur:motdepasse@….pooler.supabase.com:5432/postgres?sslmode=require"
+          ></textarea>
+          <p class="text-xs text-txt-dim">
+            À utiliser après un changement de mot de passe de la base : aucun APK à réinstaller.
+          </p>
+          <button @click="saveCloudConfig" :disabled="savingCloud" class="btn-neon-violet w-full flex items-center justify-center gap-2">
+            <Cloud class="w-4 h-4" />
+            {{ savingCloud ? 'Enregistrement...' : 'Enregistrer la nouvelle URL' }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -286,7 +351,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { api } from '@/utils/api'
 import { toast } from 'vue-sonner'
 import Loader from '@/components/ui/Loader.vue'
@@ -306,10 +371,26 @@ const editingId = ref(null)
 const form = reactive({ regle_type: 'temps', seuil: 60, jetons_attribues: 1, valeur_jeton: 100, actif: true })
 const config = reactive({ taux_tva: settings.tauxTva || 20 })
 const appNameDraft = ref(settings.appName)
-const syncStatus = ref({ enabled: false, supabaseEnabled: false, lastSync: null, syncing: false })
+const syncStatus = ref({ enabled: true, supabaseEnabled: false, supabaseAvailable: false, lastSync: null, syncing: false })
 const syncing = ref(false)
 const purging = ref(false)
 const purgingCloud = ref(false)
+// Configuration cloud (S1) : l'URL n'est plus écrite dans le code de l'app.
+// L'administrateur peut la changer ici (après rotation du mot de passe de la
+// base) sans reconstruire l'APK. On n'affiche JAMAIS le mot de passe : le
+// backend ne renvoie que l'hôte.
+const cloudConfig = ref({ configured: false, source: 'aucune', host: '', fromDevice: false, poolReady: false })
+const cloudUrlDraft = ref('')
+const showCloudForm = ref(false)
+const savingCloud = ref(false)
+const cloudSourceLabel = computed(() => {
+  switch (cloudConfig.value.source) {
+    case 'appareil': return 'réglée sur cet appareil'
+    case 'environnement': return 'variable d\'environnement'
+    case 'build': return 'incluse dans la version installée'
+    default: return 'non configurée'
+  }
+})
 
 function changeFont(mode: string) {
   settings.setFont(mode)
@@ -464,6 +545,34 @@ async function fetchSyncStatus() {
   try { syncStatus.value = await api.get('/sync/status') } catch {}
 }
 
+/// Configuration cloud de l'appareil : uniquement l'HÔTE et la provenance (le
+/// mot de passe n'est jamais renvoyé au téléphone, même à l'administrateur).
+async function fetchCloudConfig() {
+  try { cloudConfig.value = await api.get('/sync/cloud/config') } catch {}
+}
+
+/// Enregistre une nouvelle URL de base cloud (rotation du mot de passe) :
+/// le backend la stocke et reconstruit immédiatement la connexion.
+async function saveCloudConfig() {
+  const url = cloudUrlDraft.value.trim()
+  if (!url) return toast.error("Collez l'URL de connexion à la base cloud")
+  savingCloud.value = true
+  try {
+    const res: any = await api.post('/sync/cloud/config', { url })
+    toast.success(res?.message || 'Configuration cloud enregistrée')
+    cloudUrlDraft.value = ''
+    showCloudForm.value = false
+    await fetchCloudConfig()
+    // La reconnexion se fait en arrière-plan (quelques secondes) : on
+    // rafraîchit l'état affiché pour montrer « connectée » dès que possible.
+    setTimeout(() => { fetchSyncStatus(); fetchCloudConfig() }, 2500)
+  } catch (e: any) {
+    toast.error(e?.message || 'URL refusée par le serveur')
+  } finally {
+    savingCloud.value = false
+  }
+}
+
 async function toggleSync() {
   try {
     const res = await api.post('/sync/toggle', { enabled: !syncStatus.value.enabled })
@@ -531,5 +640,5 @@ async function runSync() {
   finally { syncing.value = false }
 }
 
-onMounted(() => { fetchData(); fetchSyncStatus(); config.taux_tva = settings.tauxTva; window.addEventListener('sync-completed', () => { config.taux_tva = settings.tauxTva }); window.addEventListener('app-data-refresh', () => { config.taux_tva = settings.tauxTva; fetchData() }) })
+onMounted(() => { fetchData(); fetchSyncStatus(); fetchCloudConfig(); config.taux_tva = settings.tauxTva; window.addEventListener('sync-completed', () => { config.taux_tva = settings.tauxTva; fetchSyncStatus() }); window.addEventListener('app-data-refresh', () => { config.taux_tva = settings.tauxTva; fetchData() }) })
 </script>

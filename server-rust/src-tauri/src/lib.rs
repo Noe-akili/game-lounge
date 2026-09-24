@@ -14,6 +14,8 @@ pub mod validators;
 use std::sync::Mutex;
 use tauri::Manager;
 
+use rand::RngCore;
+
 use db::Db;
 
 pub struct AppState {
@@ -45,27 +47,47 @@ pub struct AppState {
 }
 
 
-/// A release APK must never use a predictable JWT signing key. When no
-/// deployment secret is present, keep tokens valid only for this app process.
-/// JWT secret STABLE sur l'appareil (persisté dans SQLite).
-/// Sans ça, chaque redémarrage de l'APK invente un secret neuf et invalide
-/// tous les tokens -> retour forcé sur l'écran login.
-const DEFAULT_JWT_SECRET: &str = "gl-prod-sec-key-game-lounge-tauri-2024-jwt-token-auth";
+/// ANCIEN secret partagé (v1.0 et avant) : écrit en clair dans un dépôt PUBLIC,
+/// donc connu de quiconque. Il n'est conservé QUE pour détecter les appareils
+/// encore configurés avec et les régénérer immédiatement (voir
+/// `runtime_jwt_secret`). Il n'est PLUS JAMAIS utilisé pour signer un token.
+const LEGACY_SHARED_JWT_SECRET: &str = "gl-prod-sec-key-game-lounge-tauri-2024-jwt-token-auth";
 
+/// Secret de signature des JWT — UNIQUE PAR APPAREIL, généré au premier
+/// démarrage puis persisté dans SQLite (table app_settings).
+///
+/// Pourquoi par appareil : sur Android il n'existe AUCUNE variable
+/// d'environnement au runtime, donc l'ancien secret constant du code était
+/// forcément celui utilisé par tous les téléphones. Comme il était public
+/// (dépôt + APK décompilable), n'importe qui pouvait forger un token
+/// `role: admin` et débloquer les fonctions d'administration. Les tokens sont
+/// émis ET vérifiés localement par cet appareil : un secret aléatoire par
+/// appareil suffit, sans coordination entre téléphones.
+///
+/// Stabilité : le secret est PERSISTÉ — les tokens survivent donc aux
+/// redémarrages de l'APK (sinon retour forcé à l'écran de connexion).
 fn runtime_jwt_secret(db: &crate::db::Db) -> String {
+    // 1. Secret imposé par l'environnement (desktop / diagnostic) — inexistant sur Android.
     if let Ok(secret) = std::env::var("JWT_SECRET") {
         if secret.len() >= 32 {
             let _ = db.set_setting("jwt_secret", &secret);
             return secret;
         }
     }
+    // 2. Secret déjà persisté sur CET appareil, s'il est valide et non hérité.
     if let Ok(Some(stored)) = db.get_setting("jwt_secret") {
-        if stored.len() >= 32 {
-            return stored;
+        let s = stored.trim().to_string();
+        if s.len() >= 32 && s != LEGACY_SHARED_JWT_SECRET {
+            return s;
         }
     }
-    let _ = db.set_setting("jwt_secret", DEFAULT_JWT_SECRET);
-    DEFAULT_JWT_SECRET.to_string()
+    // 3. Génération : 32 octets aléatoires (CSPRNG de l'OS) en hexadécimal.
+    let mut buf = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut buf);
+    let secret: String = buf.iter().map(|b| format!("{b:02x}")).collect();
+    let _ = db.set_setting("jwt_secret", &secret);
+    crate::logger::log_auth("secret JWT régénéré : unique à cet appareil (l'ancien secret partagé était public)");
+    secret
 }
 fn open_db(app: &tauri::AppHandle) -> Result<Db, Box<dyn std::error::Error>> {
     // 1. DATADIR env (tests / debug http-server)
@@ -220,7 +242,10 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     // Petit délai pour laisser WebView démarrer
                     tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
-                    match crate::supabase::init_supabase_pool().await {
+                    // URL cloud relue depuis les réglages locaux (aucun identifiant
+                    // en dur dans le binaire — voir supabase::resolve_cloud_url).
+                    let db = handle.try_state::<AppState>().map(|s| s.db.clone());
+                    match crate::supabase::init_supabase_pool(db.as_deref()).await {
                         Some(pool) => {
                             eprintln!("[supabase] pool initialisé en background");
                             // MIGRATION DU SCHÉMA CLOUD : crée toutes les tables si la base
@@ -383,6 +408,11 @@ pub fn run() {
             commands::sync_toggle,
             commands::sync_run,
             commands::sync_poll,
+            // État de sync lisible par TOUS les rôles (bandeau employé) et
+            // configuration cloud réglable depuis l'app (admin, sans rebuild).
+            commands::sync_state_read,
+            commands::cloud_config_get,
+            commands::cloud_config_set,
             commands::sync::sync_purge_outbox,
             commands::sync::sync_purge_cloud,
             commands::sync::sync_initial_status,

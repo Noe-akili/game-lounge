@@ -49,10 +49,40 @@
 
       <div class="card">
         <h4 class="font-gaming font-bold mb-4 flex items-center gap-2">
-          <RefreshCw class="w-5 h-5 text-neon-blue" :class="{ 'animate-spin': syncing }" />
+          <RefreshCw class="w-5 h-5 text-neon-blue" :class="{ 'animate-spin': syncing || syncState.running }" />
           Synchronisation des données
         </h4>
-        <p class="text-xs text-txt-dim mb-4">Synchroniser immédiatement les données locales avec Supabase.</p>
+        <p class="text-xs text-txt-dim mb-4">Synchroniser immédiatement les données locales avec le cloud.</p>
+
+        <!-- ÉTAT LISIBLE PAR TOUS (v1.1) : un employé doit pouvoir vérifier que
+             ses ventes sont bien remontées, sans passer par un administrateur. -->
+        <div class="space-y-2 mb-4 text-xs">
+          <div class="flex items-center justify-between gap-2 p-2.5 bg-bg-surface rounded-xl">
+            <span class="text-txt-dim">État</span>
+            <span class="flex items-center gap-2 font-medium" :class="syncState.enabled ? 'text-neon-green' : 'text-amber-400'">
+              <span class="w-2 h-2 rounded-full" :class="syncState.running ? 'bg-neon-blue animate-pulse' : (syncState.enabled ? 'bg-neon-green' : 'bg-amber-400')"></span>
+              {{ syncState.running ? 'Synchronisation en cours…' : (syncState.enabled ? 'Active' : 'En pause') }}
+            </span>
+          </div>
+          <div v-if="syncState.pendingCount > 0" class="flex items-center justify-between gap-2 p-2.5 bg-bg-surface rounded-xl">
+            <span class="text-txt-dim">En attente d'envoi</span>
+            <span class="font-medium" :class="syncState.stuck ? 'text-amber-400' : 'text-txt'">{{ syncState.pendingCount }} changement(s)</span>
+          </div>
+          <div v-if="syncState.lastSyncAt" class="flex items-center justify-between gap-2 p-2.5 bg-bg-surface rounded-xl">
+            <span class="text-txt-dim">Dernière synchronisation</span>
+            <span class="font-medium text-txt">{{ formatDate(syncState.lastSyncAt) }}</span>
+          </div>
+        </div>
+
+        <p v-if="!syncState.enabled" class="text-xs text-amber-400 mb-3">
+          La synchronisation est en pause : vos ventes ne sont pas envoyées vers le cloud.
+          Demandez à un administrateur de la réactiver (Paramètres → Synchronisation).
+        </p>
+        <p v-else-if="syncState.stuck" class="text-xs text-amber-400 mb-3">
+          {{ syncState.pendingCount }} changement(s) attendent depuis plus de 24 h. Utilisez le bouton
+          ci-dessous ; si cela persiste, vérifiez la connexion Internet ou la configuration cloud.
+        </p>
+
         <button @click="handleSync" :disabled="syncing" class="btn-neon-blue w-full flex items-center justify-center gap-2">
           <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': syncing }" />
           {{ syncing ? 'Synchronisation en cours...' : 'Lancer la synchronisation' }}
@@ -120,13 +150,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import Loader from '@/components/ui/Loader.vue'
 import { RefreshCw, KeyRound, Check, LogOut, Palette, Moon, Sun } from 'lucide-vue-next'
 import { useSettingsStore } from '@/stores/settings'
 import { api } from '@/utils/api'
+import { formatDate } from '@/utils/helpers'
 import { toast } from 'vue-sonner'
 
 const auth = useAuthStore()
@@ -136,6 +167,27 @@ const prefs = reactive({ notifications: true, sounds: true })
 
 const syncing = ref(false)
 const savingPassword = ref(false)
+
+// État de synchronisation lisible par TOUS les rôles (employés inclus) :
+// actif / en pause, changements en attente, dernière synchronisation, panne.
+const syncState = ref<any>({
+  enabled: true,
+  running: false,
+  pendingCount: 0,
+  pendingHours: 0,
+  lastSyncAt: null,
+  stuck: false,
+})
+
+let syncStateInterval: ReturnType<typeof setInterval> | null = null
+
+async function fetchSyncState() {
+  try {
+    syncState.value = await api.get('/sync/state')
+  } catch {
+    // Non authentifié / hors ligne : on laisse l'affichage par défaut.
+  }
+}
 
 const settings = useSettingsStore()
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -198,6 +250,8 @@ async function handleSync() {
       // réussite immédiate.
       toast.success('Synchronisation lancée — les données se mettent à jour automatiquement')
     }
+    // L'état (file d'attente, dernière sync) se met à jour tout seul après coup.
+    setTimeout(fetchSyncState, 5000)
   } catch (e: any) {
     toast.error('Erreur synchronisation: ' + (e.message || 'Échec'))
   } finally {
@@ -234,5 +288,17 @@ function handleLogout() {
   router.push('/login')
 }
 
-onMounted(() => setTimeout(() => (loading.value = false), 400))
+onMounted(() => {
+  setTimeout(() => (loading.value = false), 400)
+  // État de sync affiché dès l'ouverture, rafraîchi après chaque cycle et
+  // toutes les minutes (file d'attente, dernière sync, panne éventuelle).
+  fetchSyncState()
+  window.addEventListener('sync-completed', fetchSyncState)
+  syncStateInterval = setInterval(fetchSyncState, 60 * 1000)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('sync-completed', fetchSyncState)
+  if (syncStateInterval) clearInterval(syncStateInterval)
+})
 </script>

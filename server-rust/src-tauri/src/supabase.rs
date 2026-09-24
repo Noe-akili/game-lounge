@@ -118,7 +118,10 @@ pub fn schedule_reconnect(app: &tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         crate::logger::log_cloud("reconnexion Supabase en arrière-plan...");
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        match init_supabase_pool().await {
+        // L'URL cloud peut avoir été changée entre-temps (Paramètres →
+        // Configuration cloud) : on la relit à chaque reconnexion.
+        let db = handle.try_state::<crate::AppState>().map(|s| s.db.clone());
+        match init_supabase_pool(db.as_deref()).await {
             Some(pool) => {
                 crate::logger::log_cloud("reconnexion Supabase OK, pool restauré");
                 if let Some(s) = handle.try_state::<crate::AppState>() {
@@ -149,7 +152,8 @@ pub async fn reconnect_now(app: &tauri::AppHandle) -> Option<SupabasePool> {
         }
     }
     crate::logger::log_cloud("reconnexion Supabase (retry login)...");
-    match init_supabase_pool().await {
+    let db = app.try_state::<crate::AppState>().map(|s| s.db.clone());
+    match init_supabase_pool(db.as_deref()).await {
         Some(pool) => {
             crate::logger::log_cloud("reconnexion Supabase OK (retry login), pool restauré");
             if let Some(state) = app.try_state::<crate::AppState>() {
@@ -166,16 +170,75 @@ pub async fn reconnect_now(app: &tauri::AppHandle) -> Option<SupabasePool> {
     }
 }
 
-/// URL de connexion cloud (Postgres).
-/// SUPABASE (remplace Supabase) : on utilise le SESSION POOLER (port 5432) —
-/// - certificat Let's Encrypt public (vérifié par webpki-roots, pas de CA custom),
-/// - IPv4 (le direct db.xxx.supabase.co est IPv6-only sur les nouveaux projets ->
-///   ne se connecte jamais depuis Android),
-/// - compatible protocole simple (pas de prepared statements persistants).
-/// L'URL est aussi injectée par le workflow GitHub via la variable DATABASE_URL
-/// (option_env! au build) ; ce fallback garantit que l'APK marche même sans secret.
+/// Clé `app_settings` où l'administrateur peut enregistrer l'URL cloud depuis
+/// l'application elle-même (Paramètres → Configuration cloud), sans reconstruire
+/// l'APK.
 #[cfg(feature = "supabase-sync")]
-pub const FALLBACK_URL: &str = "postgresql://postgres.tyvqidhbgqveaftlvjrn:TkL.w78%265%26-Lr%40_@aws-1-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require";
+pub const CLOUD_URL_SETTING: &str = "cloud_database_url";
+
+/// URL de connexion cloud (Postgres) — RÉSOLUE À L'EXÉCUTION.
+///
+/// SÉCURITÉ (v1.1) : l'ancien `FALLBACK_URL` contenait en clair le mot de passe
+/// du compte PROPRIÉTAIRE de la base de production, dans un dépôt PUBLIC — donc
+/// lisible par n'importe qui, et extractible de l'APK (les chaînes du binaire se
+/// lisent). Cette valeur est supprimée du code : plus aucun identifiant n'est
+/// commité.
+///
+/// Ordre de résolution :
+///   1. `app_settings['cloud_database_url']` — réglable DANS l'application
+///      (rotation sans rebuild, priorité absolue pour les appareils installés) ;
+///   2. `DATABASE_URL` / `SUPABASE_DATABASE_URL` (desktop, diagnostic, tests) ;
+///   3. `GL_DATABASE_URL` injecté À LA COMPILATION par le workflow GitHub via
+///      `option_env!` : la valeur vient d'un SECRET du dépôt, jamais du code ;
+///   4. aucune → mode hors ligne explicite (aucune connexion tentée).
+///
+/// Contraintes conservées : SESSION POOLER port 5432 (certificat Let's Encrypt
+/// public vérifié par webpki-roots, IPv4 — le direct db.xxx.supabase.co est
+/// IPv6-only et ne répond pas depuis Android) et protocole simple (pas de
+/// prepared statements persistants).
+#[cfg(feature = "supabase-sync")]
+pub fn resolve_cloud_url(db: Option<&crate::db::Db>) -> Option<String> {
+    if let Some(db) = db {
+        if let Ok(Some(v)) = db.get_setting(CLOUD_URL_SETTING) {
+            let v = v.trim().to_string();
+            if !v.is_empty() {
+                return Some(v);
+            }
+        }
+    }
+    let env_url = std::env::var("DATABASE_URL")
+        .ok()
+        .or_else(|| std::env::var("SUPABASE_DATABASE_URL").ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if env_url.is_some() {
+        return env_url;
+    }
+    // URL compilée dans le binaire : la CI exporte DATABASE_URL /
+    // SUPABASE_DATABASE_URL (secrets GitHub) pour `option_env!`. C'est le seul
+    // moyen pour un backend embarqué dans l'APK de connaître le cloud à la
+    // première installation ; l'URL reste modifiable ensuite dans l'app
+    // (Admin > Paramètres > Synchronisation), ce qui permet une rotation sans
+    // reconstruire l'APK.
+    option_env!("GL_DATABASE_URL")
+        .or(option_env!("DATABASE_URL"))
+        .or(option_env!("SUPABASE_DATABASE_URL"))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Hôte seul d'une URL de connexion, SANS identifiants — utilisable dans
+/// l'interface et dans les journaux (jamais de mot de passe affiché).
+#[cfg(feature = "supabase-sync")]
+pub fn cloud_host_label(url: &str) -> String {
+    url.rsplit('@')
+        .next()
+        .unwrap_or(url)
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .to_string()
+}
 
 #[cfg(feature = "supabase-sync")]
 pub async fn get_supabase_pool(state: &crate::AppState) -> crate::error::ApiResult<SupabasePool> {
@@ -184,7 +247,7 @@ pub async fn get_supabase_pool(state: &crate::AppState) -> crate::error::ApiResu
             return Ok(pool.clone());
         }
     }
-    if let Some(pool) = init_supabase_pool().await {
+    if let Some(pool) = init_supabase_pool(Some(&state.db)).await {
         if let Ok(mut guard) = state.supabase_pool.lock() {
             *guard = Some(pool.clone());
         }
@@ -193,22 +256,23 @@ pub async fn get_supabase_pool(state: &crate::AppState) -> crate::error::ApiResu
     Err(crate::error::ApiError::new(503, "Connexion à Supabase impossible. Vérifiez votre connexion Internet."))
 }
 
-pub async fn init_supabase_pool() -> Option<SupabasePool> {
-    // NOTE : option_env! retiré — le secret GitHub DATABASE_URL contenait encore
-    // l'ancienne URL Supabase et aurait pris le dessus sur le fallback Supabase à chaque
-    // build Android. Sur Android il n'y a pas d'env runtime : FALLBACK_URL est
-    // autoritaire. Sur desktop, dotenvy charge .env -> std::env::var fonctionne.
-    let url = std::env::var("DATABASE_URL").ok().filter(|s| !s.trim().is_empty())
-        .or_else(|| std::env::var("SUPABASE_DATABASE_URL").ok().filter(|s| !s.trim().is_empty()))
-        .or_else(|| Some(FALLBACK_URL.to_string()));
-    let url = match url {
-        Some(u) if !u.trim().is_empty() => u,
-        _ => {
-            crate::logger::log_cloud("DATABASE_URL absent et fallback vide, mode offline");
+pub async fn init_supabase_pool(db: Option<&crate::db::Db>) -> Option<SupabasePool> {
+    // Aucun identifiant en dur : l'URL vient des réglages de l'app, de
+    // l'environnement, ou du secret injecté au build (voir resolve_cloud_url).
+    let url = match resolve_cloud_url(db) {
+        Some(u) => u,
+        None => {
+            crate::logger::log_cloud(
+                "Aucune URL cloud configurée (Paramètres → Configuration cloud) : mode hors ligne",
+            );
             return None;
         }
     };
-    crate::logger::log_cloud(&format!("DATABASE_URL présent ({} chars), tentative rustls", url.len()));
+    crate::logger::log_cloud(&format!(
+        "URL cloud {} ({} chars), tentative rustls",
+        cloud_host_label(&url),
+        url.len()
+    ));
     // Tente rustls 0.19 - webpki-roots 0.21 fournit TLS_SERVER_ROOTS directement compatible
     // SUPABASE : la chaîne du pooler (*.pooler.supabase.com) remonte à "Supabase Root
     // 2021 CA", une racine PRIVÉE absente des racines publiques Mozilla -> sans l'ajouter
@@ -300,7 +364,7 @@ pub async fn init_supabase_pool() -> Option<SupabasePool> {
 }
 
 #[cfg(not(feature = "supabase-sync"))]
-pub async fn init_supabase_pool() -> Option<()> {
+pub async fn init_supabase_pool(_db: Option<&crate::db::Db>) -> Option<()> {
     eprintln!("[supabase] feature supabase-sync désactivée");
     None
 }
