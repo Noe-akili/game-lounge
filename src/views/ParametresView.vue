@@ -188,8 +188,16 @@ const userInitials = computed(() => {
 async function handleSync() {
   syncing.value = true
   try {
-    await api.post('/sync/run')
-    toast.success('Synchronisation terminée avec succès !')
+    const res: any = await api.post('/sync/run')
+    if (res?.started === false) {
+      toast.info('Synchronisation déjà en cours...')
+    } else {
+      // Le backend lance la sync EN ARRIÈRE-PLAN (évite le timeout IPC Android) :
+      // l'écran se rafraîchit tout seul à la réception de l'événement Tauri
+      // `sync-completed` (relayé par AppLayout) — on n'annonce donc pas une
+      // réussite immédiate.
+      toast.success('Synchronisation lancée — les données se mettent à jour automatiquement')
+    }
   } catch (e: any) {
     toast.error('Erreur synchronisation: ' + (e.message || 'Échec'))
   } finally {

@@ -1,6 +1,8 @@
 // /api/sync - statut et synchronisation Supabase (offline-first best practice)
 use serde_json::{Value, json};
-use tauri::Manager;
+// `Emitter` est INDISPENSABLE : app.emit("app-setting-changed"/"sync-completed", ...)
+// échoue sinon à la compilation (error[E0599]: no method named `emit` found for &AppHandle).
+use tauri::{Emitter, Manager};
 use tauri::State;
 
 use crate::commands::{admin_only, claims, db};
@@ -83,9 +85,19 @@ pub fn sync_toggle(
 /// frontend suit la progression via /sync/poll ET les événements sync-progress.
 ///
 /// Mission §12 : un appareil NEUF (première installation) doit pouvoir initialiser
-/// sa base même connecté en tant qu'employé. La commande admin_only reste réservée
-/// aux resynchronisations manuelles ; l'initialisation est permise à tout
-/// utilisateur authentifié tant que initial_sync_completed = false.
+/// sa base même connecté en tant qu'employé.
+///
+/// Mission §13 — CORRECTIF « l'employé n'a pas l'accès » : la synchronisation
+/// manuelle n'est PLUS réservée aux administrateurs. Elle exige seulement un
+/// utilisateur AUTHENTIFIÉ (rôle journalisé pour la traçabilité). Raisons :
+///   1. un employé crée des données hors ligne (sessions, joueurs, factures,
+///      jetons, messages) qui DOIVENT remonter vers Supabase ;
+///   2. le moteur automatique (auto_sync_loop) exécute déjà exactement la même
+///      run_sync_impl quel que soit le rôle — la restriction n'apportait donc
+///      aucune sécurité réelle, elle bloquait juste le bouton ;
+///   3. le toggle `sync_enabled` (lui, bien admin-only) vaut 0 par défaut : sans
+///      ce bouton, un appareil employé n'avait plus AUCUN moyen de synchroniser.
+/// Le toggle, /sync/status et les purges cloud restent, eux, réservés aux admins.
 #[tauri::command(async)]
 pub async fn sync_run(app: tauri::AppHandle, state: State<'_, AppState>, token: Option<String>) -> ApiResult<Value> {
     let user = claims(&state, &token)?;
@@ -93,10 +105,10 @@ pub async fn sync_run(app: tauri::AppHandle, state: State<'_, AppState>, token: 
     let initial_pending = !initial_sync_completed(db(&state));
     #[cfg(not(feature = "supabase-sync"))]
     let initial_pending = false;
-    if !initial_pending {
-        admin_only(&user)?;
-    }
-    eprintln!("[sync] sync_run demandé par {} (initial_pending={})", user.email, initial_pending);
+    eprintln!(
+        "[sync] sync_run demandé par {} (role={}, initial_pending={})",
+        user.email, user.role, initial_pending
+    );
 
     #[cfg(feature = "supabase-sync")]
     {
