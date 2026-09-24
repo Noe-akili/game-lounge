@@ -298,6 +298,35 @@ fn set_step(state: &State<'_, AppState>, step: &str, message: &str) {
     }));
 }
 
+/// Termine le cycle en erreur : met à jour l'état interne ET prévient le WebView.
+///
+/// Sans l'événement `sync-error`, le frontend ne voyait PAS l'échec : le store
+/// restait bloqué sur la dernière phase reçue (« Envoi des changements ») alors
+/// que la sync s'était déjà arrêtée. Tous les chemins d'erreur de la sync delta
+/// passent désormais par ici.
+#[cfg(feature = "supabase-sync")]
+fn fail_delta(
+    app: &tauri::AppHandle,
+    state: &State<'_, AppState>,
+    message: &str,
+    cursor: i64,
+    pulled: usize,
+    pushed: usize,
+) {
+    set_sync_state(state, json!({
+        "running": false,
+        "step": "erreur",
+        "success": false,
+        "message": message,
+        "cursor": cursor,
+        "pulled_total": pulled,
+        "pushed_total": pushed,
+        "timestamp": now_iso()
+    }));
+    let p = crate::supabase::SyncProgress::new("erreur", message, "error");
+    crate::supabase::emit_progress(app, &p.with_counts(0, 0, 0), Some("sync-error"));
+}
+
 pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) -> ApiResult<Value> {
     // Ce run est-il la première synchronisation (restauration complète) ? L'événement
     // final sync-completed est alors déjà émis par la branche initiale (mission §8 :
@@ -480,16 +509,7 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
                 let msg = format!("Réception impossible depuis Supabase: {}", e);
                 eprintln!("[sync] delta count failed: {}", e);
                 crate::logger::log_sync(&msg);
-                set_sync_state(state, json!({
-                    "running": false,
-                    "step": "erreur",
-                    "success": false,
-                    "message": msg,
-                    "cursor": cursor,
-                    "pulled_total": 0,
-                    "pushed_total": uploaded,
-                    "timestamp": now_iso()
-                }));
+                fail_delta(app, state, &msg, cursor, 0, uploaded);
                 crate::supabase::schedule_reconnect(app);
                 return Ok(json!({
                     "success": false,
@@ -519,16 +539,7 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
                     let msg = format!("Réception delta impossible depuis Supabase: {}", e);
                     eprintln!("[sync] pull_delta failed at cursor {}: {}", cursor, e);
                     crate::logger::log_sync(&msg);
-                    set_sync_state(state, json!({
-                        "running": false,
-                        "step": "erreur",
-                        "success": false,
-                        "message": msg,
-                        "cursor": cursor,
-                        "pulled_total": downloaded,
-                        "pushed_total": uploaded,
-                        "timestamp": now_iso()
-                    }));
+                    fail_delta(app, state, &msg, cursor, downloaded, uploaded);
                     crate::supabase::schedule_reconnect(app);
                     return Ok(json!({
                         "success": false,
@@ -600,16 +611,7 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
                 let msg = format!("Changement cloud invalide à la séquence {} (curseur conservé à {})", seq, cursor);
                 eprintln!("[sync] {}", msg);
                 crate::logger::log_sync(&msg);
-                set_sync_state(state, json!({
-                    "running": false,
-                    "step": "erreur",
-                    "success": false,
-                    "message": msg,
-                    "cursor": cursor,
-                    "pulled_total": downloaded,
-                    "pushed_total": uploaded,
-                    "timestamp": now_iso()
-                }));
+                fail_delta(app, state, &msg, cursor, downloaded, uploaded);
                 return Ok(json!({
                     "success": false,
                     "step": "erreur",
@@ -629,16 +631,7 @@ pub async fn run_sync_impl(app: &tauri::AppHandle, state: &State<'_, AppState>) 
                 );
                 eprintln!("[sync] {} (lot {}..{})", msg, cursor + 1, last_seq);
                 crate::logger::log_sync(&msg);
-                set_sync_state(state, json!({
-                    "running": false,
-                    "step": "erreur",
-                    "success": false,
-                    "message": msg,
-                    "cursor": cursor,
-                    "pulled_total": downloaded,
-                    "pushed_total": uploaded,
-                    "timestamp": now_iso()
-                }));
+                fail_delta(app, state, &msg, cursor, downloaded, uploaded);
                 crate::supabase::schedule_reconnect(app);
                 return Ok(json!({
                     "success": false,

@@ -376,6 +376,34 @@ fn pg_col_to_string(row: &tokio_postgres::Row, idx: usize) -> Option<String> {
     pg_col_to_string_pub(row, idx)
 }
 
+/// Lecture d'une colonne ENTIÈRE tolérante aux types Postgres rencontrés.
+///
+/// INDISPENSABLE : `pg_col_to_string_pub` renvoie None pour tout ce qui n'est pas
+/// du texte, et donc pour un BIGINT/BIGSERIAL. `sequence` et `record_id` de
+/// `sync_changes` étant des BIGINT, ils étaient décodés à 0 :
+/// - `pull_delta` voyait « séquence 0 » -> « Changement cloud invalide à la
+///   séquence 0 (curseur conservé à 0) » à CHAQUE cycle,
+/// - `sync_max_sequence` renvoyait 0 -> le curseur ne dépassait jamais 0,
+/// - `sync_changes_count_after` renvoyait 0 -> aucune progression delta.
+/// Résultat : les modifications envoyées par un appareil n'arrivaient JAMAIS sur
+/// les autres. On tente i64, puis i32 (int4), puis bool (0/1), puis texte.
+#[cfg(feature = "supabase-sync")]
+pub fn pg_col_to_i64(row: &tokio_postgres::Row, idx: usize) -> Option<i64> {
+    if let Ok(v) = row.try_get::<_, i64>(idx) {
+        return Some(v);
+    }
+    if let Ok(v) = row.try_get::<_, Option<i64>>(idx) {
+        return v;
+    }
+    if let Ok(v) = row.try_get::<_, i32>(idx) {
+        return Some(v as i64);
+    }
+    if let Ok(v) = row.try_get::<_, bool>(idx) {
+        return Some(if v { 1 } else { 0 });
+    }
+    pg_col_to_string_pub(row, idx).and_then(|s| s.trim().parse::<i64>().ok())
+}
+
 #[cfg(feature = "supabase-sync")]
 #[cfg(feature = "supabase-sync")]
 pub async fn pull_app_settings(pool: &SupabasePool) -> Result<Vec<(String, String)>, String> {
@@ -630,9 +658,7 @@ pub async fn sync_max_sequence(pool: &SupabasePool) -> Result<i64, String> {
             if rows.is_empty() {
                 Ok(0)
             } else {
-                Ok(pg_col_to_string_pub(&rows[0], 0)
-                    .and_then(|s| s.parse::<i64>().ok())
-                    .unwrap_or(0))
+                Ok(pg_col_to_i64(&rows[0], 0).unwrap_or(0))
             }
         }
         Err(e) => Err(e),
@@ -650,9 +676,7 @@ pub async fn sync_changes_count_after(pool: &SupabasePool, after: i64) -> Result
             if rows.is_empty() {
                 Ok(0)
             } else {
-                Ok(pg_col_to_string_pub(&rows[0], 0)
-                    .and_then(|s| s.parse::<i64>().ok())
-                    .unwrap_or(0))
+                Ok(pg_col_to_i64(&rows[0], 0).unwrap_or(0))
             }
         }
         Err(e) => Err(e),
@@ -877,12 +901,12 @@ pub async fn pull_delta(pool: &SupabasePool, after: i64, limit: i64) -> Result<V
             let mut out: Vec<Value> = Vec::with_capacity(rows.len());
             for row in rows {
                 let mut m = serde_json::Map::new();
-                m.insert("sequence".into(), json!(pg_col_to_string_pub(&row, 0).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0)));
+                m.insert("sequence".into(), json!(pg_col_to_i64(&row, 0).unwrap_or(0)));
                 m.insert("change_id".into(), json!(pg_col_to_string_pub(&row, 1).unwrap_or_default()));
                 m.insert("device_id".into(), json!(pg_col_to_string_pub(&row, 2).unwrap_or_default()));
                 m.insert("operation".into(), json!(pg_col_to_string_pub(&row, 3).unwrap_or_default()));
                 m.insert("entity".into(), json!(pg_col_to_string_pub(&row, 4).unwrap_or_default()));
-                m.insert("record_id".into(), json!(pg_col_to_string_pub(&row, 5).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0)));
+                m.insert("record_id".into(), json!(pg_col_to_i64(&row, 5).unwrap_or(0)));
                 let payload_str = pg_col_to_string_pub(&row, 6).unwrap_or_else(|| "{}".to_string());
                 m.insert("payload".into(), serde_json::from_str::<Value>(&payload_str).ok().unwrap_or(Value::Object(serde_json::Map::new())));
                 m.insert("created_at".into(), json!(pg_col_to_string_pub(&row, 7).unwrap_or_default()));
